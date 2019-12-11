@@ -2,7 +2,10 @@ GO_OS := $(shell go env GOOS)
 GO_ARCH := $(shell go env GOARCH)
 GO_FLAGS :=
 
-all: clean deps test build
+ENV := dev
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
+
+all: clean deps test images
 
 .PHONY: clean
 clean:
@@ -24,6 +27,23 @@ test:
 .PHONY: build build-transaction
 build: build-transaction
 build-transaction:
-	@go vet github.com/kinecosystem/meridian-transaction-services/service/transaction
+	@go vet github.com/kinecosystem/agora-transaction-services/service/transaction
 	GOOS=$(GO_OS) GOARCH=$(GO_ARCH) CGO_ENABLED=0 go build $(GO_FLAGS) -o service/transaction/build/$(GO_OS)-$(GO_ARCH)/transaction \
-		github.com/kinecosystem/meridian-transaction-services/service/transaction
+		github.com/kinecosystem/agora-transaction-services/service/transaction
+
+.PHONY: images
+images: GO_OS := linux
+images: GO_ARCH := amd64
+images: build images-only
+
+.PHONY: images-only transaction-image
+images-only: transaction-image
+transaction-image:
+	docker build service/transaction -t transaction-service-$(ENV):$(GIT_BRANCH)
+
+.PHONY: deploy-transaction
+deploy-transaction: GO_OS=linux
+deploy-transaction: build
+deploy-transaction: transaction-image
+deploy-transaction:
+	cddc deploy --service transaction-service -e $(ENV)
