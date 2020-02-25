@@ -192,6 +192,7 @@ func (s *server) GetHistory(ctx context.Context, req *transaction.GetHistoryRequ
 	txnReq := horizonclient.TransactionRequest{
 		ForAccount:    req.AccountId.Value,
 		IncludeFailed: false,
+		Limit: 100, // todo: we may eventually want to reduce this
 	}
 
 	switch req.Direction {
@@ -202,7 +203,7 @@ func (s *server) GetHistory(ctx context.Context, req *transaction.GetHistoryRequ
 	}
 
 	if req.Cursor != nil {
-		// todo: formalize an intenral encoding?
+		// todo: formalize an internal encoding?
 		txnReq.Cursor = string(req.Cursor.Value)
 	}
 
