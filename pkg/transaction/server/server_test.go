@@ -21,7 +21,6 @@ import (
 	"github.com/kinecosystem/kin-api/genproto/common/v3"
 	"github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/agora-transaction-services/pkg/appindex/static"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data/memory"
@@ -116,20 +115,23 @@ func TestSubmitSend_Invalid(t *testing.T) {
 		},
 	}
 
-	m, err := kin.NewMemo(2, kin.TransactionTypeSpend, 0, make([]byte, 29))
-	require.NoError(t, err)
+	/*
+		todo: when we do memo verification, uncomment this
+		m, err := kin.NewMemo(2, kin.TransactionTypeSpend, 0, make([]byte, 29))
+		require.NoError(t, err)
 
-	txn := emptyTxn
-	txn.Memo.Type = xdr.MemoTypeMemoHash
-	h := xdr.Hash(m)
-	txn.Memo.Hash = &h
+		txn := emptyTxn
+		txn.Memo.Type = xdr.MemoTypeMemoHash
+		h := xdr.Hash(m)
+		txn.Memo.Hash = &h
 
-	txnBytes, err := txn.MarshalBinary()
-	require.NoError(t, err)
+		txnBytes, err := txn.MarshalBinary()
+		require.NoError(t, err)
 
-	invalidRequests = append(invalidRequests, &transaction.SubmitSendRequest{
-		TransactionXdr: txnBytes,
-	})
+		invalidRequests = append(invalidRequests, &transaction.SubmitSendRequest{
+			TransactionXdr: txnBytes,
+		})
+	*/
 
 	for _, r := range invalidRequests {
 		_, err := env.client.SubmitSend(context.Background(), r)

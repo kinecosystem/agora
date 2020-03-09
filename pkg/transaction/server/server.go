@@ -63,16 +63,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transaction.SubmitSendRequ
 		return nil, status.Error(codes.InvalidArgument, "invalid xdr")
 	}
 
-	// If a hash memo is specified, check to see if it's an agora memo.
-	// agora memo's should be validated against the apps to validate the
-	// transaction is valid.
-	//
-	// todo: external validation
-	if tx.Memo.Hash != nil {
-		if !kin.IsValidMemoStrict(kin.Memo(*tx.Memo.Hash)) {
-			return nil, status.Error(codes.InvalidArgument, "invalid memo")
-		}
-	}
+	// todo: memo verification
 
 	// todo: whitelisting
 	// todo: timeout on txn send?
