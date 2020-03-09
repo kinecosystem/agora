@@ -2,56 +2,37 @@ package dynamodb
 
 import (
 	"context"
-	"fmt"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	"github.com/pkg/errors"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
-	"github.com/kinecosystem/agora-common/env"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data"
-)
-
-const (
-	baseTableName = "transaction-data"
-	putCondition  = "attribute_not_exists(prefix)"
-)
-
-var (
-	putConditionStr = aws.String(putCondition)
 )
 
 type db struct {
 	db dynamodbiface.ClientAPI
-
-	tableName *string
 }
 
 // New returns a dynamo backed data.Store
-func New(e env.AgoraEnvironment, client dynamodbiface.ClientAPI) (data.Store, error) {
-	if !e.IsValid() {
-		return nil, errors.Errorf("invalid environment: %s", e)
-	}
-
+func New(client dynamodbiface.ClientAPI) data.Store {
 	return &db{
-		db:        client,
-		tableName: aws.String(fmt.Sprintf("%s-%s", baseTableName, e)),
-	}, nil
+		db: client,
+	}
 }
 
 // Add implements data.Store.Add.
-func (d *db) Add(ctx context.Context, ad *common.AgoraData) error {
-	item, err := marshalData(ad)
+func (d *db) Add(ctx context.Context, ad *commonpb.AgoraData) error {
+	item, err := toItem(ad)
 	if err != nil {
 		return err
 	}
 
 	_, err = d.db.PutItemRequest(&dynamodb.PutItemInput{
-		TableName:           d.tableName,
+		TableName:           tableNameStr,
 		Item:                item,
 		ConditionExpression: putConditionStr,
 	}).Send(ctx)
@@ -70,7 +51,7 @@ func (d *db) Add(ctx context.Context, ad *common.AgoraData) error {
 }
 
 // Get implements data.Store.Get.
-func (d *db) Get(ctx context.Context, prefixOrKey []byte) (*common.AgoraData, error) {
+func (d *db) Get(ctx context.Context, prefixOrKey []byte) (*commonpb.AgoraData, error) {
 	queryExpression := "prefix = :prefix"
 	queryValues := make(map[string]dynamodb.AttributeValue)
 
@@ -90,7 +71,7 @@ func (d *db) Get(ctx context.Context, prefixOrKey []byte) (*common.AgoraData, er
 	// todo: expand the set of results and validate against the entire memo input.
 	//       this should be currently protected against via the Add(), though.
 	resp, err := d.db.QueryRequest(&dynamodb.QueryInput{
-		TableName:                 d.tableName,
+		TableName:                 tableNameStr,
 		Limit:                     aws.Int64(2),
 		KeyConditionExpression:    aws.String(queryExpression),
 		ExpressionAttributeValues: queryValues,
@@ -107,5 +88,5 @@ func (d *db) Get(ctx context.Context, prefixOrKey []byte) (*common.AgoraData, er
 		return nil, data.ErrCollision
 	}
 
-	return unmarshalData(resp.Items[0])
+	return fromItem(resp.Items[0])
 }

@@ -7,20 +7,20 @@ import (
 	"encoding/hex"
 	"net/http"
 
+	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/clients/horizonclient"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
-	"github.com/kinecosystem/kin-api/genproto/transaction/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
+	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-transaction-services/pkg/appindex"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data"
-	"github.com/kinecosystem/go/clients/horizon"
-	"github.com/kinecosystem/go/xdr"
 )
 
 type server struct {
@@ -33,15 +33,15 @@ type server struct {
 	clientV2 horizonclient.ClientInterface
 }
 
-// New returns a new transaction.TransactionServer.
+// New returns a new transactionpb.TransactionServer.
 func New(
 	txStore data.Store,
 	resolver appindex.Resolver,
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
-) transaction.TransactionServer {
+) transactionpb.TransactionServer {
 	return &server{
-		log: logrus.StandardLogger().WithField("type", "transaction/server"),
+		log: logrus.StandardLogger().WithField("type", "transactionpb/server"),
 
 		txStore:  txStore,
 		resolver: resolver,
@@ -51,8 +51,8 @@ func New(
 	}
 }
 
-// SubmitSend implements transaction.TransactionServer.SubmitSpend.
-func (s *server) SubmitSend(ctx context.Context, req *transaction.SubmitSendRequest) (*transaction.SubmitSendResponse, error) {
+// SubmitSend implements transactionpb.TransactionServer.SubmitSpend.
+func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRequest) (*transactionpb.SubmitSendResponse, error) {
 	log := s.log.WithField("method", "SubmitSend")
 	if err := req.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "")
@@ -75,7 +75,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transaction.SubmitSendRequ
 
 		// todo: proper inspection and error handling
 		log.WithError(err).Warn("Failed to submit txn")
-		return nil, status.Error(codes.Internal, "failed to submit transaction")
+		return nil, status.Error(codes.Internal, "failed to submit transactionpb")
 	}
 
 	hashBytes, err := hex.DecodeString(resp.Hash)
@@ -88,8 +88,8 @@ func (s *server) SubmitSend(ctx context.Context, req *transaction.SubmitSendRequ
 		return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
 	}
 
-	return &transaction.SubmitSendResponse{
-		Hash: &common.TransactionHash{
+	return &transactionpb.SubmitSendResponse{
+		Hash: &commonpb.TransactionHash{
 			Value: hashBytes,
 		},
 		Ledger:    int64(resp.Ledger),
@@ -97,8 +97,8 @@ func (s *server) SubmitSend(ctx context.Context, req *transaction.SubmitSendRequ
 	}, nil
 }
 
-// GetTransaction implements transaction.TransactionServer.GetTransaction.
-func (s *server) GetTransaction(ctx context.Context, req *transaction.GetTransactionRequest) (*transaction.GetTransactionResponse, error) {
+// GetTransaction implements transactionpb.TransactionServer.GetTransaction.
+func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTransactionRequest) (*transactionpb.GetTransactionResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "")
 	}
@@ -129,10 +129,10 @@ func (s *server) GetTransaction(ctx context.Context, req *transaction.GetTransac
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	resp := &transaction.GetTransactionResponse{
-		State:  transaction.GetTransactionResponse_SUCCESS,
+	resp := &transactionpb.GetTransactionResponse{
+		State:  transactionpb.GetTransactionResponse_SUCCESS,
 		Ledger: int64(tx.Ledger),
-		Item: &transaction.HistoryItem{
+		Item: &transactionpb.HistoryItem{
 			Hash:        req.TransactionHash,
 			ResultXdr:   result,
 			EnvelopeXdr: envelope,
@@ -169,8 +169,8 @@ func (s *server) GetTransaction(ctx context.Context, req *transaction.GetTransac
 	return resp, nil
 }
 
-// GetHistory implements transaction.TransactionServer.GetHistory.
-func (s *server) GetHistory(ctx context.Context, req *transaction.GetHistoryRequest) (*transaction.GetHistoryResponse, error) {
+// GetHistory implements transactionpb.TransactionServer.GetHistory.
+func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRequest) (*transactionpb.GetHistoryResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "")
 	}
@@ -183,13 +183,13 @@ func (s *server) GetHistory(ctx context.Context, req *transaction.GetHistoryRequ
 	txnReq := horizonclient.TransactionRequest{
 		ForAccount:    req.AccountId.Value,
 		IncludeFailed: false,
-		Limit: 100, // todo: we may eventually want to reduce this
+		Limit:         100, // todo: we may eventually want to reduce this
 	}
 
 	switch req.Direction {
-	case transaction.GetHistoryRequest_ASC:
+	case transactionpb.GetHistoryRequest_ASC:
 		txnReq.Order = horizonclient.OrderAsc
-	case transaction.GetHistoryRequest_DESC:
+	case transactionpb.GetHistoryRequest_DESC:
 		txnReq.Order = horizonclient.OrderDesc
 	}
 
@@ -213,7 +213,7 @@ func (s *server) GetHistory(ctx context.Context, req *transaction.GetHistoryRequ
 		return nil, status.Error(codes.Internal, "failed to get horizon txns")
 	}
 
-	resp := &transaction.GetHistoryResponse{}
+	resp := &transactionpb.GetHistoryResponse{}
 
 	// todo:  parallelize history lookups
 	for _, tx := range txns.Embedded.Records {
@@ -222,8 +222,8 @@ func (s *server) GetHistory(ctx context.Context, req *transaction.GetHistoryRequ
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 
-		item := &transaction.HistoryItem{
-			Hash: &common.TransactionHash{
+		item := &transactionpb.HistoryItem{
+			Hash: &commonpb.TransactionHash{
 				Value: hash,
 			},
 			ResultXdr:   result,
@@ -292,13 +292,13 @@ func getBinaryBlobs(hash, result, envelope string) (hashBytes, resultBytes, enve
 	return hashBytes, resultBytes, envelopeBytes, nil
 }
 
-func getCursor(c string) *transaction.Cursor {
+func getCursor(c string) *transactionpb.Cursor {
 	if c == "" {
 		return nil
 	}
 
 	// todo: it may be better to wrap the token, or something.
-	return &transaction.Cursor{
+	return &transactionpb.Cursor{
 		Value: []byte(c),
 	}
 }

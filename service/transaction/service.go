@@ -5,21 +5,21 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	agoraapp "github.com/kinecosystem/agora-common/app"
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	agoraapp "github.com/kinecosystem/agora-common/app"
-	"github.com/kinecosystem/agora-common/env"
-	"github.com/kinecosystem/agora-common/kin"
+	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
+
 	"github.com/kinecosystem/agora-transaction-services/pkg/appindex/static"
 	agoradata "github.com/kinecosystem/agora-transaction-services/pkg/data/dynamodb"
 	"github.com/kinecosystem/agora-transaction-services/pkg/transaction/server"
-	"github.com/kinecosystem/kin-api/genproto/transaction/v3"
 )
 
 type app struct {
-	txnServer transaction.TransactionServer
+	txnServer transactionpb.TransactionServer
 
 	shutdown   sync.Once
 	shutdownCh chan struct{}
@@ -44,15 +44,7 @@ func (a *app) Init(_ agoraapp.AppConfig) error {
 		return err
 	}
 
-	e, err := env.FromEnvVariable()
-	if err != nil {
-		return errors.Wrapf(err, "failed to get env")
-	}
-
-	store, err := agoradata.New(e, dynamodb.New(cfg))
-	if err != nil {
-		return errors.Wrapf(err, "failed to initialize agoradata store")
-	}
+	store := agoradata.New(dynamodb.New(cfg))
 
 	a.txnServer = server.New(
 		store,
@@ -66,7 +58,7 @@ func (a *app) Init(_ agoraapp.AppConfig) error {
 
 // RegisterWithGRPC implements agorapp.App.RegisterWithGRPC.
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
-	transaction.RegisterTransactionServer(server, a.txnServer)
+	transactionpb.RegisterTransactionServer(server, a.txnServer)
 }
 
 // ShutdownChan implements agorapp.App.ShutdownChan.

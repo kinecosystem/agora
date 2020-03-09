@@ -2,7 +2,6 @@ package dynamodb
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 
@@ -15,10 +14,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
 	dynamotest "github.com/kinecosystem/agora-common/aws/dynamodb/test"
-	"github.com/kinecosystem/agora-common/env"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data/tests"
 )
@@ -27,8 +25,6 @@ var (
 	testStore    data.Store
 	teardown     func()
 	dynamoClient dynamodbiface.ClientAPI
-
-	tableNameStr = aws.String(fmt.Sprintf("%s-%s", baseTableName, env.AgoraEnvironmentTest))
 )
 
 func TestMain(m *testing.M) {
@@ -53,13 +49,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	testStore, err = New(env.AgoraEnvironmentTest, dynamoClient)
-	if err != nil {
-		log.WithError(err).Error("Error creating store")
-		cleanUpFunc()
-		os.Exit(1)
-	}
-
+	testStore = New(dynamoClient)
 	teardown = func() {
 		if pc := recover(); pc != nil {
 			cleanUpFunc()
@@ -90,14 +80,14 @@ func TestBadData(t *testing.T) {
 		fk[i] = i
 	}
 
-	d := &common.AgoraData{
+	d := &commonpb.AgoraData{
 		Title:           "Test",
 		Description:     "abc",
-		TransactionType: common.AgoraData_EARN,
+		TransactionType: commonpb.AgoraData_EARN,
 		ForeignKey:      fk,
 	}
 
-	item, err := marshalData(d)
+	item, err := toItem(d)
 	require.NoError(t, err)
 
 	item["data"] = dynamodb.AttributeValue{B: []byte{3, 2, 1}}

@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kinecosystem/agora-common/testutil"
+	"github.com/kinecosystem/go/clients/horizon"
+	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
+	"github.com/kinecosystem/go/xdr"
 	"github.com/stellar/go/clients/horizonclient"
 	horizonprotocolsv2 "github.com/stellar/go/protocols/horizon"
 	"github.com/stellar/go/support/render/problem"
@@ -18,15 +22,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
-	"github.com/kinecosystem/kin-api/genproto/transaction/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
+	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/agora-transaction-services/pkg/appindex/static"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data/memory"
-	"github.com/kinecosystem/go/clients/horizon"
-	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
-	"github.com/kinecosystem/go/xdr"
 )
 
 var (
@@ -53,7 +53,7 @@ var (
 )
 
 type testEnv struct {
-	client transaction.TransactionClient
+	client transactionpb.TransactionClient
 
 	hClient   *horizon.MockClient
 	hClientV2 *horizonclient.MockClient
@@ -63,13 +63,13 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	conn, serv, err := testutil.NewServer()
 	require.NoError(t, err)
 
-	env.client = transaction.NewTransactionClient(conn)
+	env.client = transactionpb.NewTransactionClient(conn)
 	env.hClient = &horizon.MockClient{}
 	env.hClientV2 = &horizonclient.MockClient{}
 
 	s := New(memory.New(), static.New(), env.hClient, env.hClientV2)
 	serv.RegisterService(func(server *grpc.Server) {
-		transaction.RegisterTransactionServer(server, s)
+		transactionpb.RegisterTransactionServer(server, s)
 	})
 
 	cleanup, err = serv.Serve()
@@ -94,7 +94,7 @@ func TestSubmitSend_Happy(t *testing.T) {
 	}
 	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
 
-	resp, err := env.client.SubmitSend(context.Background(), &transaction.SubmitSendRequest{
+	resp, err := env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
 		TransactionXdr: txnBytes,
 	})
 
@@ -108,7 +108,7 @@ func TestSubmitSend_Invalid(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	invalidRequests := []*transaction.SubmitSendRequest{
+	invalidRequests := []*transactionpb.SubmitSendRequest{
 		{},
 		{
 			TransactionXdr: []byte{1, 2},
@@ -128,7 +128,7 @@ func TestSubmitSend_Invalid(t *testing.T) {
 		txnBytes, err := txn.MarshalBinary()
 		require.NoError(t, err)
 
-		invalidRequests = append(invalidRequests, &transaction.SubmitSendRequest{
+		invalidRequests = append(invalidRequests, &transactionpb.SubmitSendRequest{
 			TransactionXdr: txnBytes,
 		})
 	*/
@@ -164,7 +164,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 
 	for _, tc := range testCases {
 		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonprotocols.TransactionSuccess{}, error(&tc.hError)).Once()
-		_, err := env.client.SubmitSend(context.Background(), &transaction.SubmitSendRequest{
+		_, err := env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
 			TransactionXdr: txnBytes,
 		})
 		assert.Equal(t, tc.grpcCode, status.Code(err))
@@ -188,15 +188,15 @@ func TestGetTransaction_Happy(t *testing.T) {
 	}
 
 	env.hClient.On("LoadTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
-	resp, err := env.client.GetTransaction(context.Background(), &transaction.GetTransactionRequest{
-		TransactionHash: &common.TransactionHash{
+	resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
+		TransactionHash: &commonpb.TransactionHash{
 			Value: hashBytes[:],
 		},
 	})
 	require.NoError(t, err)
 
 	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
-	assert.Equal(t, transaction.GetTransactionResponse_SUCCESS, resp.State)
+	assert.Equal(t, transactionpb.GetTransactionResponse_SUCCESS, resp.State)
 	assert.NotNil(t, resp.Item)
 	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
 	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
@@ -235,8 +235,8 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 
 	for _, tc := range testCases {
 		env.hClient.On("LoadTransaction", mock.AnythingOfType("string")).Return(horizonprotocols.Transaction{}, error(&tc.hError)).Once()
-		_, err := env.client.GetTransaction(context.Background(), &transaction.GetTransactionRequest{
-			TransactionHash: &common.TransactionHash{
+		_, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
+			TransactionHash: &commonpb.TransactionHash{
 				Value: make([]byte, 32),
 			},
 		})
@@ -268,18 +268,18 @@ func TestGetHistory_Happy(t *testing.T) {
 	type testCase struct {
 		cursor    string
 		direction horizonclient.Order
-		request   *transaction.GetHistoryRequest
+		request   *transactionpb.GetHistoryRequest
 	}
 
 	testCases := []testCase{
 		{
 			// No cursor or direction specified
-			request:   &transaction.GetHistoryRequest{},
+			request:   &transactionpb.GetHistoryRequest{},
 			direction: horizonclient.OrderAsc,
 		},
 		{
-			request: &transaction.GetHistoryRequest{
-				Cursor: &transaction.Cursor{
+			request: &transactionpb.GetHistoryRequest{
+				Cursor: &transactionpb.Cursor{
 					Value: []byte("abc"),
 				},
 			},
@@ -287,17 +287,17 @@ func TestGetHistory_Happy(t *testing.T) {
 			direction: horizonclient.OrderAsc,
 		},
 		{
-			request: &transaction.GetHistoryRequest{
-				Direction: transaction.GetHistoryRequest_DESC,
+			request: &transactionpb.GetHistoryRequest{
+				Direction: transactionpb.GetHistoryRequest_DESC,
 			},
 			direction: horizonclient.OrderDesc,
 		},
 		{
-			request: &transaction.GetHistoryRequest{
-				Cursor: &transaction.Cursor{
+			request: &transactionpb.GetHistoryRequest{
+				Cursor: &transactionpb.Cursor{
 					Value: []byte("def"),
 				},
-				Direction: transaction.GetHistoryRequest_DESC,
+				Direction: transactionpb.GetHistoryRequest_DESC,
 			},
 			cursor:    "def",
 			direction: horizonclient.OrderDesc,
@@ -307,7 +307,7 @@ func TestGetHistory_Happy(t *testing.T) {
 	for i, tc := range testCases {
 		env.hClientV2.On("Transactions", mock.Anything).Return(page, nil).Once()
 
-		tc.request.AccountId = &common.StellarAccountId{
+		tc.request.AccountId = &commonpb.StellarAccountId{
 			Value: strings.Repeat("G", 56),
 		}
 
@@ -359,8 +359,8 @@ func TestGetHistory_HorizonErrors(t *testing.T) {
 
 	for _, tc := range testCases {
 		env.hClientV2.On("Transactions", mock.Anything).Return(horizonprotocolsv2.TransactionsPage{}, error(&tc.hError)).Once()
-		_, err := env.client.GetHistory(context.Background(), &transaction.GetHistoryRequest{
-			AccountId: &common.StellarAccountId{
+		_, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
+			AccountId: &commonpb.StellarAccountId{
 				Value: strings.Repeat("G", 56),
 			},
 		})
