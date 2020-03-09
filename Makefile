@@ -46,4 +46,4 @@ deploy-transaction: GO_OS=linux
 deploy-transaction: build
 deploy-transaction: transaction-image
 deploy-transaction:
-	cddc deploy --service transaction-service -e $(ENV)
+	AWS_PROFILE=ecosystem cddc deploy --service transaction-service -e $(ENV) --branch $(GIT_BRANCH)
