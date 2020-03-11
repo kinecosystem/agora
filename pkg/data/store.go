@@ -5,7 +5,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 )
 
 var (
@@ -21,7 +21,7 @@ type Store interface {
 	// key prefix.
 	//
 	// todo: potentially support full FK matching.
-	Add(context.Context, *common.AgoraData) error
+	Add(context.Context, *commonpb.AgoraData) error
 
 	// Get gets the agora data for either a prefix (29 bytes) or a full FK (30 bytes).
 	//
@@ -29,5 +29,5 @@ type Store interface {
 	//
 	// todo: should potentally be doing stronger validation on prefix (230-bit mask).
 	// todo: API is likely breaking if we support full FK resolution, since prefix is multi-return.
-	Get(ctx context.Context, prefixOrKey []byte) (*common.AgoraData, error)
+	Get(ctx context.Context, prefixOrKey []byte) (*commonpb.AgoraData, error)
 }

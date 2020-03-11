@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
+	dynamotest "github.com/kinecosystem/agora-common/aws/dynamodb/test"
 	"github.com/ory/dockertest"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -16,7 +17,6 @@ import (
 
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
-	dynamotest "github.com/kinecosystem/agora-common/aws/dynamodb/test"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data"
 	"github.com/kinecosystem/agora-transaction-services/pkg/data/tests"
 )

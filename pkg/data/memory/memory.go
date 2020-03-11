@@ -7,31 +7,31 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora-transaction-services/pkg/data"
 )
 
 type memory struct {
 	sync.Mutex
-	mappings map[string]*common.AgoraData
+	mappings map[string]*commonpb.AgoraData
 }
 
 // New returns an in-memory data.Store.
 func New() data.Store {
 	return &memory{
-		mappings: make(map[string]*common.AgoraData),
+		mappings: make(map[string]*commonpb.AgoraData),
 	}
 }
 
 func (m *memory) reset() {
 	m.Lock()
-	m.mappings = make(map[string]*common.AgoraData)
+	m.mappings = make(map[string]*commonpb.AgoraData)
 	m.Unlock()
 }
 
 // Add implements data.Store.Add.
-func (m *memory) Add(_ context.Context, d *common.AgoraData) error {
+func (m *memory) Add(_ context.Context, d *commonpb.AgoraData) error {
 	k := string(d.ForeignKey[:29])
 
 	m.Lock()
@@ -41,12 +41,12 @@ func (m *memory) Add(_ context.Context, d *common.AgoraData) error {
 		return data.ErrCollision
 	}
 
-	m.mappings[k] = proto.Clone(d).(*common.AgoraData)
+	m.mappings[k] = proto.Clone(d).(*commonpb.AgoraData)
 	return nil
 }
 
 // Get implements data.Store.Get.
-func (m *memory) Get(_ context.Context, prefixOrKey []byte) (*common.AgoraData, error) {
+func (m *memory) Get(_ context.Context, prefixOrKey []byte) (*commonpb.AgoraData, error) {
 	var k string
 	switch len(prefixOrKey) {
 	case 29:
@@ -65,5 +65,5 @@ func (m *memory) Get(_ context.Context, prefixOrKey []byte) (*common.AgoraData, 
 		return nil, data.ErrNotFound
 	}
 
-	return proto.Clone(d).(*common.AgoraData), nil
+	return proto.Clone(d).(*commonpb.AgoraData), nil
 }

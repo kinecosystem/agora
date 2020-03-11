@@ -3,10 +3,10 @@ package appindex
 import (
 	"context"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 
-	"github.com/kinecosystem/agora-common/kin"
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 )
 
 var (
@@ -17,5 +17,5 @@ var (
 // for a given memo. If the resolver cannot determine the endpoint,
 // ErrNotFound is returned.
 type Resolver interface {
-	Resolve(context.Context, kin.Memo) (*common.AgoraDataUrl, error)
+	Resolve(context.Context, kin.Memo) (*commonpb.AgoraDataUrl, error)
 }

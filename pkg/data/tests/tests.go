@@ -7,7 +7,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora-transaction-services/pkg/data"
 )
@@ -26,10 +26,10 @@ func testRoundTrip(t *testing.T, store data.Store) {
 			fk[i] = i
 		}
 
-		d := &common.AgoraData{
+		d := &commonpb.AgoraData{
 			Title:           "Test",
 			Description:     "abc",
-			TransactionType: common.AgoraData_EARN,
+			TransactionType: commonpb.AgoraData_EARN,
 			ForeignKey:      fk,
 		}
 
@@ -65,10 +65,10 @@ func testCollision(t *testing.T, store data.Store) {
 			fk[i] = i
 		}
 
-		d := &common.AgoraData{
+		d := &commonpb.AgoraData{
 			Title:           "Test",
 			Description:     "abc",
-			TransactionType: common.AgoraData_EARN,
+			TransactionType: commonpb.AgoraData_EARN,
 			ForeignKey:      fk,
 		}
 

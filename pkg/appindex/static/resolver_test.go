@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-transaction-services/pkg/appindex"
 )
 
