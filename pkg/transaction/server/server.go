@@ -70,7 +70,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 	resp, err := s.client.SubmitTransaction(base64.StdEncoding.EncodeToString(req.TransactionXdr))
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
-			log.WithField("problem", hErr.Problem).Warn("Failed to submti txn")
+			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
 		}
 
 		// todo: proper inspection and error handling
@@ -116,7 +116,7 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 			case http.StatusNotFound:
 				return nil, status.Error(codes.NotFound, "")
 			default:
-				log.Warn("Unexpected error from horizon:", hErr.Problem)
+				log.WithField("problem", hErr.Problem).Warn("Unexpected error from horizon")
 			}
 		}
 
@@ -205,7 +205,7 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 			case http.StatusNotFound:
 				return nil, status.Error(codes.NotFound, "")
 			default:
-				log.Warn("Unexpected error from horizon:", hErr.Problem)
+				log.WithField("problem", hErr.Problem).Warn("Unexpected error from horizon")
 			}
 		}
 
