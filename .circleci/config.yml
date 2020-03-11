@@ -1,0 +1,41 @@
+version: 2
+
+jobs:
+  build:
+    machine:
+      image: ubuntu-1604:201903-01
+
+    environment:
+      TEST_RESULTS: /tmp/test-results
+
+    steps:
+      - checkout
+
+      - run:
+          name: remove existing Go installation
+          command: sudo rm -r /usr/local/go/
+      - run:
+          name: install Go 1.14
+          command: |
+            wget https://dl.google.com/go/go1.14.linux-amd64.tar.gz
+            sudo tar -xvzf go1.14.linux-amd64.tar.gz -C /usr/local
+      - run:
+          name: install gotestsum 0.4.0
+          command: |
+            wget https://github.com/gotestyourself/gotestsum/releases/download/v0.4.0/gotestsum_0.4.0_linux_amd64.tar.gz
+            sudo tar -xvzf gotestsum_0.4.0_linux_amd64.tar.gz -C /usr/local/bin
+
+      - run: mkdir -p $TEST_RESULTS
+      - restore_cache:
+          keys:
+            - go-mod-v1-{{ checksum "go.sum" }}
+
+      - run: make deps
+      - run: gotestsum --junitfile $TEST_RESULTS/unit-tests.xml
+
+      - save_cache:
+          key: go-mod-v1-{{ checksum "go.sum" }}
+          paths:
+            - ~/.cache/go-build
+      - store_test_results:
+          path: /tmp/test-results
