@@ -39,11 +39,11 @@ images: build images-only
 .PHONY: images-only transaction-image
 images-only: transaction-image
 transaction-image:
-	docker build service/transaction -t transaction-service-$(ENV):$(GIT_BRANCH)
+	docker build service/transaction -t transaction-service:$(GIT_BRANCH)
 
 .PHONY: deploy-transaction
 deploy-transaction: GO_OS=linux
 deploy-transaction: build
 deploy-transaction: transaction-image
 deploy-transaction:
-	AWS_PROFILE=ecosystem cddc deploy --service transaction-service -e $(ENV) --branch $(GIT_BRANCH)
+	AWS_PROFILE=agora$(ENV) cddc deploy --service transaction-service -e $(ENV) --branch $(GIT_BRANCH)
