@@ -33,12 +33,14 @@ func run() error {
 		}
 
 		for _, t := range txns.Embedded.Records {
+			var k string
 			if t.MemoType != "text" {
-				counts["other"]++
-				continue
+				k = "other"
+			} else {
+				k = t.Memo[:5]
 			}
 
-			counts[t.Memo[:5]]++
+			counts[k] += int(t.OperationCount)
 		}
 
 		fmt.Printf("Ledger: %d\n---\n", r.Sequence)
