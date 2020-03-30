@@ -46,4 +46,4 @@ deploy-transaction: GO_OS=linux
 deploy-transaction: build
 deploy-transaction: transaction-image
 deploy-transaction:
-	AWS_PROFILE=agora$(ENV) cddc deploy --service transaction-service -e $(ENV) --branch $(GIT_BRANCH)
+	cddc deploy --service-config service/transaction/service.yaml -p agora$(ENV) -t $(GIT_BRANCH)
