@@ -59,10 +59,10 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*commonpb.Invoice, error
 		return nil, errors.Wrapf(err, "failed to unmarshal invoice item")
 	}
 
-	data := &commonpb.Invoice{}
-	if err := proto.Unmarshal(invoiceItem.Contents, data); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal data")
+	inv := &commonpb.Invoice{}
+	if err := proto.Unmarshal(invoiceItem.Contents, inv); err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal invoice")
 	}
 
-	return data, nil
+	return inv, nil
 }
