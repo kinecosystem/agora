@@ -17,6 +17,4 @@ require (
 	google.golang.org/grpc v1.25.1
 )
 
-replace github.com/kinecosystem/agora-common => ../agora-common
-
 replace github.com/kinecosystem/kin-api => ../kin-api
