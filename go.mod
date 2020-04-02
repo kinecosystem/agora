@@ -13,6 +13,8 @@ require (
 	github.com/pkg/errors v0.8.1
 	github.com/sirupsen/logrus v1.4.2
 	github.com/stellar/go v0.0.0-20191211203732-552e507ffa37
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.5.1
 	google.golang.org/grpc v1.25.1
 )
+
+replace github.com/kinecosystem/agora-common => ../agora-common
