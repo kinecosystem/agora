@@ -5,9 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/golang/protobuf/ptypes"
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
@@ -26,7 +30,9 @@ import (
 	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex/static"
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data/memory"
+	datadb "github.com/kinecosystem/agora-transaction-services-internal/pkg/data/memory"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
+	invoicedb "github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice/memory"
 )
 
 var (
@@ -50,6 +56,19 @@ var (
 			},
 		},
 	}
+	inv = &commonpb.Invoice{
+		Items: []*commonpb.Invoice_LineItem{
+			{
+				Title:       "lineitem1",
+				Description: "desc1",
+				Amount:      5,
+			},
+		},
+		Nonce: &commonpb.Nonce{
+			GenerationTime: ptypes.TimestampNow(),
+			Value:          rand.Int63(),
+		},
+	}
 )
 
 type testEnv struct {
@@ -59,7 +78,7 @@ type testEnv struct {
 	hClientV2 *horizonclient.MockClient
 }
 
-func setup(t *testing.T) (env testEnv, cleanup func()) {
+func setup(t *testing.T) (env testEnv, store invoice.Store, cleanup func()) {
 	conn, serv, err := testutil.NewServer()
 	require.NoError(t, err)
 
@@ -67,7 +86,8 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	env.hClient = &horizon.MockClient{}
 	env.hClientV2 = &horizonclient.MockClient{}
 
-	s := New(memory.New(), static.New(), env.hClient, env.hClientV2)
+	store = invoicedb.New()
+	s := New(datadb.New(), store, static.New(), env.hClient, env.hClientV2)
 	serv.RegisterService(func(server *grpc.Server) {
 		transactionpb.RegisterTransactionServer(server, s)
 	})
@@ -75,11 +95,11 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	cleanup, err = serv.Serve()
 	require.NoError(t, err)
 
-	return env, cleanup
+	return env, store, cleanup
 }
 
 func TestSubmitSend_Happy(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -104,8 +124,184 @@ func TestSubmitSend_Happy(t *testing.T) {
 	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
 }
 
+func TestSubmitSend_WithInvoice(t *testing.T) {
+	env, _, cleanup := setup(t)
+	defer cleanup()
+
+	prefix, err := invoice.GetHashPrefix(inv)
+	require.NoError(t, err)
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, prefix)
+	require.NoError(t, err)
+	xdrHash := xdr.Hash{}
+	for i := 0; i < len(memo); i++ {
+		xdrHash[i] = memo[i]
+	}
+
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+
+	memoTxn := emptyTxn
+	memoTxn.Memo = xdrMemo
+	txnBytes, err := memoTxn.MarshalBinary()
+	require.NoError(t, err)
+	hashBytes := sha256.Sum256(txnBytes)
+
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(hashBytes[:]),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+
+	resp, err := env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        inv,
+	})
+
+	assert.NoError(t, err)
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+}
+
+func TestSubmitSend_InvalidInvoice(t *testing.T) {
+	env, store, cleanup := setup(t)
+	defer cleanup()
+
+	txnBytes, err := emptyTxn.MarshalBinary()
+	require.NoError(t, err)
+
+	// invoice nonce too old
+	timestamp, err := ptypes.TimestampProto(time.Now().Add(-24*time.Hour - 1*time.Second))
+	require.NoError(t, err)
+
+	invalidInvoice := &commonpb.Invoice{
+		Items: []*commonpb.Invoice_LineItem{
+			{
+				Title:  "lineitem1",
+				Amount: 1,
+			},
+		},
+		Nonce: &commonpb.Nonce{
+			GenerationTime: timestamp,
+			Value:          rand.Int63(),
+		},
+	}
+	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        invalidInvoice,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// invoice nonce too in the future
+	timestamp, err = ptypes.TimestampProto(time.Now().Add(1 * time.Hour + 1*time.Second))
+	require.NoError(t, err)
+
+	invalidInvoice = &commonpb.Invoice{
+		Items: []*commonpb.Invoice_LineItem{
+			{
+				Title:  "lineitem1",
+				Amount: 1,
+			},
+		},
+		Nonce: &commonpb.Nonce{
+			GenerationTime: timestamp,
+			Value:          rand.Int63(),
+		},
+	}
+	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        invalidInvoice,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// invoice exists in store already
+	txnBytes, err = emptyTxn.MarshalBinary()
+	require.NoError(t, err)
+	hash := sha256.Sum256(txnBytes)
+	err = store.Add(context.Background(), inv, hash[:])
+	require.NoError(t, err)
+
+	prefix, err := invoice.GetHashPrefix(inv)
+	require.NoError(t, err)
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, prefix)
+	require.NoError(t, err)
+
+	xdrHash := xdr.Hash{}
+	for i := 0; i < len(memo); i++ {
+		xdrHash[i] = memo[i]
+	}
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+
+	memoTxn := emptyTxn
+	memoTxn.Memo = xdrMemo
+	txnBytes, err = memoTxn.MarshalBinary()
+	require.NoError(t, err)
+
+	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        inv,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestSubmitSend_WithInvoiceInvalidMemo(t *testing.T) {
+	env, _, cleanup := setup(t)
+	defer cleanup()
+
+	txnBytes, err := emptyTxn.MarshalBinary()
+	require.NoError(t, err)
+
+	// missing memo
+	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        inv,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// invalid agora memo
+	wrongTxn := emptyTxn
+	xdrHash := xdr.Hash{byte(1)}
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+
+	wrongTxn.Memo = xdrMemo
+	txnBytes, err = wrongTxn.MarshalBinary()
+	require.NoError(t, err)
+
+	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        inv,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// wrong fk in memo
+	wrongTxn = emptyTxn
+	wrongBytes := sha256.Sum256([]byte("somedata"))
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, wrongBytes[:29])
+	require.NoError(t, err)
+
+	xdrHash = xdr.Hash{}
+	for i := 0; i < len(memo); i++ {
+		xdrHash[i] = memo[i]
+	}
+	xdrMemo, err = xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+
+	wrongTxn.Memo = xdrMemo
+	txnBytes, err = wrongTxn.MarshalBinary()
+	require.NoError(t, err)
+
+	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+		TransactionXdr: txnBytes,
+		Invoice:        inv,
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
 func TestSubmitSend_Invalid(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	invalidRequests := []*transactionpb.SubmitSendRequest{
@@ -140,7 +336,7 @@ func TestSubmitSend_Invalid(t *testing.T) {
 }
 
 func TestSubmit_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -172,7 +368,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 }
 
 func TestGetTransaction_Happy(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -206,7 +402,7 @@ func TestGetTransaction_Happy(t *testing.T) {
 }
 
 func TestGetTransaction_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	type testCase struct {
@@ -245,7 +441,7 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 }
 
 func TestGetHistory_Happy(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	page := horizonprotocolsv2.TransactionsPage{
@@ -330,7 +526,7 @@ func TestGetHistory_Happy(t *testing.T) {
 }
 
 func TestGetHistory_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t)
+	env, _, cleanup := setup(t)
 	defer cleanup()
 
 	type testCase struct {

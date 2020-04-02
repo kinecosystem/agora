@@ -14,8 +14,9 @@ import (
 	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex/static"
-	agoradata "github.com/kinecosystem/agora-transaction-services-internal/pkg/data/dynamodb"
+	agoradatadb "github.com/kinecosystem/agora-transaction-services-internal/pkg/data/dynamodb"
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/transaction/server"
+	invoicedb "github.com/kinecosystem/agora-transaction-services/pkg/invoice/dynamodb"
 )
 
 type app struct {
@@ -44,10 +45,13 @@ func (a *app) Init(_ agoraapp.AppConfig) error {
 		return err
 	}
 
-	store := agoradata.New(dynamodb.New(cfg))
+	dynamoClient := dynamodb.New(cfg)
+	store := agoradatadb.New(dynamoClient)
+	invoiceStore := invoicedb.New(dynamoClient)
 
 	a.txnServer = server.New(
 		store,
+		invoiceStore,
 		static.New(),
 		client,
 		clientV2,

@@ -83,3 +83,24 @@ func (m *memory) Get(_ context.Context, prefix []byte, txHash []byte) (*commonpb
 	}
 	return nil, invoice.ErrNotFound
 }
+
+// DoesNotExist implements invoice.Store.DoesNotExist
+func (m *memory) DoesNotExist(_ context.Context, inv *commonpb.Invoice) error {
+	prefix, err := invoice.GetHashPrefix(inv)
+	if err != nil {
+		return errors.Wrap(err, "failed to get invoice hash prefix")
+	}
+
+	entryList, exists := m.entries[string(prefix)]
+	if !exists {
+		return nil
+	}
+
+	for _, e := range entryList {
+		if proto.Equal(e.contents, inv) {
+			return invoice.ErrExists
+		}
+	}
+
+	return nil
+}

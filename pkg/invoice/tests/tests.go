@@ -57,6 +57,8 @@ func testRoundTrip(t *testing.T, store invoice.Store) {
 		require.Equal(t, invoice.ErrNotFound, err)
 		require.Nil(t, actual)
 
+		require.NoError(t, store.DoesNotExist(context.Background(), inv))
+
 		require.NoError(t, store.Add(context.Background(), inv, txKey))
 
 		b, err := proto.Marshal(inv)
@@ -68,6 +70,9 @@ func testRoundTrip(t *testing.T, store invoice.Store) {
 		actual, err = store.Get(context.Background(), memo.ForeignKey(), txKey)
 		require.NoError(t, err)
 		require.True(t, proto.Equal(inv, actual))
+
+		err = store.DoesNotExist(context.Background(), inv)
+		require.Equal(t, invoice.ErrExists, err)
 	})
 }
 

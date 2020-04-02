@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"time"
 
+	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/xdr"
@@ -21,13 +23,15 @@ import (
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex"
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
 )
 
 type server struct {
 	log *logrus.Entry
 
-	txStore  data.Store
-	resolver appindex.Resolver
+	txStore      data.Store
+	invoiceStore invoice.Store
+	resolver     appindex.Resolver
 
 	client   horizon.ClientInterface
 	clientV2 horizonclient.ClientInterface
@@ -36,6 +40,7 @@ type server struct {
 // New returns a new transactionpb.TransactionServer.
 func New(
 	txStore data.Store,
+	invoiceStore invoice.Store,
 	resolver appindex.Resolver,
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
@@ -43,8 +48,9 @@ func New(
 	return &server{
 		log: logrus.StandardLogger().WithField("type", "transactionpb/server"),
 
-		txStore:  txStore,
-		resolver: resolver,
+		txStore:      txStore,
+		invoiceStore: invoiceStore,
+		resolver:     resolver,
 
 		client:   client,
 		clientV2: clientV2,
@@ -54,18 +60,54 @@ func New(
 // SubmitSend implements transactionpb.TransactionServer.SubmitSpend.
 func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRequest) (*transactionpb.SubmitSendResponse, error) {
 	log := s.log.WithField("method", "SubmitSend")
-	if err := req.Validate(); err != nil {
-		return nil, status.Error(codes.InvalidArgument, "")
-	}
 
 	var tx xdr.Transaction
 	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.TransactionXdr), &tx); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid xdr")
 	}
 
-	// todo: memo verification
+	// todo: memo verification even if invoice is nil
+	if req.Invoice != nil {
+		genTime, err := ptypes.Timestamp(req.Invoice.Nonce.GenerationTime)
+		if err != nil {
+			log.WithError(err).Warn("failed to convert nonce generation time")
+			return nil, status.Error(codes.Internal, "failed to validate invoice")
+		}
+		t := time.Now()
+		if genTime.After(t.Add(1*time.Hour)) || genTime.Before(t.Add(-24*time.Hour)) {
+			return nil, status.Error(codes.InvalidArgument, "invalid nonce time")
+		}
 
-	// todo: whitelisting
+		if tx.Memo.Hash == nil {
+			return nil, status.Error(codes.InvalidArgument, "invalid memo")
+		}
+
+		memo := kin.Memo(*tx.Memo.Hash)
+		if !kin.IsValidMemoStrict(memo) {
+			return nil, status.Error(codes.InvalidArgument, "invalid memo")
+		}
+
+		expectedFK, err := invoice.GetHashPrefix(req.Invoice)
+		if err != nil {
+			log.WithError(err).Warn("failed to get invoice hash prefix")
+			return nil, status.Error(codes.Internal, "failed to validate invoice")
+		}
+
+		if !bytes.Equal(memo.ForeignKey(), expectedFK) {
+			return nil, status.Error(codes.InvalidArgument, "invalid memo")
+		}
+
+		err = s.invoiceStore.DoesNotExist(ctx, req.Invoice)
+		if err != nil {
+			if err == invoice.ErrExists {
+				return nil, status.Error(codes.InvalidArgument, "invoice already paid")
+			} else {
+				log.WithError(err).Warn("failed to check if invoice exists")
+				return nil, status.Error(codes.Internal, "failed to validate invoice")
+			}
+		}
+	}
+
 	// todo: timeout on txn send?
 	resp, err := s.client.SubmitTransaction(base64.StdEncoding.EncodeToString(req.TransactionXdr))
 	if err != nil {
@@ -75,7 +117,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 
 		// todo: proper inspection and error handling
 		log.WithError(err).Warn("Failed to submit txn")
-		return nil, status.Error(codes.Internal, "failed to submit transactionpb")
+		return nil, status.Error(codes.Internal, "failed to submit transaction")
 	}
 
 	hashBytes, err := hex.DecodeString(resp.Hash)
@@ -86,6 +128,15 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 	resultXDR, err := base64.StdEncoding.DecodeString(resp.Result)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
+	}
+
+	if req.Invoice != nil {
+		err := s.invoiceStore.Add(ctx, req.Invoice, hashBytes)
+		if err != nil {
+			// todo: what should be returned in this case? maybe separate result code
+			log.WithError(err).Warn("failed to store invoice")
+			return nil, status.Error(codes.Internal, "failed to store invoice after submitting transaction")
+		}
 	}
 
 	return &transactionpb.SubmitSendResponse{
@@ -99,10 +150,6 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 
 // GetTransaction implements transactionpb.TransactionServer.GetTransaction.
 func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTransactionRequest) (*transactionpb.GetTransactionResponse, error) {
-	if err := req.Validate(); err != nil {
-		return nil, status.Error(codes.InvalidArgument, "")
-	}
-
 	log := s.log.WithFields(logrus.Fields{
 		"method": "GetTransaction",
 		"hash":   hex.EncodeToString(req.TransactionHash.Value),
@@ -171,10 +218,6 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 
 // GetHistory implements transactionpb.TransactionServer.GetHistory.
 func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRequest) (*transactionpb.GetHistoryResponse, error) {
-	if err := req.Validate(); err != nil {
-		return nil, status.Error(codes.InvalidArgument, "")
-	}
-
 	log := s.log.WithFields(logrus.Fields{
 		"method":  "GetHistory",
 		"account": req.AccountId.Value,
