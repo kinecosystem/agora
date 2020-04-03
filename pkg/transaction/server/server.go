@@ -94,7 +94,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 		}
 
 		if !bytes.Equal(memo.ForeignKey(), expectedFK) {
-			return nil, status.Error(codes.InvalidArgument, "invalid memo")
+			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice hash")
 		}
 
 		err = s.invoiceStore.DoesNotExist(ctx, req.Invoice)

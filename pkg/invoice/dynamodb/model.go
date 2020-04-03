@@ -38,7 +38,7 @@ func toItem(inv *commonpb.Invoice, txHash []byte) (map[string]dynamodb.Attribute
 
 	prefix, err := invoice.GetHashPrefix(inv)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get invoice prefix")
+		return nil, errors.Wrap(err, "failed to get invoice hash prefix")
 	}
 
 	b, err := proto.Marshal(inv)
