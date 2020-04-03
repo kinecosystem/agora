@@ -27,7 +27,7 @@ var (
 
 type invoiceItem struct {
 	Prefix   []byte `dynamodbav:"prefix"`
-	TXHash   []byte `dynamodbav:"tx_hash"`
+	TxHash   []byte `dynamodbav:"tx_hash"`
 	Contents []byte `dynamodbav:"contents"`
 }
 
@@ -48,7 +48,7 @@ func toItem(inv *commonpb.Invoice, txHash []byte) (map[string]dynamodb.Attribute
 
 	return dynamodbattribute.MarshalMap(&invoiceItem{
 		Prefix:   prefix,
-		TXHash:   txHash,
+		TxHash:   txHash,
 		Contents: b,
 	})
 }

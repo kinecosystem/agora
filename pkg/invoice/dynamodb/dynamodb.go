@@ -7,7 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
@@ -83,45 +82,21 @@ func (d *db) Get(ctx context.Context, prefix []byte, txHash []byte) (*commonpb.I
 	return fromItem(resp.Item)
 }
 
-func (d *db) DoesNotExist(ctx context.Context, inv *commonpb.Invoice) error {
-	prefix, err := invoice.GetHashPrefix(inv)
-	if err != nil {
-		return errors.Wrap(err, "failed to get invoice prefix")
-	}
-
+// PrefixExists implements invoice.Store.PrefixExists
+func (d *db) PrefixExists(ctx context.Context, prefix []byte) (bool, error) {
 	input := &dynamodb.QueryInput{
 		TableName:              tableNameStr,
 		KeyConditionExpression: aws.String("prefix = :prefix"),
 		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
 			":prefix": {B: prefix},
 		},
+		Limit: aws.Int64(1), // Given the put condition, only 1 should exist
 	}
 
-	for {
-		resp, err := d.db.QueryRequest(input).Send(ctx)
-		if err != nil {
-			return errors.Wrap(err, "failed to query invoices")
-		}
-
-		if len(resp.Items) == 0 {
-			return nil
-		}
-
-		for _, item := range resp.Items {
-			storedInv, err := fromItem(item)
-			if err != nil {
-				return err
-			}
-			if proto.Equal(storedInv, inv) {
-				return invoice.ErrExists
-			}
-		}
-
-		if resp.LastEvaluatedKey != nil {
-			input.ExclusiveStartKey = resp.LastEvaluatedKey
-		} else {
-			break
-		}
+	resp, err := d.db.QueryRequest(input).Send(ctx)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to query invoices")
 	}
-	return nil
+
+	return len(resp.Items) > 0, nil
 }

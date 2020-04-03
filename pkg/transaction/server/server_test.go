@@ -194,7 +194,7 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	// invoice nonce too in the future
-	timestamp, err = ptypes.TimestampProto(time.Now().Add(1 * time.Hour + 1*time.Second))
+	timestamp, err = ptypes.TimestampProto(time.Now().Add(1*time.Hour + 1*time.Second))
 	require.NoError(t, err)
 
 	invalidInvoice = &commonpb.Invoice{
@@ -215,7 +215,7 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
-	// invoice exists in store already
+	// invoice prefix exists in store already
 	txnBytes, err = emptyTxn.MarshalBinary()
 	require.NoError(t, err)
 	hash := sha256.Sum256(txnBytes)
@@ -239,11 +239,12 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 	txnBytes, err = memoTxn.MarshalBinary()
 	require.NoError(t, err)
 
-	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+	resp, err := env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
 		TransactionXdr: txnBytes,
 		Invoice:        inv,
 	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.NoError(t, err)
+	require.Equal(t, transactionpb.SubmitSendResponse_INVOICE_COLLISION, resp.Result)
 }
 
 func TestSubmitSend_WithInvoiceInvalidMemo(t *testing.T) {

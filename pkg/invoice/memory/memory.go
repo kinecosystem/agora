@@ -47,8 +47,12 @@ func (m *memory) Add(_ context.Context, inv *commonpb.Invoice, txHash []byte) er
 	m.Lock()
 	defer m.Unlock()
 
-	if _, exists := m.entries[k]; exists {
-		return invoice.ErrExists
+	if entryList, exists := m.entries[k]; exists {
+		for _, e := range entryList {
+			if bytes.Equal(e.txHash, txHash) {
+				return invoice.ErrExists
+			}
+		}
 	}
 
 	m.entries[k] = append(m.entries[k], entry{
@@ -84,23 +88,8 @@ func (m *memory) Get(_ context.Context, prefix []byte, txHash []byte) (*commonpb
 	return nil, invoice.ErrNotFound
 }
 
-// DoesNotExist implements invoice.Store.DoesNotExist
-func (m *memory) DoesNotExist(_ context.Context, inv *commonpb.Invoice) error {
-	prefix, err := invoice.GetHashPrefix(inv)
-	if err != nil {
-		return errors.Wrap(err, "failed to get invoice hash prefix")
-	}
-
+// PrefixExists implements invoice.Store.PrefixExists
+func (m *memory) PrefixExists(_ context.Context, prefix []byte) (bool, error) {
 	entryList, exists := m.entries[string(prefix)]
-	if !exists {
-		return nil
-	}
-
-	for _, e := range entryList {
-		if proto.Equal(e.contents, inv) {
-			return invoice.ErrExists
-		}
-	}
-
-	return nil
+	return exists && len(entryList) > 0, nil
 }

@@ -97,14 +97,14 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice hash")
 		}
 
-		err = s.invoiceStore.DoesNotExist(ctx, req.Invoice)
+		prefixExists, err := s.invoiceStore.PrefixExists(ctx, expectedFK)
 		if err != nil {
-			if err == invoice.ErrExists {
-				return nil, status.Error(codes.InvalidArgument, "invoice already paid")
-			} else {
-				log.WithError(err).Warn("failed to check if invoice exists")
-				return nil, status.Error(codes.Internal, "failed to validate invoice")
-			}
+			log.WithError(err).Warn("failed to check if invoice hash prefix exists")
+			return nil, status.Error(codes.Internal, "failed to validate invoice")
+		}
+
+		if prefixExists {
+			return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVOICE_COLLISION}, nil
 		}
 	}
 
@@ -133,7 +133,6 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 	if req.Invoice != nil {
 		err := s.invoiceStore.Add(ctx, req.Invoice, hashBytes)
 		if err != nil {
-			// todo: what should be returned in this case? maybe separate result code
 			log.WithError(err).Warn("failed to store invoice")
 			return nil, status.Error(codes.Internal, "failed to store invoice after submitting transaction")
 		}

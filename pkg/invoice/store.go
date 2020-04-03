@@ -24,8 +24,6 @@ type Store interface {
 	// Returns ErrNotFound if it could not be found.
 	Get(ctx context.Context, prefix []byte, txHash []byte) (*commonpb.Invoice, error)
 
-	// DoesNotExist verifies that the provided invoice does not already exist in the store.
-	//
-	// Returns ErrExists if the invoice already exists in the store.
-	DoesNotExist(ctx context.Context, inv *commonpb.Invoice) error
+	// PrefixExists verifies that the provided invoice does not already exist in the store.
+	PrefixExists(ctx context.Context, prefix []byte) (bool, error)
 }
