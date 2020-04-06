@@ -9,7 +9,7 @@ import (
 
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
-	"github.com/kinecosystem/agora-transaction-services/pkg/appindex"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex"
 )
 
 var (

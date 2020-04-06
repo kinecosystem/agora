@@ -13,9 +13,9 @@ import (
 
 	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-transaction-services/pkg/appindex/static"
-	agoradata "github.com/kinecosystem/agora-transaction-services/pkg/data/dynamodb"
-	"github.com/kinecosystem/agora-transaction-services/pkg/transaction/server"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex/static"
+	agoradata "github.com/kinecosystem/agora-transaction-services-internal/pkg/data/dynamodb"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/transaction/server"
 )
 
 type app struct {

@@ -1,1 +1,1 @@
-# Agora Transaction Services [![CircleCI](https://circleci.com/gh/kinecosystem/agora-transaction-services.svg?style=svg&circle-token=cef79e0ea851bd883f200f0c2e529ce50c79e237)](https://circleci.com/gh/kinecosystem/agora-transaction-services)
+# Agora Transaction Services [![CircleCI](https://circleci.com/gh/kinecosystem/agora-transaction-services-internal.svg?style=svg&circle-token=cef79e0ea851bd883f200f0c2e529ce50c79e237)](https://circleci.com/gh/kinecosystem/agora-transaction-services-internal)

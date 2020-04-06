@@ -19,8 +19,8 @@ import (
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-transaction-services/pkg/appindex"
-	"github.com/kinecosystem/agora-transaction-services/pkg/data"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data"
 )
 
 type server struct {

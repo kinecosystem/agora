@@ -25,8 +25,8 @@ import (
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-transaction-services/pkg/appindex/static"
-	"github.com/kinecosystem/agora-transaction-services/pkg/data/memory"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex/static"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data/memory"
 )
 
 var (

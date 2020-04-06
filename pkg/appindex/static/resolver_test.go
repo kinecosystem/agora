@@ -7,7 +7,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/agora-transaction-services/pkg/appindex"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex"
 )
 
 func TestResolver(t *testing.T) {

@@ -27,9 +27,9 @@ test:
 .PHONY: build build-transaction
 build: build-transaction
 build-transaction:
-	@go vet github.com/kinecosystem/agora-transaction-services/service/transaction
+	@go vet github.com/kinecosystem/agora-transaction-services-internal/service/transaction
 	GOOS=$(GO_OS) GOARCH=$(GO_ARCH) CGO_ENABLED=0 go build $(GO_FLAGS) -o service/transaction/build/$(GO_OS)-$(GO_ARCH)/transaction \
-		github.com/kinecosystem/agora-transaction-services/service/transaction
+		github.com/kinecosystem/agora-transaction-services-internal/service/transaction
 
 .PHONY: images
 images: GO_OS := linux
