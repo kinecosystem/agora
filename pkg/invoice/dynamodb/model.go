@@ -14,21 +14,23 @@ import (
 
 const (
 	tableName    = "invoices"
-	putCondition = "attribute_not_exists(prefix) AND attribute_not_exists(tx_hash)"
+	putCondition = "attribute_not_exists(invoice_hash) AND attribute_not_exists(tx_hash)"
+	existsKeyCondition = "invoice_hash = :invoice_hash"
 
-	tableHashKey  = "prefix"
+	tableHashKey  = "invoice_hash"
 	tableRangeKey = "tx_hash"
 )
 
 var (
 	tableNameStr    = aws.String(tableName)
 	putConditionStr = aws.String(putCondition)
+	existsKeyConditionStr = aws.String(existsKeyCondition)
 )
 
 type invoiceItem struct {
-	Prefix   []byte `dynamodbav:"prefix"`
-	TxHash   []byte `dynamodbav:"tx_hash"`
-	Contents []byte `dynamodbav:"contents"`
+	InvoiceHash []byte `dynamodbav:"invoice_hash"`
+	TxHash      []byte `dynamodbav:"tx_hash"`
+	Contents    []byte `dynamodbav:"contents"`
 }
 
 func toItem(inv *commonpb.Invoice, txHash []byte) (map[string]dynamodb.AttributeValue, error) {
@@ -36,9 +38,9 @@ func toItem(inv *commonpb.Invoice, txHash []byte) (map[string]dynamodb.Attribute
 		return nil, errors.New("transaction hash must be 32 bytes")
 	}
 
-	prefix, err := invoice.GetHashPrefix(inv)
+	invoiceHash, err := invoice.GetHash(inv)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get invoice hash prefix")
+		return nil, errors.Wrap(err, "failed to get invoice hash")
 	}
 
 	b, err := proto.Marshal(inv)
@@ -47,9 +49,9 @@ func toItem(inv *commonpb.Invoice, txHash []byte) (map[string]dynamodb.Attribute
 	}
 
 	return dynamodbattribute.MarshalMap(&invoiceItem{
-		Prefix:   prefix,
-		TxHash:   txHash,
-		Contents: b,
+		InvoiceHash: invoiceHash,
+		TxHash:      txHash,
+		Contents:    b,
 	})
 }
 

@@ -52,9 +52,9 @@ func (d *db) Add(ctx context.Context, inv *commonpb.Invoice, txHash []byte) erro
 }
 
 // Get implements invoice.Store.Get.
-func (d *db) Get(ctx context.Context, prefix []byte, txHash []byte) (*commonpb.Invoice, error) {
-	if len(prefix) != 29 {
-		return nil, errors.Errorf("invalid invoice hash prefix len: %d", len(prefix))
+func (d *db) Get(ctx context.Context, invoiceHash []byte, txHash []byte) (*commonpb.Invoice, error) {
+	if len(invoiceHash) != 28 {
+		return nil, errors.Errorf("invalid invoice hash len: %d", len(invoiceHash))
 	}
 
 	if len(txHash) != 32 {
@@ -65,7 +65,7 @@ func (d *db) Get(ctx context.Context, prefix []byte, txHash []byte) (*commonpb.I
 		TableName: tableNameStr,
 		Key: map[string]dynamodb.AttributeValue{
 			tableHashKey: {
-				B: prefix,
+				B: invoiceHash,
 			},
 			tableRangeKey: {
 				B: txHash,
@@ -82,13 +82,13 @@ func (d *db) Get(ctx context.Context, prefix []byte, txHash []byte) (*commonpb.I
 	return fromItem(resp.Item)
 }
 
-// PrefixExists implements invoice.Store.PrefixExists
-func (d *db) PrefixExists(ctx context.Context, prefix []byte) (bool, error) {
+// Exists implements invoice.Store.Exists
+func (d *db) Exists(ctx context.Context, invoiceHash []byte) (bool, error) {
 	input := &dynamodb.QueryInput{
 		TableName:              tableNameStr,
-		KeyConditionExpression: aws.String("prefix = :prefix"),
+		KeyConditionExpression: existsKeyConditionStr,
 		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
-			":prefix": {B: prefix},
+			":invoice_hash": {B: invoiceHash},
 		},
 		Limit: aws.Int64(1), // Given the put condition, only 1 should exist
 	}

@@ -75,7 +75,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 		}
 		t := time.Now()
 		if genTime.After(t.Add(1*time.Hour)) || genTime.Before(t.Add(-24*time.Hour)) {
-			return nil, status.Error(codes.InvalidArgument, "invalid nonce time")
+			return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE}, nil
 		}
 
 		if tx.Memo.Hash == nil {
@@ -87,24 +87,25 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 			return nil, status.Error(codes.InvalidArgument, "invalid memo")
 		}
 
-		expectedFK, err := invoice.GetHashPrefix(req.Invoice)
+		expectedFK, err := invoice.GetHash(req.Invoice)
 		if err != nil {
-			log.WithError(err).Warn("failed to get invoice hash prefix")
+			log.WithError(err).Warn("failed to get invoice hash")
 			return nil, status.Error(codes.Internal, "failed to validate invoice")
 		}
 
-		if !bytes.Equal(memo.ForeignKey(), expectedFK) {
+		fk := memo.ForeignKey()
+		if !(bytes.Equal(fk[:28], expectedFK)) || fk[28] != byte(0) {
 			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice hash")
 		}
 
-		prefixExists, err := s.invoiceStore.PrefixExists(ctx, expectedFK)
+		exists, err := s.invoiceStore.Exists(ctx, expectedFK)
 		if err != nil {
-			log.WithError(err).Warn("failed to check if invoice hash prefix exists")
+			log.WithError(err).Warn("failed to check if invoice exists")
 			return nil, status.Error(codes.Internal, "failed to validate invoice")
 		}
 
-		if prefixExists {
-			return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVOICE_COLLISION}, nil
+		if exists {
+			return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE}, nil
 		}
 	}
 

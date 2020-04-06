@@ -38,12 +38,12 @@ func (m *memory) reset() {
 
 // Add implements invoice.Store.Add.
 func (m *memory) Add(_ context.Context, inv *commonpb.Invoice, txHash []byte) error {
-	prefix, err := invoice.GetHashPrefix(inv)
+	invoiceHash, err := invoice.GetHash(inv)
 	if err != nil {
-		return errors.Wrap(err, "failed to get invoice hash prefix")
+		return errors.Wrap(err, "failed to get invoice hash")
 	}
 
-	k := string(prefix)
+	k := string(invoiceHash)
 	m.Lock()
 	defer m.Unlock()
 
@@ -63,9 +63,9 @@ func (m *memory) Add(_ context.Context, inv *commonpb.Invoice, txHash []byte) er
 }
 
 // Get implements invoice.Store.Get.
-func (m *memory) Get(_ context.Context, prefix []byte, txHash []byte) (*commonpb.Invoice, error) {
-	if len(prefix) != 29 {
-		return nil, errors.Errorf("invalid invoice hash prefix len: %d", len(prefix))
+func (m *memory) Get(_ context.Context, invoiceHash []byte, txHash []byte) (*commonpb.Invoice, error) {
+	if len(invoiceHash) != 28 {
+		return nil, errors.Errorf("invalid invoice hash len: %d", len(invoiceHash))
 	}
 
 	if len(txHash) != 32 {
@@ -75,7 +75,7 @@ func (m *memory) Get(_ context.Context, prefix []byte, txHash []byte) (*commonpb
 	m.Lock()
 	defer m.Unlock()
 
-	entryList, exists := m.entries[string(prefix)]
+	entryList, exists := m.entries[string(invoiceHash)]
 	if !exists {
 		return nil, invoice.ErrNotFound
 	}
@@ -88,8 +88,8 @@ func (m *memory) Get(_ context.Context, prefix []byte, txHash []byte) (*commonpb
 	return nil, invoice.ErrNotFound
 }
 
-// PrefixExists implements invoice.Store.PrefixExists
-func (m *memory) PrefixExists(_ context.Context, prefix []byte) (bool, error) {
-	entryList, exists := m.entries[string(prefix)]
+// Exists implements invoice.Store.Exists
+func (m *memory) Exists(_ context.Context, invoiceHash []byte) (bool, error) {
+	entryList, exists := m.entries[string(invoiceHash)]
 	return exists && len(entryList) > 0, nil
 }

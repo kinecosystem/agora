@@ -49,15 +49,15 @@ func testRoundTrip(t *testing.T, store invoice.Store) {
 			},
 		}
 
-		prefix, err := invoice.GetHashPrefix(inv)
+		invoiceHash, err := invoice.GetHash(inv)
 		require.NoError(t, err)
 
 		// Doesn't exist yet
-		actual, err := store.Get(context.Background(), prefix, txKey)
+		actual, err := store.Get(context.Background(), invoiceHash, txKey)
 		require.Equal(t, invoice.ErrNotFound, err)
 		require.Nil(t, actual)
 
-		exists, err := store.PrefixExists(context.Background(), prefix)
+		exists, err := store.Exists(context.Background(), invoiceHash)
 		require.NoError(t, err)
 		require.False(t, exists)
 
@@ -65,15 +65,15 @@ func testRoundTrip(t *testing.T, store invoice.Store) {
 
 		b, err := proto.Marshal(inv)
 		require.NoError(t, err)
-		h := sha256.Sum256(b)
-		memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, h[:29])
+		h := sha256.Sum224(b)
+		memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, h[:])
 
 		require.NoError(t, err)
-		actual, err = store.Get(context.Background(), memo.ForeignKey(), txKey)
+		actual, err = store.Get(context.Background(), memo.ForeignKey()[:28], txKey)
 		require.NoError(t, err)
 		require.True(t, proto.Equal(inv, actual))
 
-		exists, err = store.PrefixExists(context.Background(), prefix)
+		exists, err = store.Exists(context.Background(), invoiceHash)
 		require.NoError(t, err)
 		require.True(t, exists)
 	})

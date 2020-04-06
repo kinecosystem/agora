@@ -128,9 +128,9 @@ func TestSubmitSend_WithInvoice(t *testing.T) {
 	env, _, cleanup := setup(t)
 	defer cleanup()
 
-	prefix, err := invoice.GetHashPrefix(inv)
+	invoiceHash, err := invoice.GetHash(inv)
 	require.NoError(t, err)
-	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, prefix)
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, invoiceHash)
 	require.NoError(t, err)
 	xdrHash := xdr.Hash{}
 	for i := 0; i < len(memo); i++ {
@@ -187,11 +187,12 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 			Value:          rand.Int63(),
 		},
 	}
-	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+	resp, err := env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
 		TransactionXdr: txnBytes,
 		Invoice:        invalidInvoice,
 	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.NoError(t, err)
+	require.Equal(t, transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE, resp.Result)
 
 	// invoice nonce too in the future
 	timestamp, err = ptypes.TimestampProto(time.Now().Add(1*time.Hour + 1*time.Second))
@@ -209,22 +210,23 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 			Value:          rand.Int63(),
 		},
 	}
-	_, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+	resp, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
 		TransactionXdr: txnBytes,
 		Invoice:        invalidInvoice,
 	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.NoError(t, err)
+	require.Equal(t, transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE, resp.Result)
 
-	// invoice prefix exists in store already
+	// invoice exists in store already
 	txnBytes, err = emptyTxn.MarshalBinary()
 	require.NoError(t, err)
 	hash := sha256.Sum256(txnBytes)
 	err = store.Add(context.Background(), inv, hash[:])
 	require.NoError(t, err)
 
-	prefix, err := invoice.GetHashPrefix(inv)
+	invoiceHash, err := invoice.GetHash(inv)
 	require.NoError(t, err)
-	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, prefix)
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, invoiceHash)
 	require.NoError(t, err)
 
 	xdrHash := xdr.Hash{}
@@ -239,12 +241,12 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 	txnBytes, err = memoTxn.MarshalBinary()
 	require.NoError(t, err)
 
-	resp, err := env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
+	resp, err = env.client.SubmitSend(context.Background(), &transactionpb.SubmitSendRequest{
 		TransactionXdr: txnBytes,
 		Invoice:        inv,
 	})
 	require.NoError(t, err)
-	require.Equal(t, transactionpb.SubmitSendResponse_INVOICE_COLLISION, resp.Result)
+	require.Equal(t, transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE, resp.Result)
 }
 
 func TestSubmitSend_WithInvoiceInvalidMemo(t *testing.T) {

@@ -18,3 +18,5 @@ require (
 )
 
 replace github.com/kinecosystem/kin-api => ../kin-api
+
+replace github.com/kinecosystem/agora-common => ../agora-common-internal

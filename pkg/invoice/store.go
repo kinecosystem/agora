@@ -19,11 +19,11 @@ type Store interface {
 	// Returns ErrExists if the invoice already exists in the store
 	Add(ctx context.Context, inv *commonpb.Invoice, txHash []byte) error
 
-	// Get gets an invoice by its hash prefix and transaction hash.
+	// Get gets an invoice by its invoice hash and transaction hash.
 	//
 	// Returns ErrNotFound if it could not be found.
-	Get(ctx context.Context, prefix []byte, txHash []byte) (*commonpb.Invoice, error)
+	Get(ctx context.Context, invoiceHash []byte, txHash []byte) (*commonpb.Invoice, error)
 
-	// PrefixExists verifies that the provided invoice does not already exist in the store.
-	PrefixExists(ctx context.Context, prefix []byte) (bool, error)
+	// Exists returns whether an invoice with the provided hash exists in the store.
+	Exists(ctx context.Context, invoiceHash []byte) (bool, error)
 }
