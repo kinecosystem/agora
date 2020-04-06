@@ -16,7 +16,7 @@ import (
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex/static"
 	agoradatadb "github.com/kinecosystem/agora-transaction-services-internal/pkg/data/dynamodb"
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/transaction/server"
-	invoicedb "github.com/kinecosystem/agora-transaction-services/pkg/invoice/dynamodb"
+	invoicedb "github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice/dynamodb"
 )
 
 type app struct {
