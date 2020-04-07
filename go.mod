@@ -8,7 +8,7 @@ require (
 	github.com/golang/protobuf v1.3.2
 	github.com/kinecosystem/agora-common v0.20.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
-	github.com/kinecosystem/kin-api v0.3.0
+	github.com/kinecosystem/kin-api v0.4.0
 	github.com/ory/dockertest v3.3.5+incompatible
 	github.com/pkg/errors v0.8.1
 	github.com/sirupsen/logrus v1.4.2
@@ -16,5 +16,3 @@ require (
 	github.com/stretchr/testify v1.4.0
 	google.golang.org/grpc v1.25.1
 )
-
-replace github.com/kinecosystem/kin-api => ../kin-api
