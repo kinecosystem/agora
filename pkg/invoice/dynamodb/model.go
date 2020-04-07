@@ -14,17 +14,14 @@ import (
 
 const (
 	tableName    = "invoices"
-	putCondition = "attribute_not_exists(invoice_hash) AND attribute_not_exists(tx_hash)"
-	existsKeyCondition = "invoice_hash = :invoice_hash"
+	putCondition = "attribute_not_exists(invoice_hash)"
 
-	tableHashKey  = "invoice_hash"
-	tableRangeKey = "tx_hash"
+	tableHashKey = "invoice_hash"
 )
 
 var (
 	tableNameStr    = aws.String(tableName)
 	putConditionStr = aws.String(putCondition)
-	existsKeyConditionStr = aws.String(existsKeyCondition)
 )
 
 type invoiceItem struct {
@@ -55,7 +52,7 @@ func toItem(inv *commonpb.Invoice, txHash []byte) (map[string]dynamodb.Attribute
 	})
 }
 
-func fromItem(item map[string]dynamodb.AttributeValue) (*commonpb.Invoice, error) {
+func fromItem(item map[string]dynamodb.AttributeValue) (*invoice.Record, error) {
 	var invoiceItem invoiceItem
 	if err := dynamodbattribute.UnmarshalMap(item, &invoiceItem); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal invoice item")
@@ -66,5 +63,8 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*commonpb.Invoice, error
 		return nil, errors.Wrap(err, "failed to unmarshal invoice")
 	}
 
-	return inv, nil
+	return &invoice.Record{
+		Invoice: inv,
+		TxHash:  invoiceItem.TxHash,
+	}, nil
 }

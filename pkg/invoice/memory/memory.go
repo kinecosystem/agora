@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"bytes"
 	"context"
 	"sync"
 
@@ -20,19 +19,19 @@ type entry struct {
 
 type memory struct {
 	sync.Mutex
-	entries map[string][]entry
+	entries map[string]entry
 }
 
 // New returns an in-memory invoice.Store.
 func New() invoice.Store {
 	return &memory{
-		entries: make(map[string][]entry),
+		entries: make(map[string]entry),
 	}
 }
 
 func (m *memory) reset() {
 	m.Lock()
-	m.entries = make(map[string][]entry)
+	m.entries = make(map[string]entry)
 	m.Unlock()
 }
 
@@ -47,49 +46,33 @@ func (m *memory) Add(_ context.Context, inv *commonpb.Invoice, txHash []byte) er
 	m.Lock()
 	defer m.Unlock()
 
-	if entryList, exists := m.entries[k]; exists {
-		for _, e := range entryList {
-			if bytes.Equal(e.txHash, txHash) {
-				return invoice.ErrExists
-			}
-		}
+	if _, exists := m.entries[k]; exists {
+		return invoice.ErrExists
 	}
 
-	m.entries[k] = append(m.entries[k], entry{
+	m.entries[k] = entry{
 		txHash:   txHash,
 		contents: proto.Clone(inv).(*commonpb.Invoice),
-	})
+	}
 	return nil
 }
 
 // Get implements invoice.Store.Get.
-func (m *memory) Get(_ context.Context, invoiceHash []byte, txHash []byte) (*commonpb.Invoice, error) {
+func (m *memory) Get(_ context.Context, invoiceHash []byte) (*invoice.Record, error) {
 	if len(invoiceHash) != 28 {
 		return nil, errors.Errorf("invalid invoice hash len: %d", len(invoiceHash))
-	}
-
-	if len(txHash) != 32 {
-		return nil, errors.Errorf("invalid transaction hash len: %d", len(txHash))
 	}
 
 	m.Lock()
 	defer m.Unlock()
 
-	entryList, exists := m.entries[string(invoiceHash)]
+	entry, exists := m.entries[string(invoiceHash)]
 	if !exists {
 		return nil, invoice.ErrNotFound
 	}
 
-	for _, e := range entryList {
-		if bytes.Equal(e.txHash, txHash) {
-			return proto.Clone(e.contents).(*commonpb.Invoice), nil
-		}
-	}
-	return nil, invoice.ErrNotFound
-}
-
-// Exists implements invoice.Store.Exists
-func (m *memory) Exists(_ context.Context, invoiceHash []byte) (bool, error) {
-	entryList, exists := m.entries[string(invoiceHash)]
-	return exists && len(entryList) > 0, nil
+	return &invoice.Record{
+		Invoice: proto.Clone(entry.contents).(*commonpb.Invoice),
+		TxHash:  entry.txHash,
+	}, nil
 }

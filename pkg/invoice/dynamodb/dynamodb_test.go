@@ -75,19 +75,11 @@ func setupTestTable(client dynamodbiface.ClientAPI) error {
 			AttributeName: aws.String("invoice_hash"),
 			KeyType:       dynamodb.KeyTypeHash,
 		},
-		{
-			AttributeName: aws.String("tx_hash"),
-			KeyType:       dynamodb.KeyTypeRange,
-		},
 	}
 
 	attrDefinitions := []dynamodb.AttributeDefinition{
 		{
 			AttributeName: aws.String("invoice_hash"),
-			AttributeType: dynamodb.ScalarAttributeTypeB,
-		},
-		{
-			AttributeName: aws.String("tx_hash"),
 			AttributeType: dynamodb.ScalarAttributeTypeB,
 		},
 	}

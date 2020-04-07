@@ -2,9 +2,7 @@ package dynamodb
 
 import (
 	"context"
-	"encoding/base64"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
@@ -18,14 +16,14 @@ import (
 
 type db struct {
 	log *logrus.Entry
-	db dynamodbiface.ClientAPI
+	db  dynamodbiface.ClientAPI
 }
 
 // New returns a dynamo-backed invoice.Store
 func New(client dynamodbiface.ClientAPI) invoice.Store {
 	return &db{
 		log: logrus.StandardLogger().WithField("type", "invoice/dynamodb"),
-		db: client,
+		db:  client,
 	}
 }
 
@@ -56,13 +54,9 @@ func (d *db) Add(ctx context.Context, inv *commonpb.Invoice, txHash []byte) erro
 }
 
 // Get implements invoice.Store.Get.
-func (d *db) Get(ctx context.Context, invoiceHash []byte, txHash []byte) (*commonpb.Invoice, error) {
+func (d *db) Get(ctx context.Context, invoiceHash []byte) (*invoice.Record, error) {
 	if len(invoiceHash) != 28 {
 		return nil, errors.Errorf("invalid invoice hash len: %d", len(invoiceHash))
-	}
-
-	if len(txHash) != 32 {
-		return nil, errors.Errorf("invalid transaction hash len: %d", len(txHash))
 	}
 
 	resp, err := d.db.GetItemRequest(&dynamodb.GetItemInput{
@@ -70,9 +64,6 @@ func (d *db) Get(ctx context.Context, invoiceHash []byte, txHash []byte) (*commo
 		Key: map[string]dynamodb.AttributeValue{
 			tableHashKey: {
 				B: invoiceHash,
-			},
-			tableRangeKey: {
-				B: txHash,
 			},
 		},
 	}).Send(ctx)
@@ -84,26 +75,4 @@ func (d *db) Get(ctx context.Context, invoiceHash []byte, txHash []byte) (*commo
 		return nil, invoice.ErrNotFound
 	}
 	return fromItem(resp.Item)
-}
-
-// Exists implements invoice.Store.Exists
-func (d *db) Exists(ctx context.Context, invoiceHash []byte) (bool, error) {
-	resp, err := d.db.QueryRequest(&dynamodb.QueryInput{
-		TableName:              tableNameStr,
-		KeyConditionExpression: existsKeyConditionStr,
-		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
-			":invoice_hash": {B: invoiceHash},
-		},
-		Limit: aws.Int64(2), // Given the put condition, only 1 should exist. Limit to 2 in case a collision occurred
-	}).Send(ctx)
-	if err != nil {
-		return false, errors.Wrap(err, "failed to query invoices")
-	}
-
-
-	if len(resp.Items) > 1 {
-		d.log.Warnf("more than one invoice found with hash %s", base64.StdEncoding.EncodeToString(invoiceHash))
-	}
-
-	return len(resp.Items) > 0, nil
 }

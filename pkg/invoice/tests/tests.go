@@ -17,7 +17,7 @@ import (
 )
 
 func RunTests(t *testing.T, store invoice.Store, teardown func()) {
-	for _, tf := range []func(*testing.T, invoice.Store){testRoundTrip, testCollision} {
+	for _, tf := range []func(*testing.T, invoice.Store){testRoundTrip, testExists} {
 		tf(t, store)
 		teardown()
 	}
@@ -25,8 +25,8 @@ func RunTests(t *testing.T, store invoice.Store, teardown func()) {
 
 func testRoundTrip(t *testing.T, store invoice.Store) {
 	t.Run("TestRoundTrip", func(t *testing.T) {
-		txHash := sha256.Sum256([]byte("somedata"))
-		txKey := txHash[:]
+		h := sha256.Sum256([]byte("somedata"))
+		txHash := h[:]
 
 		inv := &commonpb.Invoice{
 			Items: []*commonpb.Invoice_LineItem{
@@ -53,36 +53,29 @@ func testRoundTrip(t *testing.T, store invoice.Store) {
 		require.NoError(t, err)
 
 		// Doesn't exist yet
-		actual, err := store.Get(context.Background(), invoiceHash, txKey)
+		record, err := store.Get(context.Background(), invoiceHash)
 		require.Equal(t, invoice.ErrNotFound, err)
-		require.Nil(t, actual)
+		require.Nil(t, record)
 
-		exists, err := store.Exists(context.Background(), invoiceHash)
-		require.NoError(t, err)
-		require.False(t, exists)
-
-		require.NoError(t, store.Add(context.Background(), inv, txKey))
+		require.NoError(t, store.Add(context.Background(), inv, txHash))
 
 		b, err := proto.Marshal(inv)
 		require.NoError(t, err)
-		h := sha256.Sum224(b)
-		memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, h[:])
+		fk := sha256.Sum224(b)
+		memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, fk[:])
 
 		require.NoError(t, err)
-		actual, err = store.Get(context.Background(), memo.ForeignKey()[:28], txKey)
+		record, err = store.Get(context.Background(), memo.ForeignKey()[:28])
 		require.NoError(t, err)
-		require.True(t, proto.Equal(inv, actual))
-
-		exists, err = store.Exists(context.Background(), invoiceHash)
-		require.NoError(t, err)
-		require.True(t, exists)
+		require.True(t, proto.Equal(inv, record.Invoice))
+		require.Equal(t, txHash, record.TxHash)
 	})
 }
 
-func testCollision(t *testing.T, store invoice.Store) {
+func testExists(t *testing.T, store invoice.Store) {
 	t.Run("TestCollision", func(t *testing.T) {
-		txHash := sha256.Sum256([]byte("somedata"))
-		txKey := txHash[:]
+		h := sha256.Sum256([]byte("somedata"))
+		txHash := h[:]
 
 		inv := &commonpb.Invoice{
 			Items: []*commonpb.Invoice_LineItem{
@@ -105,9 +98,9 @@ func testCollision(t *testing.T, store invoice.Store) {
 			},
 		}
 
-		require.NoError(t, store.Add(context.Background(), inv, txKey))
+		require.NoError(t, store.Add(context.Background(), inv, txHash))
 
-		err := store.Add(context.Background(), inv, txKey)
+		err := store.Add(context.Background(), inv, txHash)
 		require.Equal(t, invoice.ErrExists, err)
 	})
 }

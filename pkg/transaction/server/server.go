@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
@@ -98,14 +99,20 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice hash")
 		}
 
-		exists, err := s.invoiceStore.Exists(ctx, expectedFK)
+		txBytes, err := tx.MarshalBinary()
 		if err != nil {
-			log.WithError(err).Warn("failed to check if invoice exists")
-			return nil, status.Error(codes.Internal, "failed to validate invoice")
+			return nil, status.Error(codes.Internal, "failed to marshal transaction")
 		}
 
-		if exists {
-			return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE}, nil
+		txHash := sha256.Sum256(txBytes)
+		err = s.invoiceStore.Add(ctx, req.Invoice, txHash[:])
+		if err != nil {
+			if err == invoice.ErrExists {
+				return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE}, nil
+			}
+
+			log.WithError(err).Warn("failed to store invoice")
+			return nil, status.Error(codes.Internal, "failed to store invoice")
 		}
 	}
 
@@ -129,14 +136,6 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 	resultXDR, err := base64.StdEncoding.DecodeString(resp.Result)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
-	}
-
-	if req.Invoice != nil {
-		err := s.invoiceStore.Add(ctx, req.Invoice, hashBytes)
-		if err != nil {
-			log.WithError(err).Warn("failed to store invoice")
-			return nil, status.Error(codes.Internal, "failed to store invoice after submitting transaction")
-		}
 	}
 
 	return &transactionpb.SubmitSendResponse{
