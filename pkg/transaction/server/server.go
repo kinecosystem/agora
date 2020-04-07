@@ -46,7 +46,7 @@ func New(
 	clientV2 horizonclient.ClientInterface,
 ) transactionpb.TransactionServer {
 	return &server{
-		log: logrus.StandardLogger().WithField("type", "transactionpb/server"),
+		log: logrus.StandardLogger().WithField("type", "transaction/server"),
 
 		txStore:      txStore,
 		invoiceStore: invoiceStore,
