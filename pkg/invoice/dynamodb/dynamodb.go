@@ -2,12 +2,14 @@ package dynamodb
 
 import (
 	"context"
+	"encoding/base64"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 
@@ -15,12 +17,14 @@ import (
 )
 
 type db struct {
+	log *logrus.Entry
 	db dynamodbiface.ClientAPI
 }
 
 // New returns a dynamo-backed invoice.Store
 func New(client dynamodbiface.ClientAPI) invoice.Store {
 	return &db{
+		log: logrus.StandardLogger().WithField("type", "invoice/dynamodb"),
 		db: client,
 	}
 }
@@ -84,18 +88,21 @@ func (d *db) Get(ctx context.Context, invoiceHash []byte, txHash []byte) (*commo
 
 // Exists implements invoice.Store.Exists
 func (d *db) Exists(ctx context.Context, invoiceHash []byte) (bool, error) {
-	input := &dynamodb.QueryInput{
+	resp, err := d.db.QueryRequest(&dynamodb.QueryInput{
 		TableName:              tableNameStr,
 		KeyConditionExpression: existsKeyConditionStr,
 		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
 			":invoice_hash": {B: invoiceHash},
 		},
-		Limit: aws.Int64(1), // Given the put condition, only 1 should exist
-	}
-
-	resp, err := d.db.QueryRequest(input).Send(ctx)
+		Limit: aws.Int64(2), // Given the put condition, only 1 should exist. Limit to 2 in case a collision occurred
+	}).Send(ctx)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to query invoices")
+	}
+
+
+	if len(resp.Items) > 1 {
+		d.log.Warnf("more than one invoice found with hash %s", base64.StdEncoding.EncodeToString(invoiceHash))
 	}
 
 	return len(resp.Items) > 0, nil
