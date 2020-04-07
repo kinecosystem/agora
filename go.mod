@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v0.17.0
 	github.com/gogo/protobuf v1.2.1
 	github.com/golang/protobuf v1.3.2
-	github.com/kinecosystem/agora-common v0.19.0
+	github.com/kinecosystem/agora-common v0.20.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/kinecosystem/kin-api v0.3.0
 	github.com/ory/dockertest v3.3.5+incompatible
@@ -18,5 +18,3 @@ require (
 )
 
 replace github.com/kinecosystem/kin-api => ../kin-api
-
-replace github.com/kinecosystem/agora-common => ../agora-common-internal
