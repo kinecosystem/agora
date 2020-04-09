@@ -1,6 +1,8 @@
 package dynamodb
 
 import (
+	"net/url"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbattribute"
@@ -22,10 +24,10 @@ var (
 )
 
 type configItem struct {
-	AppIndex           int    `dynamodbav:"app_index"`
+	AppIndex           uint16 `dynamodbav:"app_index"`
 	AppName            string `dynamodbav:"app_name"`
-	AgoraDataURL       string `dynamodbav:"agora_data_url"`
-	SignTransactionURL string `dynamodbav:"sign_transaction_url"`
+	AgoraDataURL       string `dynamodbav:"agora_data_url,omitempty"`
+	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
 }
 
 func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeValue, error) {
@@ -37,12 +39,20 @@ func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeV
 		return nil, errors.New("app name has length of 0")
 	}
 
-	return dynamodbattribute.MarshalMap(&configItem{
-		AppIndex:           int(appIndex),
-		AppName:            config.AppName,
-		AgoraDataURL:       config.AgoraDataURL,
-		SignTransactionURL: config.SignTransactionURL,
-	})
+	configItem := &configItem{
+		AppIndex: appIndex,
+		AppName:  config.AppName,
+	}
+
+	if config.AgoraDataURL != nil {
+		configItem.AgoraDataURL = config.AgoraDataURL.String()
+	}
+
+	if config.SignTransactionURL != nil {
+		configItem.SignTransactionURL = config.SignTransactionURL.String()
+	}
+
+	return dynamodbattribute.MarshalMap(configItem)
 }
 
 func fromItem(item map[string]dynamodb.AttributeValue) (*app.Config, error) {
@@ -51,9 +61,25 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*app.Config, error) {
 		return nil, errors.Wrapf(err, "failed to unmarshal config")
 	}
 
-	return &app.Config{
-		AppName:            configItem.AppName,
-		AgoraDataURL:       configItem.AgoraDataURL,
-		SignTransactionURL: configItem.SignTransactionURL,
-	}, nil
+	config := &app.Config{
+		AppName: configItem.AppName,
+	}
+
+	if len(configItem.AgoraDataURL) != 0 {
+		agoraDataURL, err := url.Parse(configItem.AgoraDataURL)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error parsing agora data url")
+		}
+		config.AgoraDataURL = agoraDataURL
+	}
+
+	if len(configItem.SignTransactionURL) != 0 {
+		signTxURL, err := url.Parse(configItem.SignTransactionURL)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error parsing sign transaction url")
+		}
+		config.SignTransactionURL = signTxURL
+	}
+
+	return config, nil
 }

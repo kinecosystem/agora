@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,10 +23,15 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 		require.Equal(t, app.ErrNotFound, err)
 		require.Nil(t, actualConfig)
 
+		agoraDataURL, err := url.Parse("test.kin.org/agoradata")
+		require.NoError(t, err)
+		signTxURL, err := url.Parse("test.kin.org/signtx")
+		require.NoError(t, err)
+
 		config := &app.Config{
 			AppName:            "kin",
-			AgoraDataURL:       "test.kin.org/agoradata",
-			SignTransactionURL: "test.kin.org/signtx",
+			AgoraDataURL:       agoraDataURL,
+			SignTransactionURL: signTxURL,
 		}
 
 		err = store.Add(context.Background(), 0, config)

@@ -2,14 +2,15 @@ package app
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/pkg/errors"
 )
 
 type Config struct {
 	AppName            string
-	AgoraDataURL       string
-	SignTransactionURL string
+	AgoraDataURL       *url.URL
+	SignTransactionURL *url.URL
 }
 
 var (

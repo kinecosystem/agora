@@ -1,6 +1,7 @@
 package dynamodb
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -9,19 +10,47 @@ import (
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
 )
 
-func TestValidModelConversion(t *testing.T) {
+func TestModelConversion_Full(t *testing.T) {
+	agoraDataURLStr := "test.kin.org/agoradata"
+	signTxURLStr := "test.kin.org/signtx"
+
+	agoraDataURL, err := url.Parse(agoraDataURLStr)
+	require.NoError(t, err)
+	signTxURL, err := url.Parse(signTxURLStr)
+	require.NoError(t, err)
+
 	config := &app.Config{
 		AppName:            "kin",
-		AgoraDataURL:       "test.kin.org/agoradata",
-		SignTransactionURL: "test.kin.org/signtx",
+		AgoraDataURL:       agoraDataURL,
+		SignTransactionURL: signTxURL,
 	}
 
 	item, err := toItem(0, config)
 	require.NoError(t, err)
 	require.Equal(t, aws.StringValue(item["app_index"].N), "0")
 	require.Equal(t, aws.StringValue(item["app_name"].S), config.AppName)
-	require.Equal(t, aws.StringValue(item["agora_data_url"].S), config.AgoraDataURL)
-	require.Equal(t, aws.StringValue(item["sign_transaction_url"].S), config.SignTransactionURL)
+	require.Equal(t, aws.StringValue(item["agora_data_url"].S), agoraDataURLStr)
+	require.Equal(t, aws.StringValue(item["sign_transaction_url"].S), signTxURLStr)
+
+	convertedConfig, err := fromItem(item)
+	require.NoError(t, err)
+	require.Equal(t, convertedConfig, config)
+}
+
+func TestModelConversion_WithEmpty(t *testing.T) {
+	config := &app.Config{
+		AppName: "kin",
+	}
+
+	item, err := toItem(0, config)
+	require.NoError(t, err)
+	require.Equal(t, aws.StringValue(item["app_index"].N), "0")
+	require.Equal(t, aws.StringValue(item["app_name"].S), config.AppName)
+
+	_, ok := item["agora_data_url"]
+	require.False(t, ok)
+	_, ok = item["sign_transaction_url"]
+	require.False(t, ok)
 
 	convertedConfig, err := fromItem(item)
 	require.NoError(t, err)
