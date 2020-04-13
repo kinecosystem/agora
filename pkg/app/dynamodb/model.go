@@ -25,7 +25,7 @@ var (
 
 type configItem struct {
 	AppIndex           uint16 `dynamodbav:"app_index"`
-	AppName            string `dynamodbav:"app_name"`
+	AppName            string `dynamodbav:"app_name,omitempty"`
 	AgoraDataURL       string `dynamodbav:"agora_data_url,omitempty"`
 	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
 }
