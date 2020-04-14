@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -22,17 +23,15 @@ import (
 	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/appindex"
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data"
+	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
 )
 
 type server struct {
 	log *logrus.Entry
 
-	txStore      data.Store
-	invoiceStore invoice.Store
-	resolver     appindex.Resolver
+	appConfigStore app.ConfigStore
+	invoiceStore   invoice.Store
 
 	client   horizon.ClientInterface
 	clientV2 horizonclient.ClientInterface
@@ -40,18 +39,16 @@ type server struct {
 
 // New returns a new transactionpb.TransactionServer.
 func New(
-	txStore data.Store,
+	appConfigStore app.ConfigStore,
 	invoiceStore invoice.Store,
-	resolver appindex.Resolver,
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
 ) transactionpb.TransactionServer {
 	return &server{
 		log: logrus.StandardLogger().WithField("type", "transaction/server"),
 
-		txStore:      txStore,
-		invoiceStore: invoiceStore,
-		resolver:     resolver,
+		appConfigStore: appConfigStore,
+		invoiceStore:   invoiceStore,
 
 		client:   client,
 		clientV2: clientV2,
@@ -191,25 +188,38 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 	// If the memo was valid, and we found the corresponding data for
 	// it, populate the response. Otherwise, unless it was an unexpected
 	// failure, we simply don't include the data.
-	memo, err := kin.MemoFromXDRString(tx.Hash, true)
+	memo, err := kin.MemoFromXDRString(tx.Memo, true)
 	if err != nil {
 		// This simply means it wasn't a valid agora memo, so we just
 		// don't include any agora data.
 		return resp, nil
 	}
 
-	url, err := s.resolver.Resolve(ctx, memo)
-	if err == nil {
-		resp.Item.AgoraDataUrl = url
-	} else if err != appindex.ErrNotFound {
-		return nil, status.Error(codes.Internal, "failed to resolve agora memo")
+	appConfig, err := s.appConfigStore.Get(ctx, memo.AppIndex())
+	if err != nil {
+		if err == app.ErrNotFound {
+			return resp, nil
+		}
+
+		log.WithError(err).Warn("Failed to get app config")
+		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 	}
 
-	txData, err := s.txStore.Get(ctx, memo.ForeignKey())
+	url, err := appConfig.GetAgoraDataURL(memo)
 	if err == nil {
-		resp.Item.AgoraData = txData
-	} else if err != data.ErrNotFound {
+		resp.Item.AgoraDataUrl = url
+	} else if err != app.ErrURLNotSet {
+		log.WithError(err).Warn("Failed to get agora data url")
 		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
+	}
+
+	agoraData, err := s.resolveMemoFK(ctx, appConfig, memo)
+	if err != nil {
+		return nil, err
+	}
+
+	if agoraData != nil {
+		resp.Item.AgoraData = agoraData
 	}
 
 	return resp, nil
@@ -287,28 +297,36 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		// If the memo was valid, and we found the corresponding data for
 		// it, populate the response. Otherwise, unless it was an unexpected
 		// failure, we simply don't include the data.
-		memo, err := kin.MemoFromXDRString(tx.Hash, true)
+		memo, err := kin.MemoFromXDRString(tx.Memo, true)
 		if err != nil {
 			continue
 		}
 
-		url, err := s.resolver.Resolve(ctx, memo)
-		switch err {
-		case nil:
-			item.AgoraDataUrl = url
-		case appindex.ErrNotFound:
-			continue
-		default:
+		appConfig, err := s.appConfigStore.Get(ctx, memo.AppIndex())
+		if err != nil {
+			if err == app.ErrNotFound {
+				return resp, nil
+			}
+
+			log.WithError(err).Warn("Failed to get app config")
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 		}
 
-		txData, err := s.txStore.Get(context.Background(), memo.ForeignKey())
-		switch err {
-		case nil:
-			item.AgoraData = txData
-		case data.ErrNotFound:
+		url, err := appConfig.GetAgoraDataURL(memo)
+		if err == nil {
+			item.AgoraDataUrl = url
+		} else if err != app.ErrURLNotSet {
+			log.WithError(err).Warn("Failed to get agora data url")
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
-		default:
+		}
+
+		agoraData, err := s.resolveMemoFK(ctx, appConfig, memo)
+		if err != nil {
+			return nil, err
+		}
+
+		if agoraData != nil {
+			item.AgoraData = agoraData
 		}
 	}
 
@@ -343,4 +361,36 @@ func getCursor(c string) *transactionpb.Cursor {
 	return &transactionpb.Cursor{
 		Value: []byte(c),
 	}
+}
+
+func (s *server) resolveMemoFK(ctx context.Context, appConfig *app.Config, memo kin.Memo) (*commonpb.AgoraData, error) {
+	// TODO: attempt to resolve using 3p service/cache
+
+	fk := memo.ForeignKey()
+	if fk[28] != byte(0) {
+		return nil, nil
+	}
+
+	invoiceHash := fk[:28]
+	record, err := s.invoiceStore.Get(ctx, invoiceHash)
+	if err != nil {
+		if err == invoice.ErrNotFound {
+			return nil, nil
+		}
+		return nil, status.Error(codes.Internal, "failed to resolve agora data")
+	}
+
+	total := int64(0)
+	for _, item := range record.Invoice.Items {
+		total += item.Amount
+	}
+
+	return &commonpb.AgoraData{
+		Title:           appConfig.AppName,
+		Description:     fmt.Sprintf("# of line items: %d", len(record.Invoice.Items)),
+		TransactionType: commonpb.AgoraData_SPEND, // TODO: verify if earn/spend if/when both use invoices
+		TotalAmount:     total,
+		ForeignKey:      invoiceHash,
+		Invoice:         record.Invoice,
+	}, nil
 }

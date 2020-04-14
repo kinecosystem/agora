@@ -2,16 +2,9 @@ package app
 
 import (
 	"context"
-	"net/url"
 
 	"github.com/pkg/errors"
 )
-
-type Config struct {
-	AppName            string
-	AgoraDataURL       *url.URL
-	SignTransactionURL *url.URL
-}
 
 var (
 	ErrExists   = errors.New("app index already exists")
