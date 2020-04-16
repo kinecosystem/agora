@@ -195,6 +195,7 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		return resp, nil
 	}
 
+	// todo(caching): cache config
 	appConfig, err := s.appConfigStore.Get(ctx, memo.AppIndex())
 	if err != nil {
 		if err == app.ErrNotFound {
@@ -302,6 +303,7 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 			continue
 		}
 
+		// todo(caching): cache config
 		appConfig, err := s.appConfigStore.Get(ctx, memo.AppIndex())
 		if err != nil {
 			if err == app.ErrNotFound {
@@ -367,7 +369,7 @@ func (s *server) resolveMemoFK(ctx context.Context, appConfig *app.Config, memo 
 	// TODO: attempt to resolve using 3p service/cache
 
 	fk := memo.ForeignKey()
-	if fk[28] != byte(0) {
+	if fk[28] != 0 {
 		return nil, nil
 	}
 
