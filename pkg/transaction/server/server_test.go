@@ -79,9 +79,12 @@ type testEnv struct {
 
 	hClient   *horizon.MockClient
 	hClientV2 *horizonclient.MockClient
+
+	appConfigStore app.ConfigStore
+	invoiceStore invoice.Store
 }
 
-func setup(t *testing.T) (env testEnv, appConfigStore app.ConfigStore, invoiceStore invoice.Store, cleanup func()) {
+func setup(t *testing.T) (env testEnv, cleanup func()) {
 	conn, serv, err := testutil.NewServer()
 	require.NoError(t, err)
 
@@ -89,9 +92,9 @@ func setup(t *testing.T) (env testEnv, appConfigStore app.ConfigStore, invoiceSt
 	env.hClient = &horizon.MockClient{}
 	env.hClientV2 = &horizonclient.MockClient{}
 
-	appConfigStore = appconfigdb.New()
-	invoiceStore = invoicedb.New()
-	s := New(appConfigStore, invoiceStore, env.hClient, env.hClientV2)
+	env.appConfigStore = appconfigdb.New()
+	env.invoiceStore = invoicedb.New()
+	s := New(env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2)
 	serv.RegisterService(func(server *grpc.Server) {
 		transactionpb.RegisterTransactionServer(server, s)
 	})
@@ -99,11 +102,11 @@ func setup(t *testing.T) (env testEnv, appConfigStore app.ConfigStore, invoiceSt
 	cleanup, err = serv.Serve()
 	require.NoError(t, err)
 
-	return env, appConfigStore, invoiceStore, cleanup
+	return env, cleanup
 }
 
 func TestSubmitSend_Happy(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -129,7 +132,7 @@ func TestSubmitSend_Happy(t *testing.T) {
 }
 
 func TestSubmitSend_WithInvoice(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	invoiceHash, err := invoice.GetHash(inv)
@@ -169,7 +172,7 @@ func TestSubmitSend_WithInvoice(t *testing.T) {
 }
 
 func TestSubmitSend_InvalidInvoice(t *testing.T) {
-	env, _, invoiceStore, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -225,7 +228,7 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 	txnBytes, err = emptyTxn.MarshalBinary()
 	require.NoError(t, err)
 	hash := sha256.Sum256(txnBytes)
-	err = invoiceStore.Add(context.Background(), inv, hash[:])
+	err = env.invoiceStore.Add(context.Background(), inv, hash[:])
 	require.NoError(t, err)
 
 	invoiceHash, err := invoice.GetHash(inv)
@@ -254,7 +257,7 @@ func TestSubmitSend_InvalidInvoice(t *testing.T) {
 }
 
 func TestSubmitSend_WithInvoiceInvalidMemo(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -308,7 +311,7 @@ func TestSubmitSend_WithInvoiceInvalidMemo(t *testing.T) {
 }
 
 func TestSubmitSend_Invalid(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	invalidRequests := []*transactionpb.SubmitSendRequest{
@@ -343,7 +346,7 @@ func TestSubmitSend_Invalid(t *testing.T) {
 }
 
 func TestSubmit_HorizonErrors(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -375,7 +378,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 }
 
 func TestGetTransaction_Happy(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	txnBytes, err := emptyTxn.MarshalBinary()
@@ -409,7 +412,7 @@ func TestGetTransaction_Happy(t *testing.T) {
 }
 
 func TestGetTransaction_WithAgoraData(t *testing.T) {
-	env, appConfigStore, invoiceStore, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
@@ -423,7 +426,7 @@ func TestGetTransaction_WithAgoraData(t *testing.T) {
 		SignTransactionURL: signTxURL,
 	}
 
-	err = appConfigStore.Add(context.Background(), 0, appConfig)
+	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
 	invoiceHash, err := invoice.GetHash(inv)
@@ -448,7 +451,7 @@ func TestGetTransaction_WithAgoraData(t *testing.T) {
 
 	hashBytes := sha256.Sum256(txnBytes)
 
-	err = invoiceStore.Add(context.Background(), inv, hashBytes[:])
+	err = env.invoiceStore.Add(context.Background(), inv, hashBytes[:])
 	require.NoError(t, err)
 
 	horizonResult := horizonprotocols.Transaction{
@@ -487,7 +490,7 @@ func TestGetTransaction_WithAgoraData(t *testing.T) {
 }
 
 func TestGetTransaction_HorizonErrors(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	type testCase struct {
@@ -526,7 +529,7 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 }
 
 func TestGetHistory_Happy(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	page := horizonprotocolsv2.TransactionsPage{
@@ -611,7 +614,7 @@ func TestGetHistory_Happy(t *testing.T) {
 }
 
 func TestGetHistory_WithAgoraData(t *testing.T) {
-	env, appConfigStore, invoiceStore, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
@@ -625,7 +628,7 @@ func TestGetHistory_WithAgoraData(t *testing.T) {
 		SignTransactionURL: signTxURL,
 	}
 
-	err = appConfigStore.Add(context.Background(), 0, appConfig)
+	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
 	invoiceHash, err := invoice.GetHash(inv)
@@ -650,7 +653,7 @@ func TestGetHistory_WithAgoraData(t *testing.T) {
 
 	hashBytes := sha256.Sum256(txnBytes)
 
-	err = invoiceStore.Add(context.Background(), inv, hashBytes[:])
+	err = env.invoiceStore.Add(context.Background(), inv, hashBytes[:])
 	require.NoError(t, err)
 
 	page := horizonprotocolsv2.TransactionsPage{
@@ -685,9 +688,9 @@ func TestGetHistory_WithAgoraData(t *testing.T) {
 	assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
 	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
 
-	expectedUrl, err := appConfig.GetAgoraDataURL(memo)
+	expectedURL, err := appConfig.GetAgoraDataURL(memo)
 	require.NoError(t, err)
-	assert.Equal(t, expectedUrl, item.AgoraDataUrl)
+	assert.Equal(t, expectedURL, item.AgoraDataUrl)
 
 	// TODO: assert all agora data fields when fully implemented
 	expectedTotal := int64(0)
@@ -707,7 +710,7 @@ func TestGetHistory_WithAgoraData(t *testing.T) {
 }
 
 func TestGetHistory_HorizonErrors(t *testing.T) {
-	env, _, _, cleanup := setup(t)
+	env, cleanup := setup(t)
 	defer cleanup()
 
 	type testCase struct {
