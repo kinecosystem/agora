@@ -28,6 +28,7 @@ type configItem struct {
 	AppName            string `dynamodbav:"app_name,omitempty"`
 	AgoraDataURL       string `dynamodbav:"agora_data_url,omitempty"`
 	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
+	InvoicingEnabled   bool   `dynamodbav:"invoicing_enabled,omitempty"`
 }
 
 func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeValue, error) {
@@ -40,8 +41,9 @@ func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeV
 	}
 
 	configItem := &configItem{
-		AppIndex: appIndex,
-		AppName:  config.AppName,
+		AppIndex:         appIndex,
+		AppName:          config.AppName,
+		InvoicingEnabled: config.InvoicingEnabled,
 	}
 
 	if config.AgoraDataURL != nil {
@@ -62,7 +64,8 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*app.Config, error) {
 	}
 
 	config := &app.Config{
-		AppName: configItem.AppName,
+		AppName:          configItem.AppName,
+		InvoicingEnabled: configItem.InvoicingEnabled,
 	}
 
 	if len(configItem.AgoraDataURL) != 0 {

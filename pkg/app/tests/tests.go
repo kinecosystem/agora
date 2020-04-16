@@ -32,6 +32,7 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 			AppName:            "kin",
 			AgoraDataURL:       agoraDataURL,
 			SignTransactionURL: signTxURL,
+			InvoicingEnabled:   true,
 		}
 
 		err = store.Add(context.Background(), 0, config)

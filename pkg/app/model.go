@@ -19,6 +19,7 @@ type Config struct {
 	AppName            string
 	AgoraDataURL       *url.URL
 	SignTransactionURL *url.URL
+	InvoicingEnabled    bool
 }
 
 // GetAgoraDataURL returns the AgoraDataUrl for the provided memo, if the app has an agora data callback url set.

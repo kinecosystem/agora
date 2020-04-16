@@ -411,7 +411,7 @@ func TestGetTransaction_Happy(t *testing.T) {
 	assert.Nil(t, resp.Item.AgoraData)
 }
 
-func TestGetTransaction_WithAgoraData(t *testing.T) {
+func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
@@ -424,6 +424,7 @@ func TestGetTransaction_WithAgoraData(t *testing.T) {
 		AppName:            "kin",
 		AgoraDataURL:       agoraDataURL,
 		SignTransactionURL: signTxURL,
+		InvoicingEnabled: true,
 	}
 
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
@@ -613,7 +614,7 @@ func TestGetHistory_Happy(t *testing.T) {
 	}
 }
 
-func TestGetHistory_WithAgoraData(t *testing.T) {
+func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
@@ -626,6 +627,7 @@ func TestGetHistory_WithAgoraData(t *testing.T) {
 		AppName:            "kin",
 		AgoraDataURL:       agoraDataURL,
 		SignTransactionURL: signTxURL,
+		InvoicingEnabled: true,
 	}
 
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)

@@ -368,6 +368,10 @@ func getCursor(c string) *transactionpb.Cursor {
 func (s *server) resolveMemoFK(ctx context.Context, appConfig *app.Config, memo kin.Memo) (*commonpb.AgoraData, error) {
 	// TODO: attempt to resolve using 3p service/cache
 
+	if !appConfig.InvoicingEnabled {
+		return nil, nil
+	}
+
 	fk := memo.ForeignKey()
 	if fk[28] != 0 {
 		return nil, nil
