@@ -81,7 +81,7 @@ type testEnv struct {
 	hClientV2 *horizonclient.MockClient
 
 	appConfigStore app.ConfigStore
-	invoiceStore invoice.Store
+	invoiceStore   invoice.Store
 }
 
 func setup(t *testing.T) (env testEnv, cleanup func()) {
@@ -424,7 +424,7 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 		AppName:            "kin",
 		AgoraDataURL:       agoraDataURL,
 		SignTransactionURL: signTxURL,
-		InvoicingEnabled: true,
+		InvoicingEnabled:   true,
 	}
 
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
@@ -488,6 +488,61 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	assert.Equal(t, expectedTotal, resp.Item.AgoraData.TotalAmount)
 	assert.Equal(t, invoiceHash, resp.Item.AgoraData.ForeignKey)
 	require.True(t, proto.Equal(inv, resp.Item.AgoraData.Invoice))
+}
+
+func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
+	require.NoError(t, err)
+
+	appConfig := &app.Config{
+		AppName:          "kin",
+		AgoraDataURL:     agoraDataURL,
+		InvoicingEnabled: false,
+	}
+
+	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	require.NoError(t, err)
+
+	invoiceHash, err := invoice.GetHash(inv)
+	require.NoError(t, err)
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 0, invoiceHash)
+	require.NoError(t, err)
+
+	xdrHash := xdr.Hash{}
+	for i := 0; i < len(memo); i++ {
+		xdrHash[i] = memo[i]
+	}
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+	binaryMemo, err := xdrMemo.MarshalBinary()
+	require.NoError(t, err)
+
+	horizonResult := horizonprotocols.Transaction{
+		Hash:        hex.EncodeToString([]byte(strings.Repeat("h", 32))),
+		Ledger:      10,
+		ResultXdr:   base64.StdEncoding.EncodeToString([]byte("result")),
+		EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelope")),
+		Memo:        base64.StdEncoding.EncodeToString(binaryMemo),
+	}
+
+	env.hClient.On("LoadTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+	resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
+		TransactionHash: &commonpb.TransactionHash{
+			Value: []byte(strings.Repeat("h", 32)),
+		},
+	})
+	require.NoError(t, err)
+
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.Equal(t, transactionpb.GetTransactionResponse_SUCCESS, resp.State)
+	assert.NotNil(t, resp.Item)
+	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
+	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
+	assert.Equal(t, horizonResult.EnvelopeXdr, base64.StdEncoding.EncodeToString(resp.Item.EnvelopeXdr))
+	assert.Nil(t, resp.Item.AgoraData)
 }
 
 func TestGetTransaction_HorizonErrors(t *testing.T) {
@@ -627,7 +682,7 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 		AppName:            "kin",
 		AgoraDataURL:       agoraDataURL,
 		SignTransactionURL: signTxURL,
-		InvoicingEnabled: true,
+		InvoicingEnabled:   true,
 	}
 
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
@@ -709,6 +764,74 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	txnReq := env.hClientV2.Calls[0].Arguments[0].(horizonclient.TransactionRequest)
 	assert.Equal(t, "", txnReq.Cursor)
 	assert.Equal(t, horizonclient.OrderAsc, txnReq.Order)
+}
+
+func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
+	require.NoError(t, err)
+
+	appConfig := &app.Config{
+		AppName:          "kin",
+		AgoraDataURL:     agoraDataURL,
+		InvoicingEnabled: false,
+	}
+
+	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	require.NoError(t, err)
+
+	invoiceHash, err := invoice.GetHash(inv)
+	require.NoError(t, err)
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 0, invoiceHash)
+	require.NoError(t, err)
+
+	xdrHash := xdr.Hash{}
+	for i := 0; i < len(memo); i++ {
+		xdrHash[i] = memo[i]
+	}
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+	binaryMemo, err := xdrMemo.MarshalBinary()
+	require.NoError(t, err)
+
+	page := horizonprotocolsv2.TransactionsPage{
+		Embedded: struct {
+			Records []horizonprotocolsv2.Transaction
+		}{
+			Records: []horizonprotocolsv2.Transaction{
+				{
+					PT:          "cursor",
+					Hash:        hex.EncodeToString([]byte(strings.Repeat("h", 32))),
+					ResultXdr:   base64.StdEncoding.EncodeToString([]byte("resultXdr")),
+					EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelopeXdr")),
+					Successful:  true,
+					Ledger:      1,
+					Memo:        base64.StdEncoding.EncodeToString(binaryMemo),
+				},
+			},
+		},
+	}
+	env.hClientV2.On("Transactions", mock.Anything).Return(page, nil).Once()
+
+	resp, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
+		AccountId: &commonpb.StellarAccountId{
+			Value: strings.Repeat("G", 56),
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, resp.Items, 1)
+	item := resp.Items[0]
+	assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
+	assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
+	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
+
+	expectedURL, err := appConfig.GetAgoraDataURL(memo)
+	require.NoError(t, err)
+	assert.Equal(t, expectedURL, item.AgoraDataUrl)
+	assert.Nil(t, item.AgoraData)
 }
 
 func TestGetHistory_HorizonErrors(t *testing.T) {
