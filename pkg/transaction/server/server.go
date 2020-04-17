@@ -394,22 +394,9 @@ func (s *server) resolveMemoFK(ctx context.Context, appConfig *app.Config, memo 
 	return &commonpb.AgoraData{
 		Title:           appConfig.AppName,
 		Description:     fmt.Sprintf("# of line items: %d", len(record.Invoice.Items)),
-		TransactionType: getAgoraDataTransactionType(memo),
+		TransactionType: kin.GetAgoraDataTransactionType(memo),
 		TotalAmount:     total,
 		ForeignKey:      invoiceHash,
 		Invoice:         record.Invoice,
 	}, nil
-}
-
-func getAgoraDataTransactionType(memo kin.Memo) commonpb.AgoraData_TransactionType {
-	switch memo.TransactionType() {
-	case 1:
-		return commonpb.AgoraData_EARN
-	case 2:
-		return commonpb.AgoraData_SPEND
-	case 3:
-		return commonpb.AgoraData_P2P
-	default:
-		return commonpb.AgoraData_UNKNOWN
-	}
 }

@@ -76,7 +76,7 @@ func (a *app) Stop() {
 }
 
 func main() {
-	if err := agoraapp.Run(&app{}); err != nil {
+	if err := agoraapp.Run(&app{}, nil); err != nil {
 		logrus.WithError(err).Fatal("error running service")
 	}
 }
