@@ -8,24 +8,21 @@ import (
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 )
 
-type Record struct {
-	Invoice *commonpb.Invoice
-	TxHash []byte
-}
-
 var (
-	ErrExists   = errors.New("invoice already exists")
-	ErrNotFound = errors.New("invoice not found")
+	ErrExists   = errors.New("invoice list already exists")
+	ErrNotFound = errors.New("invoice list not found")
 )
 
 type Store interface {
-	// Add adds an invoice to the store.
+	// Put puts an commonpb.invoice list to the store.
 	//
-	// Returns ErrExists if the invoice already exists in the store
-	Add(ctx context.Context, inv *commonpb.Invoice, txHash []byte) error
+	// ErrExists is returned if an invoice list has already been stored
+	// for this transaction.
+	Put(ctx context.Context, txHash []byte, list *commonpb.InvoiceList) error
 
-	// Get gets an invoice record by its invoice hash.
+	// Get gets the stored commonpb.InvoiceList for a given transaction.
 	//
-	// Returns ErrNotFound if it could not be found.
-	Get(ctx context.Context, invoiceHash []byte) (*Record, error)
+	// ErrNotFound is returned if no commonpb.InvoiceList exists for the
+	// transaction.
+	Get(ctx context.Context, txHash []byte) (*commonpb.InvoiceList, error)
 }

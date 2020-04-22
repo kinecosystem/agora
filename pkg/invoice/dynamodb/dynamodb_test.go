@@ -72,14 +72,14 @@ func TestStore(t *testing.T) {
 func setupTestTable(client dynamodbiface.ClientAPI) error {
 	keySchema := []dynamodb.KeySchemaElement{
 		{
-			AttributeName: aws.String("invoice_hash"),
+			AttributeName: aws.String(hashKey),
 			KeyType:       dynamodb.KeyTypeHash,
 		},
 	}
 
 	attrDefinitions := []dynamodb.AttributeDefinition{
 		{
-			AttributeName: aws.String("invoice_hash"),
+			AttributeName: aws.String(hashKey),
 			AttributeType: dynamodb.ScalarAttributeTypeB,
 		},
 	}

@@ -8,9 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"time"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/xdr"
@@ -55,9 +53,9 @@ func New(
 	}
 }
 
-// SubmitSend implements transactionpb.TransactionServer.SubmitSpend.
-func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRequest) (*transactionpb.SubmitSendResponse, error) {
-	log := s.log.WithField("method", "SubmitSend")
+// SubmitTransaction implements transactionpb.TransactionServer.SubmitTransaction.
+func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
+	log := s.log.WithField("method", "SubmitTransaction")
 
 	var tx xdr.Transaction
 	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.TransactionXdr), &tx); err != nil {
@@ -65,15 +63,9 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 	}
 
 	// todo: memo verification even if invoice is nil
-	if req.Invoice != nil {
-		genTime, err := ptypes.Timestamp(req.Invoice.Nonce.GenerationTime)
-		if err != nil {
-			log.WithError(err).Warn("failed to convert nonce generation time")
-			return nil, status.Error(codes.Internal, "failed to validate invoice")
-		}
-		t := time.Now()
-		if genTime.After(t.Add(1*time.Hour)) || genTime.Before(t.Add(-24*time.Hour)) {
-			return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE}, nil
+	if req.InvoiceList != nil {
+		if len(req.InvoiceList.Invoices) != len(tx.Operations) {
+			return nil, status.Error(codes.InvalidArgument, "invoice list size does not match op count")
 		}
 
 		if tx.Memo.Hash == nil {
@@ -85,16 +77,18 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 			return nil, status.Error(codes.InvalidArgument, "invalid memo")
 		}
 
-		expectedFK, err := invoice.GetHash(req.Invoice)
+		expectedFK, err := invoice.GetSHA224Hash(req.InvoiceList)
 		if err != nil {
-			log.WithError(err).Warn("failed to get invoice hash")
-			return nil, status.Error(codes.Internal, "failed to validate invoice")
+			log.WithError(err).Warn("failed to get invoice list hash")
+			return nil, status.Error(codes.Internal, "failed to validate invoice list hash")
 		}
 
 		fk := memo.ForeignKey()
 		if !(bytes.Equal(fk[:28], expectedFK)) || fk[28] != byte(0) {
-			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice hash")
+			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
 		}
+
+		// todo(callback): verify with third party before.
 
 		txBytes, err := tx.MarshalBinary()
 		if err != nil {
@@ -102,12 +96,9 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 		}
 
 		txHash := sha256.Sum256(txBytes)
-		err = s.invoiceStore.Add(ctx, req.Invoice, txHash[:])
-		if err != nil {
-			if err == invoice.ErrExists {
-				return &transactionpb.SubmitSendResponse{Result: transactionpb.SubmitSendResponse_INVALID_INVOICE_NONCE}, nil
-			}
-
+		err = s.invoiceStore.Put(ctx, txHash[:], req.InvoiceList)
+		if err != nil && err != invoice.ErrExists {
+		} else if err != nil {
 			log.WithError(err).Warn("failed to store invoice")
 			return nil, status.Error(codes.Internal, "failed to store invoice")
 		}
@@ -135,7 +126,7 @@ func (s *server) SubmitSend(ctx context.Context, req *transactionpb.SubmitSendRe
 		return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
 	}
 
-	return &transactionpb.SubmitSendResponse{
+	return &transactionpb.SubmitTransactionResponse{
 		Hash: &commonpb.TransactionHash{
 			Value: hashBytes,
 		},
@@ -214,13 +205,16 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 	}
 
-	agoraData, err := s.resolveMemoFK(ctx, appConfig, memo)
+	resp.Item.ForeignKey, err = s.resolveForeignKey(ctx, appConfig, memo)
 	if err != nil {
-		return nil, err
+		log.WithError(err).Warn("Failed to resolve foreign key")
+		return nil, status.Error(codes.Internal, "failed to resolve agora data")
 	}
 
-	if agoraData != nil {
-		resp.Item.AgoraData = agoraData
+	resp.Item.OpAgoraData, err = s.resolveOpAgoraData(ctx, appConfig, req.TransactionHash.Value)
+	if err != nil {
+		log.WithError(err).Warn("Failed to resolve agora data")
+		return nil, status.Error(codes.Internal, "failed to resolve agora data")
 	}
 
 	return resp, nil
@@ -314,21 +308,22 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 		}
 
-		url, err := appConfig.GetAgoraDataURL(memo)
-		if err == nil {
-			item.AgoraDataUrl = url
-		} else if err != app.ErrURLNotSet {
+		item.AgoraDataUrl, err = appConfig.GetAgoraDataURL(memo)
+		if err != nil && err != app.ErrURLNotSet {
 			log.WithError(err).Warn("Failed to get agora data url")
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 		}
 
-		agoraData, err := s.resolveMemoFK(ctx, appConfig, memo)
+		item.ForeignKey, err = s.resolveForeignKey(ctx, appConfig, memo)
 		if err != nil {
-			return nil, err
+			log.WithError(err).Warn("Failed to resolve foreign key")
+			return nil, status.Error(codes.Internal, "failed to resolve agora data")
 		}
 
-		if agoraData != nil {
-			item.AgoraData = agoraData
+		item.OpAgoraData, err = s.resolveOpAgoraData(ctx, appConfig, hash)
+		if err != nil {
+			log.WithError(err).Warn("Failed to resolve agora data")
+			return nil, status.Error(codes.Internal, "failed to resolve agora data")
 		}
 	}
 
@@ -365,38 +360,45 @@ func getCursor(c string) *transactionpb.Cursor {
 	}
 }
 
-func (s *server) resolveMemoFK(ctx context.Context, appConfig *app.Config, memo kin.Memo) (*commonpb.AgoraData, error) {
-	// TODO: attempt to resolve using 3p service/cache
+func (s *server) resolveForeignKey(ctx context.Context, appConfig *app.Config, memo kin.Memo) ([]byte, error) {
+	// todo: attempt to resolve using 3p service/cache
+	if appConfig.InvoicingEnabled {
+		// We don't truncate foreign keys with the invoice system
+		return nil, nil
+	}
 
+	return nil, nil
+
+}
+func (s *server) resolveOpAgoraData(ctx context.Context, appConfig *app.Config, txHash []byte) ([]*commonpb.AgoraData, error) {
+	// todo: attempt to resolve using 3p service/cache
 	if !appConfig.InvoicingEnabled {
 		return nil, nil
 	}
 
-	fk := memo.ForeignKey()
-	if fk[28] != 0 {
-		return nil, nil
-	}
-
-	invoiceHash := fk[:28]
-	record, err := s.invoiceStore.Get(ctx, invoiceHash)
+	il, err := s.invoiceStore.Get(ctx, txHash)
 	if err != nil {
 		if err == invoice.ErrNotFound {
 			return nil, nil
 		}
-		return nil, status.Error(codes.Internal, "failed to resolve agora data")
+
+		return nil, status.Error(codes.Internal, "failed to resolve invoice agora data")
 	}
 
-	total := int64(0)
-	for _, item := range record.Invoice.Items {
-		total += item.Amount
+	opAgoraData := make([]*commonpb.AgoraData, len(il.Invoices))
+	for i := range il.Invoices {
+		total := int64(0)
+		for _, item := range il.Invoices[i].Items {
+			total += item.Amount
+		}
+
+		opAgoraData[i] = &commonpb.AgoraData{
+			Title:       appConfig.AppName,
+			Description: fmt.Sprintf("# of line items: %d", len(il.Invoices[i].Items)),
+			TotalAmount: total,
+			Invoice:     il.Invoices[i],
+		}
 	}
 
-	return &commonpb.AgoraData{
-		Title:           appConfig.AppName,
-		Description:     fmt.Sprintf("# of line items: %d", len(record.Invoice.Items)),
-		TransactionType: kin.GetAgoraDataTransactionType(memo),
-		TotalAmount:     total,
-		ForeignKey:      invoiceHash,
-		Invoice:         record.Invoice,
-	}, nil
+	return opAgoraData, nil
 }

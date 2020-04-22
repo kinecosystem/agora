@@ -3,15 +3,29 @@ package dynamodb
 import (
 	"context"
 
-	"github.com/aws/aws-sdk-go-v2/aws/awserr"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
+	"github.com/golang/protobuf/proto"
+	dynamodbutil "github.com/kinecosystem/agora-common/aws/dynamodb/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
+)
+
+const (
+	tableName       = "tx_invoices"
+	putCondition    = "attribute_not_exists(tx_hash)"
+	hashKey         = "tx_hash"
+	invoiceListAttr = "invoice_list"
+)
+
+var (
+	tableNameStr    = aws.String(tableName)
+	putConditionStr = aws.String(putCondition)
 )
 
 type db struct {
@@ -27,52 +41,57 @@ func New(client dynamodbiface.ClientAPI) invoice.Store {
 	}
 }
 
-// Add implements invoice.Store.Add.
-func (d *db) Add(ctx context.Context, inv *commonpb.Invoice, txHash []byte) error {
-	item, err := toItem(inv, txHash)
+// Put implements invoice.Store.Put.
+func (d *db) Put(ctx context.Context, txHash []byte, il *commonpb.InvoiceList) error {
+	if len(txHash) == 0 {
+		return errors.New("empty txHash")
+	}
+
+	ilBytes, err := proto.Marshal(il)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to marshal invoice list")
 	}
 
 	_, err = d.db.PutItemRequest(&dynamodb.PutItemInput{
-		TableName:           tableNameStr,
-		Item:                item,
+		TableName: tableNameStr,
+		Item: map[string]dynamodb.AttributeValue{
+			hashKey:         {B: txHash},
+			invoiceListAttr: {B: ilBytes},
+		},
 		ConditionExpression: putConditionStr,
 	}).Send(ctx)
 	if err != nil {
-		if aErr, ok := err.(awserr.Error); ok {
-			switch aErr.Code() {
-			case dynamodb.ErrCodeConditionalCheckFailedException:
-				return invoice.ErrExists
-			}
+		if dynamodbutil.IsConditionalCheckFailed(err) {
+			return invoice.ErrExists
 		}
 
-		return errors.Wrapf(err, "failed to store invoice")
+		return errors.Wrapf(err, "failed to store invoice list")
 	}
 
 	return nil
 }
 
 // Get implements invoice.Store.Get.
-func (d *db) Get(ctx context.Context, invoiceHash []byte) (*invoice.Record, error) {
-	if len(invoiceHash) != 28 {
-		return nil, errors.Errorf("invalid invoice hash len: %d", len(invoiceHash))
-	}
-
+func (d *db) Get(ctx context.Context, txHash []byte) (*commonpb.InvoiceList, error) {
 	resp, err := d.db.GetItemRequest(&dynamodb.GetItemInput{
 		TableName: tableNameStr,
 		Key: map[string]dynamodb.AttributeValue{
-			tableHashKey: {
-				B: invoiceHash,
-			},
+			hashKey: {B: txHash},
 		},
 	}).Send(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get invoice")
 	}
 
-	if len(resp.Item) == 0 {
+	val, ok := resp.Item[invoiceListAttr]
+	if !ok {
 		return nil, invoice.ErrNotFound
 	}
-	return fromItem(resp.Item)
+
+	il := &commonpb.InvoiceList{}
+	if err := proto.Unmarshal(val.B, il); err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal invoice list")
+	}
+
+	return il, nil
 }

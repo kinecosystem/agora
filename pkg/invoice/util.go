@@ -5,13 +5,11 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
-
-	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 )
 
-// GetHash returns the SHA-224 hash of the invoice, which can be used as the foreign key in an Agora transaction memo
-func GetHash(inv *commonpb.Invoice) ([]byte, error) {
-	b, err := proto.Marshal(inv)
+// GetSHA224Hash returns the SHA-224 of the marshal'd proto message.
+func GetSHA224Hash(m proto.Message) ([]byte, error) {
+	b, err := proto.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to marshal invoice")
 	}

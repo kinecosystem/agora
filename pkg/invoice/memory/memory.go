@@ -5,44 +5,34 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/pkg/errors"
 
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
 )
 
-type entry struct {
-	txHash   []byte
-	contents *commonpb.Invoice
-}
-
 type memory struct {
 	sync.Mutex
-	entries map[string]entry
+	entries map[string]*commonpb.InvoiceList
 }
 
 // New returns an in-memory invoice.Store.
 func New() invoice.Store {
 	return &memory{
-		entries: make(map[string]entry),
+		entries: make(map[string]*commonpb.InvoiceList),
 	}
 }
 
 func (m *memory) reset() {
 	m.Lock()
-	m.entries = make(map[string]entry)
+	m.entries = make(map[string]*commonpb.InvoiceList)
 	m.Unlock()
 }
 
 // Add implements invoice.Store.Add.
-func (m *memory) Add(_ context.Context, inv *commonpb.Invoice, txHash []byte) error {
-	invoiceHash, err := invoice.GetHash(inv)
-	if err != nil {
-		return errors.Wrap(err, "failed to get invoice hash")
-	}
+func (m *memory) Put(_ context.Context, txHash []byte, il *commonpb.InvoiceList) error {
+	k := string(txHash)
 
-	k := string(invoiceHash)
 	m.Lock()
 	defer m.Unlock()
 
@@ -50,29 +40,19 @@ func (m *memory) Add(_ context.Context, inv *commonpb.Invoice, txHash []byte) er
 		return invoice.ErrExists
 	}
 
-	m.entries[k] = entry{
-		txHash:   txHash,
-		contents: proto.Clone(inv).(*commonpb.Invoice),
-	}
+	m.entries[k] = proto.Clone(il).(*commonpb.InvoiceList)
 	return nil
 }
 
 // Get implements invoice.Store.Get.
-func (m *memory) Get(_ context.Context, invoiceHash []byte) (*invoice.Record, error) {
-	if len(invoiceHash) != 28 {
-		return nil, errors.Errorf("invalid invoice hash len: %d", len(invoiceHash))
-	}
-
+func (m *memory) Get(_ context.Context, txHash []byte) (*commonpb.InvoiceList, error) {
 	m.Lock()
 	defer m.Unlock()
 
-	entry, exists := m.entries[string(invoiceHash)]
+	entry, exists := m.entries[string(txHash)]
 	if !exists {
 		return nil, invoice.ErrNotFound
 	}
 
-	return &invoice.Record{
-		Invoice: proto.Clone(entry.contents).(*commonpb.Invoice),
-		TxHash:  entry.txHash,
-	}, nil
+	return proto.Clone(entry).(*commonpb.InvoiceList), nil
 }
