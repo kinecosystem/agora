@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	"github.com/pkg/errors"
 
-	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data"
 )

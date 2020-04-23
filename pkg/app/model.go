@@ -8,7 +8,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 
-	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 )
 
 var (

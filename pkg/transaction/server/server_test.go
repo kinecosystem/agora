@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/testutil"
@@ -29,8 +29,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
-	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
+	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
+	transactionpb "github.com/kinecosystem/kin-api-internal/genproto/transaction/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
 	appconfigdb "github.com/kinecosystem/agora-transaction-services-internal/pkg/app/memory"

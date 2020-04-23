@@ -15,7 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
-	commonpb "github.com/kinecosystem/kin-api/genproto/common/v3"
+	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data"
 	"github.com/kinecosystem/agora-transaction-services-internal/pkg/data/tests"

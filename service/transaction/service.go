@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	transactionpb "github.com/kinecosystem/kin-api/genproto/transaction/v3"
+	transactionpb "github.com/kinecosystem/kin-api-internal/genproto/transaction/v3"
 
 	appconfigdb "github.com/kinecosystem/agora-transaction-services-internal/pkg/app/dynamodb"
 	invoicedb "github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice/dynamodb"
@@ -26,7 +26,7 @@ type app struct {
 }
 
 // Init implements agorapp.App.Init.
-func (a *app) Init(_ agoraapp.AppConfig) error {
+func (a *app) Init(_ agoraapp.Config) error {
 	a.shutdownCh = make(chan struct{})
 
 	client, err := kin.GetClient()

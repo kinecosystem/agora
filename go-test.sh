@@ -3,7 +3,7 @@ set -e
 
 echo "" > coverage.txt
 
-golangci-lint run --exclude horizon.Problem
+golangci-lint run --exclude horizon.Problem --exclude github.com/golang/protobuf/proto
 
 for d in $(go list -e ./... | grep -v vendor | grep -v mocks | grep -v systemtest); do
     go test -test.v=true -race -coverprofile=profile.out $d
