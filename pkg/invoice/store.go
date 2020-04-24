@@ -14,7 +14,7 @@ var (
 )
 
 type Store interface {
-	// Put puts an commonpb.invoice list to the store.
+	// Put puts an commonpb.InvoiceList to the store.
 	//
 	// ErrExists is returned if an invoice list has already been stored
 	// for this transaction.

@@ -7,7 +7,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// GetSHA224Hash returns the SHA-224 of the marshal'd proto message.
+// GetSHA224Hash returns the SHA-224 of the marshaled proto message.
 func GetSHA224Hash(m proto.Message) ([]byte, error) {
 	b, err := proto.Marshal(m)
 	if err != nil {
