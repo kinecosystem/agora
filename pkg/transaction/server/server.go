@@ -205,12 +205,6 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 	}
 
-	resp.Item.ForeignKey, err = s.resolveForeignKey(ctx, appConfig, memo)
-	if err != nil {
-		log.WithError(err).Warn("Failed to resolve foreign key")
-		return nil, status.Error(codes.Internal, "failed to resolve agora data")
-	}
-
 	resp.Item.OpAgoraData, err = s.resolveOpAgoraData(ctx, appConfig, req.TransactionHash.Value)
 	if err != nil {
 		log.WithError(err).Warn("Failed to resolve agora data")
@@ -314,12 +308,6 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 		}
 
-		item.ForeignKey, err = s.resolveForeignKey(ctx, appConfig, memo)
-		if err != nil {
-			log.WithError(err).Warn("Failed to resolve foreign key")
-			return nil, status.Error(codes.Internal, "failed to resolve agora data")
-		}
-
 		item.OpAgoraData, err = s.resolveOpAgoraData(ctx, appConfig, hash)
 		if err != nil {
 			log.WithError(err).Warn("Failed to resolve agora data")
@@ -360,16 +348,6 @@ func getCursor(c string) *transactionpb.Cursor {
 	}
 }
 
-func (s *server) resolveForeignKey(ctx context.Context, appConfig *app.Config, memo kin.Memo) ([]byte, error) {
-	// todo: attempt to resolve using 3p service/cache
-	if appConfig.InvoicingEnabled {
-		// We don't truncate foreign keys with the invoice system
-		return nil, nil
-	}
-
-	return nil, nil
-
-}
 func (s *server) resolveOpAgoraData(ctx context.Context, appConfig *app.Config, txHash []byte) ([]*commonpb.AgoraData, error) {
 	// todo: attempt to resolve using 3p service/cache
 	if !appConfig.InvoicingEnabled {

@@ -441,7 +441,6 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
 	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
 	assert.Equal(t, horizonResult.EnvelopeXdr, base64.StdEncoding.EncodeToString(resp.Item.EnvelopeXdr))
-	assert.Nil(t, resp.Item.ForeignKey)
 
 	// TODO: assert all agora data fields when fully implemented
 	expectedTotal := int64(0)
@@ -722,7 +721,6 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	assert.Equal(t, appConfig.AppName, item.OpAgoraData[0].Title)
 	assert.Equal(t, fmt.Sprintf("# of line items: %d", len(il.Invoices[0].Items)), item.OpAgoraData[0].Description)
 	assert.Equal(t, expectedTotal, item.OpAgoraData[0].TotalAmount)
-	assert.Nil(t, item.ForeignKey)
 	require.True(t, proto.Equal(il.Invoices[0], item.OpAgoraData[0].Invoice))
 
 	require.Len(t, env.hClientV2.Calls, 1)
