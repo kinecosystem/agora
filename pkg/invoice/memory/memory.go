@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -31,6 +32,10 @@ func (m *memory) reset() {
 
 // Add implements invoice.Store.Add.
 func (m *memory) Put(_ context.Context, txHash []byte, il *commonpb.InvoiceList) error {
+	if len(txHash) != 32 {
+		return errors.New("txHash not 32 bytes")
+	}
+
 	k := string(txHash)
 
 	m.Lock()
@@ -46,6 +51,10 @@ func (m *memory) Put(_ context.Context, txHash []byte, il *commonpb.InvoiceList)
 
 // Get implements invoice.Store.Get.
 func (m *memory) Get(_ context.Context, txHash []byte) (*commonpb.InvoiceList, error) {
+	if len(txHash) != 32 {
+		return nil, errors.New("txHash not 32 bytes")
+	}
+
 	m.Lock()
 	defer m.Unlock()
 

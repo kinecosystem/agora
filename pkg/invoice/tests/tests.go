@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
@@ -56,6 +57,15 @@ func testRoundTrip(t *testing.T, store invoice.Store) {
 		actual, err := store.Get(context.Background(), txHash)
 		require.NoError(t, err)
 		require.True(t, proto.Equal(il, actual))
+
+		// Ensure non-32 byte txHashs cannot be used.
+		err = store.Put(context.Background(), []byte{1, 2, 3}, il)
+		assert.NotNil(t, err)
+		assert.NotEqual(t, invoice.ErrNotFound, err)
+
+		_, err = store.Get(context.Background(), []byte{1, 2, 3})
+		assert.NotNil(t, err)
+		assert.NotEqual(t, invoice.ErrNotFound, err)
 	})
 }
 
