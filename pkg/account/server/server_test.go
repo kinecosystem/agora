@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kinecosystem/agora-common/testutil"
+	agoratestutil "github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
 	hProtocol "github.com/kinecosystem/go/protocols/horizon"
@@ -19,7 +19,7 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
-	"github.com/kinecosystem/agora/pkg/account/server/test"
+	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
 type testEnv struct {
@@ -33,7 +33,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	err := os.Setenv("AGORA_ENVIRONMENT", "test")
 	require.NoError(t, err)
 
-	conn, serv, err := testutil.NewServer()
+	conn, serv, err := agoratestutil.NewServer()
 	require.NoError(t, err)
 
 	env.client = accountpb.NewAccountClient(conn)
@@ -67,7 +67,7 @@ func TestCreateAccount(t *testing.T) {
 	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
 	env.horizonClient.On("LoadAccount", env.rootAccountKP.Address()).Return(hProtocol.Account{Sequence: "1"}, nil).Once()
 	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(*test.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.CreateAccountRequest{
 		AccountId: &commonpb.StellarAccountId{Value: kp.Address()},
@@ -90,7 +90,7 @@ func TestCreateAccountExists(t *testing.T) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(*test.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.CreateAccountRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
 
@@ -112,7 +112,7 @@ func TestGetAccountInfo(t *testing.T) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(*test.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.GetAccountInfoRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
 	resp, err := env.client.GetAccountInfo(context.Background(), &req)
@@ -149,20 +149,20 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	kp1, acc1 := test.GenerateAccountID(t)
-	_, acc2 := test.GenerateAccountID(t)
+	kp1, acc1 := testutil.GenerateAccountID(t)
+	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	m := test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
-				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 900000),
-				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
+				testutil.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 900000),
+				testutil.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
 			},
 		},
 	})
 
-	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
 
 	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
 	stream, err := env.client.GetEvents(context.Background(), req)
@@ -198,20 +198,20 @@ func TestGetEvents_Batched(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	kp1, acc1 := test.GenerateAccountID(t)
-	_, acc2 := test.GenerateAccountID(t)
+	kp1, acc1 := testutil.GenerateAccountID(t)
+	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	m := test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
-				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 900000),
-				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
+				testutil.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 900000),
+				testutil.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
 			},
 		},
 	})
 
-	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
 
 	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
 	stream, err := env.client.GetEvents(context.Background(), req)
@@ -268,13 +268,13 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	kp1, acc1 := test.GenerateAccountID(t)
-	_, acc2 := test.GenerateAccountID(t)
+	kp1, acc1 := testutil.GenerateAccountID(t)
+	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	m := test.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
+	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	m := testutil.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
 
-	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
 
 	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
 	stream, err := env.client.GetEvents(context.Background(), req)
@@ -290,7 +290,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
 	// Successfully obtain account info; both the transaction and account events should get sent
-	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "9", "2"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "9", "2"), nil).Once()
 
 	env.accountNotifier.OnTransaction(e, m)
 
@@ -313,13 +313,13 @@ func TestGetEvents_LoadAccountFailure(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	kp1, acc1 := test.GenerateAccountID(t)
-	_, acc2 := test.GenerateAccountID(t)
+	kp1, acc1 := testutil.GenerateAccountID(t)
+	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	m := test.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
+	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	m := testutil.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
 
-	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
 
 	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
 	stream, err := env.client.GetEvents(context.Background(), req)
@@ -355,20 +355,20 @@ func TestGetEvents_AccountRemoved(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	kp1, acc1 := test.GenerateAccountID(t)
-	_, acc2 := test.GenerateAccountID(t)
+	kp1, acc1 := testutil.GenerateAccountID(t)
+	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GenerateMergeOperation(nil, acc2)})
-	m := test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GenerateMergeOperation(nil, acc2)})
+	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
-				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryRemoved, acc1, 2, 900000),
-				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
+				testutil.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryRemoved, acc1, 2, 900000),
+				testutil.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
 			},
 		},
 	})
 
-	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
 
 	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
 	stream, err := env.client.GetEvents(context.Background(), req)

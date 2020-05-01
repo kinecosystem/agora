@@ -1,4 +1,4 @@
-package test
+package testutil
 
 import (
 	"testing"
@@ -44,6 +44,15 @@ func GenerateTransactionEnvelope(src xdr.AccountId, operations []xdr.Operation) 
 		Tx: xdr.Transaction{
 			SourceAccount: src,
 			Operations:    operations,
+		},
+	}
+}
+
+func GenerateTransactionResult(code xdr.TransactionResultCode, results []xdr.OperationResult) xdr.TransactionResult {
+	return xdr.TransactionResult{
+		Result: xdr.TransactionResultResult{
+			Code:    code,
+			Results: &results,
 		},
 	}
 }

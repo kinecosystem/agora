@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+import "validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+enum KinVersion {
+    UNKNOWN  = 0;
+    RESERVED = 1;
+    KIN2     = 2;
+    KIN3     = 3;
+}
+
+message Entry {
+    KinVersion version = 1;
+
+    oneof kind {
+        StellarEntry stellar = 2;
+    }
+}
+
+message StellarEntry {
+    uint64 ledger = 1;
+
+    google.protobuf.Timestamp ledger_close_time = 2 [(validate.rules).timestamp = {
+        required: true,
+    }];
+
+    bytes envelope_xdr = 3 [(validate.rules).bytes = {
+        min_len: 1
+        max_len: 10240
+    }];
+
+    bytes result_xdr = 4 [(validate.rules).bytes = {
+        min_len: 1
+        max_len: 10240
+    }];
+}
