@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 
 	"github.com/kinecosystem/agora-common/kin"
@@ -197,18 +196,10 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 	}
 
-	url, err := appConfig.GetAgoraDataURL(memo)
-	if err == nil {
-		resp.Item.AgoraDataUrl = url
-	} else if err != app.ErrURLNotSet {
-		log.WithError(err).Warn("Failed to get agora data url")
-		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
-	}
-
-	resp.Item.OpAgoraData, err = s.resolveOpAgoraData(ctx, appConfig, req.TransactionHash.Value)
+	resp.Item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, req.TransactionHash.Value)
 	if err != nil {
-		log.WithError(err).Warn("Failed to resolve agora data")
-		return nil, status.Error(codes.Internal, "failed to resolve agora data")
+		log.WithError(err).Warn("Failed to retrieve invoice list")
+		return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
 	}
 
 	return resp, nil
@@ -302,16 +293,10 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 		}
 
-		item.AgoraDataUrl, err = appConfig.GetAgoraDataURL(memo)
-		if err != nil && err != app.ErrURLNotSet {
-			log.WithError(err).Warn("Failed to get agora data url")
-			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
-		}
-
-		item.OpAgoraData, err = s.resolveOpAgoraData(ctx, appConfig, hash)
+		item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, hash)
 		if err != nil {
-			log.WithError(err).Warn("Failed to resolve agora data")
-			return nil, status.Error(codes.Internal, "failed to resolve agora data")
+			log.WithError(err).Warn("Failed to retrieve invoice list")
+			return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
 		}
 	}
 
@@ -348,35 +333,15 @@ func getCursor(c string) *transactionpb.Cursor {
 	}
 }
 
-func (s *server) resolveOpAgoraData(ctx context.Context, appConfig *app.Config, txHash []byte) ([]*commonpb.AgoraData, error) {
-	// todo: attempt to resolve using 3p service/cache
+func (s *server) getInvoiceList(ctx context.Context, appConfig *app.Config, txHash []byte) (*commonpb.InvoiceList, error) {
+	// shortcut to avoid unnecessary lookups
 	if !appConfig.InvoicingEnabled {
 		return nil, nil
 	}
 
 	il, err := s.invoiceStore.Get(ctx, txHash)
-	if err != nil {
-		if err == invoice.ErrNotFound {
-			return nil, nil
-		}
-
-		return nil, status.Error(codes.Internal, "failed to resolve invoice agora data")
+	if err == invoice.ErrNotFound {
+		return nil, nil
 	}
-
-	opAgoraData := make([]*commonpb.AgoraData, len(il.Invoices))
-	for i := range il.Invoices {
-		total := int64(0)
-		for _, item := range il.Invoices[i].Items {
-			total += item.Amount
-		}
-
-		opAgoraData[i] = &commonpb.AgoraData{
-			Title:       appConfig.AppName,
-			Description: fmt.Sprintf("# of line items: %d", len(il.Invoices[i].Items)),
-			TotalAmount: total,
-			Invoice:     il.Invoices[i],
-		}
-	}
-
-	return opAgoraData, nil
+	return il, nil
 }

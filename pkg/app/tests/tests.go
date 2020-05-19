@@ -23,14 +23,11 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 		require.Equal(t, app.ErrNotFound, err)
 		require.Nil(t, actualConfig)
 
-		agoraDataURL, err := url.Parse("test.kin.org/agoradata")
-		require.NoError(t, err)
 		signTxURL, err := url.Parse("test.kin.org/signtx")
 		require.NoError(t, err)
 
 		config := &app.Config{
 			AppName:            "kin",
-			AgoraDataURL:       agoraDataURL,
 			SignTransactionURL: signTxURL,
 			InvoicingEnabled:   true,
 		}

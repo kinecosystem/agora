@@ -371,22 +371,18 @@ func TestGetTransaction_Happy(t *testing.T) {
 	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
 	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
 	assert.Equal(t, horizonResult.EnvelopeXdr, base64.StdEncoding.EncodeToString(resp.Item.EnvelopeXdr))
-	assert.Nil(t, resp.Item.AgoraDataUrl)
-	assert.Nil(t, resp.Item.OpAgoraData)
+	assert.Nil(t, resp.Item.InvoiceList)
 }
 
 func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
-	require.NoError(t, err)
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
 	require.NoError(t, err)
 
 	appConfig := &app.Config{
 		AppName:            "kin",
-		AgoraDataURL:       agoraDataURL,
 		SignTransactionURL: signTxURL,
 		InvoicingEnabled:   true,
 	}
@@ -447,26 +443,19 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	for _, item := range il.Invoices[0].Items {
 		expectedTotal += item.Amount
 	}
-	assert.Equal(t, appConfig.AppName, resp.Item.OpAgoraData[0].Title)
-	assert.Equal(t, fmt.Sprintf("# of line items: %d", len(il.Invoices[0].Items)), resp.Item.OpAgoraData[0].Description)
-	assert.Equal(t, expectedTotal, resp.Item.OpAgoraData[0].TotalAmount)
-	require.True(t, proto.Equal(il.Invoices[0], resp.Item.OpAgoraData[0].Invoice))
+	require.True(t, proto.Equal(il, resp.Item.InvoiceList))
 }
 
 func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
-	require.NoError(t, err)
-
 	appConfig := &app.Config{
 		AppName:          "kin",
-		AgoraDataURL:     agoraDataURL,
 		InvoicingEnabled: false,
 	}
 
-	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	err := env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
 	invoiceHash, err := invoice.GetSHA224Hash(il)
@@ -505,7 +494,7 @@ func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
 	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
 	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
 	assert.Equal(t, horizonResult.EnvelopeXdr, base64.StdEncoding.EncodeToString(resp.Item.EnvelopeXdr))
-	assert.Nil(t, resp.Item.OpAgoraData)
+	assert.Nil(t, resp.Item.InvoiceList)
 }
 
 func TestGetTransaction_HorizonErrors(t *testing.T) {
@@ -622,8 +611,7 @@ func TestGetHistory_Happy(t *testing.T) {
 		assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
 		assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
 		assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
-		assert.Nil(t, item.OpAgoraData)
-		assert.Nil(t, item.AgoraDataUrl)
+		assert.Nil(t, item.InvoiceList)
 
 		require.Len(t, env.hClientV2.Calls, i+1)
 		txnReq := env.hClientV2.Calls[i].Arguments[0].(horizonclient.TransactionRequest)
@@ -636,14 +624,11 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
-	require.NoError(t, err)
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
 	require.NoError(t, err)
 
 	appConfig := &app.Config{
 		AppName:            "kin",
-		AgoraDataURL:       agoraDataURL,
 		SignTransactionURL: signTxURL,
 		InvoicingEnabled:   true,
 	}
@@ -703,25 +688,18 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, resp.Items, 1)
-	require.NotNil(t, resp.Items[0].OpAgoraData)
+	require.NotNil(t, resp.Items[0].InvoiceList)
 	item := resp.Items[0]
 	assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
 	assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
 	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
-
-	expectedURL, err := appConfig.GetAgoraDataURL(memo)
-	require.NoError(t, err)
-	assert.Equal(t, expectedURL, item.AgoraDataUrl)
 
 	// TODO: assert all agora data fields when fully implemented
 	expectedTotal := int64(0)
 	for _, item := range il.Invoices[0].Items {
 		expectedTotal += item.Amount
 	}
-	assert.Equal(t, appConfig.AppName, item.OpAgoraData[0].Title)
-	assert.Equal(t, fmt.Sprintf("# of line items: %d", len(il.Invoices[0].Items)), item.OpAgoraData[0].Description)
-	assert.Equal(t, expectedTotal, item.OpAgoraData[0].TotalAmount)
-	require.True(t, proto.Equal(il.Invoices[0], item.OpAgoraData[0].Invoice))
+	require.True(t, proto.Equal(il, item.InvoiceList))
 
 	require.Len(t, env.hClientV2.Calls, 1)
 	txnReq := env.hClientV2.Calls[0].Arguments[0].(horizonclient.TransactionRequest)
@@ -733,16 +711,12 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	agoraDataURL, err := url.Parse("test.kin.org/agora_data")
-	require.NoError(t, err)
-
 	appConfig := &app.Config{
 		AppName:          "kin",
-		AgoraDataURL:     agoraDataURL,
 		InvoicingEnabled: false,
 	}
 
-	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	err := env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
 	invoiceHash, err := invoice.GetSHA224Hash(il)
@@ -790,11 +764,7 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 	assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
 	assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
 	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
-
-	expectedURL, err := appConfig.GetAgoraDataURL(memo)
-	require.NoError(t, err)
-	assert.Equal(t, expectedURL, item.AgoraDataUrl)
-	assert.Nil(t, item.OpAgoraData)
+	assert.Nil(t, item.InvoiceList)
 }
 
 func TestGetHistory_HorizonErrors(t *testing.T) {
