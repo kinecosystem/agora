@@ -29,10 +29,10 @@ import (
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/kin-api-internal/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
-	appconfigdb "github.com/kinecosystem/agora-transaction-services-internal/pkg/app/memory"
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
-	invoicedb "github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice/memory"
+	"github.com/kinecosystem/agora/pkg/app"
+	appconfigdb "github.com/kinecosystem/agora/pkg/app/memory"
+	"github.com/kinecosystem/agora/pkg/invoice"
+	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
 )
 
 var (

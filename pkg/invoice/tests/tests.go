@@ -11,7 +11,7 @@ import (
 
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/invoice"
 )
 
 func RunTests(t *testing.T, store invoice.Store, teardown func()) {

@@ -9,7 +9,7 @@ all: clean deps test images
 
 .PHONY: clean
 clean:
-	@rm -rf service/transaction/build/
+	@rm -rf service/agora-server/build/
 	@rm -f coverage.txt
 
 .PHONY: deps
@@ -24,26 +24,26 @@ deps-clean:
 test:
 	@./go-test.sh
 
-.PHONY: build build-transaction
-build: build-transaction
-build-transaction:
-	@go vet github.com/kinecosystem/agora-transaction-services-internal/service/transaction
-	GOOS=$(GO_OS) GOARCH=$(GO_ARCH) CGO_ENABLED=0 go build $(GO_FLAGS) -o service/transaction/build/$(GO_OS)-$(GO_ARCH)/transaction \
-		github.com/kinecosystem/agora-transaction-services-internal/service/transaction
+.PHONY: build build-agora
+build: build-agora
+build-agora:
+	@go vet github.com/kinecosystem/agora/service/agora
+	GOOS=$(GO_OS) GOARCH=$(GO_ARCH) CGO_ENABLED=0 go build $(GO_FLAGS) -o service/agora/build/$(GO_OS)-$(GO_ARCH)/agora \
+		github.com/kinecosystem/agora/service/agora
 
 .PHONY: images
 images: GO_OS := linux
 images: GO_ARCH := amd64
 images: build images-only
 
-.PHONY: images-only transaction-image
-images-only: transaction-image
-transaction-image:
-	docker build service/transaction -t transaction-service:$(GIT_BRANCH)
+.PHONY: images-only agora-image
+images-only: agora-image
+agora-image:
+	docker build service/agora -t agora:$(GIT_BRANCH)
 
-.PHONY: deploy-transaction
-deploy-transaction: GO_OS=linux
-deploy-transaction: build
-deploy-transaction: transaction-image
-deploy-transaction:
-	cddc deploy --service-config service/transaction/service.yaml -p agora$(ENV) -t $(GIT_BRANCH)
+.PHONY: deploy-agora
+deploy-agora: GO_OS=linux
+deploy-agora: build
+deploy-agora: agora-image
+deploy-agora:
+	cddc deploy --service-config service/agora/service.yaml -p agora$(ENV) -t $(GIT_BRANCH)

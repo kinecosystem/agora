@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbattribute"
 	"github.com/pkg/errors"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
+	"github.com/kinecosystem/agora/pkg/app"
 )
 
 const (

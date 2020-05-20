@@ -6,7 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
+	"github.com/kinecosystem/agora/pkg/app"
 )
 
 type store struct {

@@ -11,7 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
+	"github.com/kinecosystem/agora/pkg/app"
 )
 
 type db struct {

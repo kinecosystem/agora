@@ -9,7 +9,7 @@ import (
 
 	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/invoice"
 )
 
 type memory struct {

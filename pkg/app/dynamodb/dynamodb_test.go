@@ -14,8 +14,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app/tests"
+	"github.com/kinecosystem/agora/pkg/app"
+	"github.com/kinecosystem/agora/pkg/app/tests"
 )
 
 var (

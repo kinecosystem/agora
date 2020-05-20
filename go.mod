@@ -1,4 +1,4 @@
-module github.com/kinecosystem/agora-transaction-services-internal
+module github.com/kinecosystem/agora
 
 go 1.13
 

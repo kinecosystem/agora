@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
+	"github.com/kinecosystem/agora/pkg/app"
 )
 
 func TestModelConversion_Full(t *testing.T) {

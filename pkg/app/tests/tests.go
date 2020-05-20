@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app"
+	"github.com/kinecosystem/agora/pkg/app"
 )
 
 func RunTests(t *testing.T, store app.ConfigStore, teardown func()) {

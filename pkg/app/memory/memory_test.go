@@ -3,7 +3,7 @@ package memory
 import (
 	"testing"
 
-	"github.com/kinecosystem/agora-transaction-services-internal/pkg/app/tests"
+	"github.com/kinecosystem/agora/pkg/app/tests"
 )
 
 func TestStore(t *testing.T) {
