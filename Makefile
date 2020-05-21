@@ -9,7 +9,7 @@ all: clean deps test images
 
 .PHONY: clean
 clean:
-	@rm -rf service/agora-server/build/
+	@rm -rf service/agora/build/
 	@rm -f coverage.txt
 
 .PHONY: deps
