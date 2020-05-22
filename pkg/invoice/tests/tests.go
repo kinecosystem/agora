@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora/pkg/invoice"
 )

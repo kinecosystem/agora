@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	accountpb "github.com/kinecosystem/kin-api-internal/genproto/account/v3"
-	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 )
 
 type testEnv struct {
@@ -65,10 +65,6 @@ func TestCreateAccount(t *testing.T) {
 
 	req := accountpb.CreateAccountRequest{
 		AccountId: &commonpb.StellarAccountId{Value: kp.Address()},
-		AppMapping: &accountpb.CreateAccountRequest_AppUserMapping{
-			AppId:        "kin",
-			AppAccountId: "someuser",
-		},
 	}
 	resp, err := env.client.CreateAccount(context.Background(), &req)
 	require.NoError(t, err)

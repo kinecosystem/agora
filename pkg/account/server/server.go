@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	accountpb "github.com/kinecosystem/kin-api-internal/genproto/account/v3"
-	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 )
 
 type server struct {

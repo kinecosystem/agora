@@ -147,14 +147,14 @@ github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfV
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 h1:uC1QfSlInpQF+M0ao65imhwqKnz3Q2z/d8PWZRMQvDM=
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88/go.mod h1:3w7q1U84EfirKl04SVQ/s7nPm1ZPhiXd34z40TNz36k=
+github.com/kinecosystem/agora-api v0.9.0 h1:KcbJPBTejgSFI1PsNfKznFU+4cgmzQpSbVehRRPxkrc=
+github.com/kinecosystem/agora-api v0.9.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
 github.com/kinecosystem/agora-common v0.30.0 h1:0ropb1a4vaCpahzLyPEvV0BaDZyqMN0RKLvk89naYSc=
 github.com/kinecosystem/agora-common v0.30.0/go.mod h1:2Bn8pHrC93TR0eKcVnRmf6Q5o+h0slBGJbkXI9M5iOQ=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e h1:YP9l6K2VUnIc9SmT9irPeCrJ9JCWMQjOj0Pq2xSpEfs=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e/go.mod h1:25m9BWmQ2cj1bVnl4Axoxq8XNpODLSe01IA9HrhG4sA=
 github.com/kinecosystem/kin-api-internal v0.6.0 h1:5w7LQMXe2cIH8YWQ06VCwUBbIiE0SOT/rVHP8omcBTo=
 github.com/kinecosystem/kin-api-internal v0.6.0/go.mod h1:5e3FQvQfzEsxiySRINfF2ZNNQW2ruNaNaHsnjs3FAes=
-github.com/kinecosystem/kin-api-internal v0.8.0 h1:coH2Aa6RM4wNyRMWjBlYQmKQHFrt3WQeBjecEIyLV60=
-github.com/kinecosystem/kin-api-internal v0.8.0/go.mod h1:5e3FQvQfzEsxiySRINfF2ZNNQW2ruNaNaHsnjs3FAes=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/klauspost/compress v0.0.0-20161106143436-e3b7981a12dd h1:vQ0EEfHpdFUtNRj1ri25MUq5jb3Vma+kKhLyjeUTVow=

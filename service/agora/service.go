@@ -13,8 +13,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	accountpb "github.com/kinecosystem/kin-api-internal/genproto/account/v3"
-	transactionpb "github.com/kinecosystem/kin-api-internal/genproto/transaction/v3"
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"

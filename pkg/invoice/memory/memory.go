@@ -7,7 +7,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora/pkg/invoice"
 )

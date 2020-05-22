@@ -11,7 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
-	commonpb "github.com/kinecosystem/kin-api-internal/genproto/common/v3"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora/pkg/invoice"
 )

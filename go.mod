@@ -5,9 +5,9 @@ go 1.13
 require (
 	github.com/aws/aws-sdk-go-v2 v0.17.0
 	github.com/golang/protobuf v1.3.3
+	github.com/kinecosystem/agora-api v0.9.0
 	github.com/kinecosystem/agora-common v0.30.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
-	github.com/kinecosystem/kin-api-internal v0.8.0
 	github.com/ory/dockertest v3.3.5+incompatible
 	github.com/pkg/errors v0.8.1
 	github.com/sirupsen/logrus v1.4.2
