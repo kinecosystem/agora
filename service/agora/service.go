@@ -21,6 +21,10 @@ import (
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
+	// Configurable keystore options:
+	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
+	_ "github.com/kinecosystem/agora/pkg/keypair/environment"
+	_ "github.com/kinecosystem/agora/pkg/keypair/memory"
 )
 
 const (
