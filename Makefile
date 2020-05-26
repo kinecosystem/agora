@@ -39,7 +39,7 @@ images: build images-only
 .PHONY: images-only agora-image
 images-only: agora-image
 agora-image:
-	docker build service/agora -t agora:$(GIT_BRANCH)
+	docker build service/agora -t agora-service:$(GIT_BRANCH)
 
 .PHONY: deploy-agora
 deploy-agora: GO_OS=linux
