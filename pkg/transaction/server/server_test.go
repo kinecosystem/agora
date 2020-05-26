@@ -1,20 +1,25 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	agoraenv "github.com/kinecosystem/agora-common/env"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/kinecosystem/go/keypair"
 	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
+	"github.com/kinecosystem/go/strkey"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/stellar/go/clients/horizonclient"
 	horizonprotocolsv2 "github.com/stellar/go/protocols/horizon"
@@ -33,29 +38,10 @@ import (
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/memory"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
+	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 var (
-	emptyAcc xdr.Uint256
-	emptyTxn = xdr.Transaction{
-		SourceAccount: xdr.AccountId{
-			Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-			Ed25519: &emptyAcc,
-		},
-		Operations: []xdr.Operation{
-			{
-				Body: xdr.OperationBody{
-					Type: xdr.OperationTypePayment,
-					PaymentOp: &xdr.PaymentOp{
-						Destination: xdr.AccountId{
-							Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-							Ed25519: &emptyAcc,
-						},
-					},
-				},
-			},
-		},
-	}
 	il = &commonpb.InvoiceList{
 		Invoices: []*commonpb.Invoice{
 			{
@@ -72,7 +58,8 @@ var (
 )
 
 type testEnv struct {
-	client transactionpb.TransactionClient
+	client           transactionpb.TransactionClient
+	whitelistAccount *keypair.Full
 
 	hClient   *horizon.MockClient
 	hClientV2 *horizonclient.MockClient
@@ -81,7 +68,15 @@ type testEnv struct {
 	invoiceStore   invoice.Store
 }
 
-func setup(t *testing.T) (env testEnv, cleanup func()) {
+func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
+	os.Setenv("AGORA_ENVIRONMENT", string(agoraenv.AgoraEnvironmentDev))
+
+	if enableWhitelist {
+		var err error
+		env.whitelistAccount, err = keypair.Random()
+		require.NoError(t, err)
+	}
+
 	conn, serv, err := testutil.NewServer()
 	require.NoError(t, err)
 
@@ -91,7 +86,8 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 
 	env.appConfigStore = appconfigdb.New()
 	env.invoiceStore = invoicedb.New()
-	s := New(env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2)
+	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2)
+	require.NoError(t, err)
 	serv.RegisterService(func(server *grpc.Server) {
 		transactionpb.RegisterTransactionServer(server, s)
 	})
@@ -103,77 +99,162 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 }
 
 func TestSubmit_Happy(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	txnBytes, err := emptyTxn.MarshalBinary()
-	require.NoError(t, err)
-
-	hashBytes := sha256.Sum256(txnBytes)
-
+	_, envelopeBytes, txHash := generateEnvelope(t, nil, 0)
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
 	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
-
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
+		EnvelopeXdr: envelopeBytes,
 	})
 
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
 	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
 	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+	require.Len(t, env.hClient.Calls, 1)
+
+	var submittedEnvelope xdr.TransactionEnvelope
+	submittedEnvelopeBytes, err := base64.StdEncoding.DecodeString(env.hClient.Calls[0].Arguments[0].(string))
+	require.NoError(t, err)
+	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
+	require.Len(t, submittedEnvelope.Signatures, 1)
 }
 
 func TestSubmitTransaction_WithInvoice(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	ilHash, err := invoice.GetSHA224Hash(il)
-	require.NoError(t, err)
-	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, ilHash)
-	require.NoError(t, err)
-	xdrHash := xdr.Hash{}
-	for i := 0; i < len(memo); i++ {
-		xdrHash[i] = memo[i]
-	}
-
-	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
-	require.NoError(t, err)
-
-	memoTxn := emptyTxn
-	memoTxn.Memo = xdrMemo
-	txnBytes, err := memoTxn.MarshalBinary()
-	require.NoError(t, err)
-	hashBytes := sha256.Sum256(txnBytes)
-
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
 	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
-		InvoiceList:    il,
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
 	})
 
 	assert.NoError(t, err)
 	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
 	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
 	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+
+	require.Len(t, env.hClient.Calls, 1)
+
+	var submittedEnvelope xdr.TransactionEnvelope
+	submittedEnvelopeBytes, err := base64.StdEncoding.DecodeString(env.hClient.Calls[0].Arguments[0].(string))
+	require.NoError(t, err)
+	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
+	require.Len(t, submittedEnvelope.Signatures, 1)
+}
+
+func TestSubmitTransaction_TestAppWhitelist_Enabled(t *testing.T) {
+	env, cleanup := setup(t, true)
+	defer cleanup()
+
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 0)
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(txHash),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+	assert.NoError(t, err)
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+	require.Len(t, env.hClient.Calls, 1)
+
+	var submittedEnvelope xdr.TransactionEnvelope
+	submittedEnvelopeBytes, err := base64.StdEncoding.DecodeString(env.hClient.Calls[0].Arguments[0].(string))
+	require.NoError(t, err)
+	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
+	require.Len(t, submittedEnvelope.Signatures, 2)
+	assert.False(t, bytes.Equal(submittedEnvelope.Signatures[0].Signature, submittedEnvelope.Signatures[1].Signature))
+
+	network, err := kin.GetNetwork()
+	require.NoError(t, err)
+
+	// If we sign it with the whitelist account, the signature should match what
+	// the serverice signed with
+	signed, err := transaction.SignEnvelope(&submittedEnvelope, network, env.whitelistAccount.Seed())
+	require.NoError(t, err)
+	assert.Equal(t, signed.Signatures[1], signed.Signatures[2])
+}
+
+func TestSubmitTransaction_NonTestAppWhitelist_Enabled(t *testing.T) {
+	env, cleanup := setup(t, true)
+	defer cleanup()
+
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(txHash),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+	assert.NoError(t, err)
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+	require.Len(t, env.hClient.Calls, 1)
+
+	var submittedEnvelope xdr.TransactionEnvelope
+	submittedEnvelopeBytes, err := base64.StdEncoding.DecodeString(env.hClient.Calls[0].Arguments[0].(string))
+	require.NoError(t, err)
+	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
+	require.Len(t, submittedEnvelope.Signatures, 1)
+}
+
+func TestSubmitTransaction_TestAppWhitelist_Disabled(t *testing.T) {
+	os.Setenv("AGORA_ENVIRONMENT", string(agoraenv.AgoraEnvironmentProd))
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 0)
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(txHash),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+	assert.NoError(t, err)
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+	require.Len(t, env.hClient.Calls, 1)
+
+	var submittedEnvelope xdr.TransactionEnvelope
+	submittedEnvelopeBytes, err := base64.StdEncoding.DecodeString(env.hClient.Calls[0].Arguments[0].(string))
+	require.NoError(t, err)
+	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
+	require.Len(t, submittedEnvelope.Signatures, 1)
 }
 
 func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
-
-	txnBytes, err := emptyTxn.MarshalBinary()
-	require.NoError(t, err)
 
 	// mismatch counts
 	invalid := &commonpb.InvoiceList{
@@ -196,9 +277,11 @@ func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
 			},
 		},
 	}
-	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
-		InvoiceList:    invalid,
+
+	_, envelopeBytes, _ := generateEnvelope(t, invalid, 0)
+	_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: invalid,
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
@@ -213,45 +296,44 @@ func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
 		})
 	}
 
+	_, envelopeBytes, _ = generateEnvelope(t, invalid, 0)
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
-		InvoiceList:    invalid,
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: invalid,
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
-
 func TestSubmitTransaction_WithInvoiceInvalidMemo(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	txnBytes, err := emptyTxn.MarshalBinary()
-	require.NoError(t, err)
+	envelope, envelopeBytes, _ := generateEnvelope(t, nil, 0)
 
 	// missing memo
-	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
-		InvoiceList:    il,
+	_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	// invalid agora memo
-	wrongTxn := emptyTxn
+	wrongTxn := envelope.Tx
 	xdrHash := xdr.Hash{byte(1)}
 	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
 	require.NoError(t, err)
 
 	wrongTxn.Memo = xdrMemo
-	txnBytes, err = wrongTxn.MarshalBinary()
+	envelopeBytes, err = wrongTxn.MarshalBinary()
 	require.NoError(t, err)
 
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
-		InvoiceList:    il,
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	// wrong fk in memo
-	wrongTxn = emptyTxn
+	wrongTxn = envelope.Tx
 	wrongBytes := sha256.Sum256([]byte("somedata"))
 	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, wrongBytes[:29])
 	require.NoError(t, err)
@@ -264,24 +346,24 @@ func TestSubmitTransaction_WithInvoiceInvalidMemo(t *testing.T) {
 	require.NoError(t, err)
 
 	wrongTxn.Memo = xdrMemo
-	txnBytes, err = wrongTxn.MarshalBinary()
+	envelopeBytes, err = wrongTxn.MarshalBinary()
 	require.NoError(t, err)
 
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		TransactionXdr: txnBytes,
-		InvoiceList:    il,
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestSubmitTransaction_Invalid(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	invalidRequests := []*transactionpb.SubmitTransactionRequest{
 		{},
 		{
-			TransactionXdr: []byte{1, 2},
+			EnvelopeXdr: []byte{1, 2},
 		},
 	}
 
@@ -295,11 +377,11 @@ func TestSubmitTransaction_Invalid(t *testing.T) {
 		h := xdr.Hash(m)
 		txn.Memo.Hash = &h
 
-		txnBytes, err := txn.MarshalBinary()
+		txnEnvelopeBytes, err := txn.MarshalBinary()
 		require.NoError(t, err)
 
 		invalidRequests = append(invalidRequests, &transactionpb.SubmitTransactionRequest{
-			TransactionXdr: txnBytes,
+			EnvelopeXdr: txnEnvelopeBytes,
 		})
 	*/
 
@@ -310,11 +392,10 @@ func TestSubmitTransaction_Invalid(t *testing.T) {
 }
 
 func TestSubmit_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	txnBytes, err := emptyTxn.MarshalBinary()
-	require.NoError(t, err)
+	_, envelopeBytes, _ := generateEnvelope(t, nil, 0)
 
 	type testCase struct {
 		hError   horizon.Error
@@ -335,32 +416,28 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 	for _, tc := range testCases {
 		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonprotocols.TransactionSuccess{}, error(&tc.hError)).Once()
 		_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-			TransactionXdr: txnBytes,
+			EnvelopeXdr: envelopeBytes,
 		})
 		assert.Equal(t, tc.grpcCode, status.Code(err))
 	}
 }
 
 func TestGetTransaction_Happy(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	txnBytes, err := emptyTxn.MarshalBinary()
-	require.NoError(t, err)
-
-	hashBytes := sha256.Sum256(txnBytes)
-
+	_, txnEnvelopeBytes, txHash := generateEnvelope(t, nil, 0)
 	horizonResult := horizonprotocols.Transaction{
-		Hash:        hex.EncodeToString(hashBytes[:]),
+		Hash:        hex.EncodeToString(txHash),
 		Ledger:      10,
 		ResultXdr:   base64.StdEncoding.EncodeToString([]byte("result")),
-		EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelope")),
+		EnvelopeXdr: base64.StdEncoding.EncodeToString(txnEnvelopeBytes),
 	}
 
 	env.hClient.On("LoadTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
 	resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
 		TransactionHash: &commonpb.TransactionHash{
-			Value: hashBytes[:],
+			Value: txHash,
 		},
 	})
 	require.NoError(t, err)
@@ -375,7 +452,7 @@ func TestGetTransaction_Happy(t *testing.T) {
 }
 
 func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
@@ -390,43 +467,22 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
-	ilHash, err := invoice.GetSHA224Hash(il)
-	require.NoError(t, err)
-	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 0, ilHash)
-	require.NoError(t, err)
-
-	xdrHash := xdr.Hash{}
-	for i := 0; i < len(memo); i++ {
-		xdrHash[i] = memo[i]
-	}
-	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
-	require.NoError(t, err)
-	binaryMemo, err := xdrMemo.MarshalBinary()
-	require.NoError(t, err)
-
-	memoTxn := emptyTxn
-	memoTxn.Memo = xdrMemo
-
-	txnBytes, err := memoTxn.MarshalBinary()
-	require.NoError(t, err)
-
-	hashBytes := sha256.Sum256(txnBytes)
-
-	err = env.invoiceStore.Put(context.Background(), hashBytes[:], il)
+	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 0)
+	err = env.invoiceStore.Put(context.Background(), txHash, il)
 	require.NoError(t, err)
 
 	horizonResult := horizonprotocols.Transaction{
-		Hash:        hex.EncodeToString(hashBytes[:]),
+		Hash:        hex.EncodeToString(txHash),
 		Ledger:      10,
 		ResultXdr:   base64.StdEncoding.EncodeToString([]byte("result")),
-		EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelope")),
-		Memo:        base64.StdEncoding.EncodeToString(binaryMemo),
+		EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
+		Memo:        base64.StdEncoding.EncodeToString(marshalMemo(t, envelope.Tx.Memo)),
 	}
 
 	env.hClient.On("LoadTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
 	resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
 		TransactionHash: &commonpb.TransactionHash{
-			Value: hashBytes[:],
+			Value: txHash,
 		},
 	})
 	require.NoError(t, err)
@@ -437,17 +493,11 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
 	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
 	assert.Equal(t, horizonResult.EnvelopeXdr, base64.StdEncoding.EncodeToString(resp.Item.EnvelopeXdr))
-
-	// TODO: assert all agora data fields when fully implemented
-	expectedTotal := int64(0)
-	for _, item := range il.Invoices[0].Items {
-		expectedTotal += item.Amount
-	}
 	require.True(t, proto.Equal(il, resp.Item.InvoiceList))
 }
 
 func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	appConfig := &app.Config{
@@ -498,7 +548,7 @@ func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
 }
 
 func TestGetTransaction_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	type testCase struct {
@@ -537,7 +587,7 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 }
 
 func TestGetHistory_Happy(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	page := horizonprotocolsv2.TransactionsPage{
@@ -621,7 +671,7 @@ func TestGetHistory_Happy(t *testing.T) {
 }
 
 func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
@@ -636,29 +686,8 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
-	ilHash, err := invoice.GetSHA224Hash(il)
-	require.NoError(t, err)
-	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 0, ilHash)
-	require.NoError(t, err)
-
-	xdrHash := xdr.Hash{}
-	for i := 0; i < len(memo); i++ {
-		xdrHash[i] = memo[i]
-	}
-	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
-	require.NoError(t, err)
-	binaryMemo, err := xdrMemo.MarshalBinary()
-	require.NoError(t, err)
-
-	memoTxn := emptyTxn
-	memoTxn.Memo = xdrMemo
-
-	txnBytes, err := memoTxn.MarshalBinary()
-	require.NoError(t, err)
-
-	hashBytes := sha256.Sum256(txnBytes)
-
-	err = env.invoiceStore.Put(context.Background(), hashBytes[:], il)
+	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 0)
+	err = env.invoiceStore.Put(context.Background(), txHash, il)
 	require.NoError(t, err)
 
 	page := horizonprotocolsv2.TransactionsPage{
@@ -668,12 +697,12 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 			Records: []horizonprotocolsv2.Transaction{
 				{
 					PT:          "cursor",
-					Hash:        hex.EncodeToString(hashBytes[:]),
+					Hash:        hex.EncodeToString(txHash),
 					ResultXdr:   base64.StdEncoding.EncodeToString([]byte("resultXdr")),
-					EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelopeXdr")),
+					EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
 					Successful:  true,
 					Ledger:      1,
-					Memo:        base64.StdEncoding.EncodeToString(binaryMemo),
+					Memo:        base64.StdEncoding.EncodeToString(marshalMemo(t, envelope.Tx.Memo)),
 				},
 			},
 		},
@@ -695,10 +724,6 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
 
 	// TODO: assert all agora data fields when fully implemented
-	expectedTotal := int64(0)
-	for _, item := range il.Invoices[0].Items {
-		expectedTotal += item.Amount
-	}
 	require.True(t, proto.Equal(il, item.InvoiceList))
 
 	require.Len(t, env.hClientV2.Calls, 1)
@@ -708,7 +733,7 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 }
 
 func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	appConfig := &app.Config{
@@ -719,20 +744,7 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 	err := env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
-	invoiceHash, err := invoice.GetSHA224Hash(il)
-	require.NoError(t, err)
-	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 0, invoiceHash)
-	require.NoError(t, err)
-
-	xdrHash := xdr.Hash{}
-	for i := 0; i < len(memo); i++ {
-		xdrHash[i] = memo[i]
-	}
-	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
-	require.NoError(t, err)
-	binaryMemo, err := xdrMemo.MarshalBinary()
-	require.NoError(t, err)
-
+	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 0)
 	page := horizonprotocolsv2.TransactionsPage{
 		Embedded: struct {
 			Records []horizonprotocolsv2.Transaction
@@ -740,12 +752,12 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 			Records: []horizonprotocolsv2.Transaction{
 				{
 					PT:          "cursor",
-					Hash:        hex.EncodeToString([]byte(strings.Repeat("h", 32))),
+					Hash:        hex.EncodeToString(txHash),
 					ResultXdr:   base64.StdEncoding.EncodeToString([]byte("resultXdr")),
-					EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelopeXdr")),
+					EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
 					Successful:  true,
 					Ledger:      1,
-					Memo:        base64.StdEncoding.EncodeToString(binaryMemo),
+					Memo:        base64.StdEncoding.EncodeToString(marshalMemo(t, envelope.Tx.Memo)),
 				},
 			},
 		},
@@ -768,7 +780,7 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 }
 
 func TestGetHistory_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	type testCase struct {
@@ -804,4 +816,72 @@ func TestGetHistory_HorizonErrors(t *testing.T) {
 		})
 		assert.Equal(t, tc.grpcCode, status.Code(err))
 	}
+}
+
+// todo: options may be better for longer term testing
+func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex uint16) (envelope xdr.TransactionEnvelope, envelopeBytes, txHash []byte) {
+	sender, err := keypair.Random()
+	require.NoError(t, err)
+
+	pubKey, err := strkey.Decode(strkey.VersionByteAccountID, sender.Address())
+	require.NoError(t, err)
+	var senderPubKey xdr.Uint256
+	copy(senderPubKey[:], pubKey)
+
+	senderAcc := xdr.AccountId{
+		Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+		Ed25519: &senderPubKey,
+	}
+	txnEnvelope := xdr.TransactionEnvelope{
+		Tx: xdr.Transaction{
+			SourceAccount: senderAcc,
+			Operations: []xdr.Operation{
+				{
+					Body: xdr.OperationBody{
+						Type: xdr.OperationTypePayment,
+						PaymentOp: &xdr.PaymentOp{
+							Destination: senderAcc,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if invoiceList != nil {
+		ilHash, err := invoice.GetSHA224Hash(invoiceList)
+		require.NoError(t, err)
+
+		memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, appIndex, ilHash)
+		require.NoError(t, err)
+		xdrHash := xdr.Hash{}
+		for i := 0; i < len(memo); i++ {
+			xdrHash[i] = memo[i]
+		}
+
+		xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+		require.NoError(t, err)
+
+		txnEnvelope.Tx.Memo = xdrMemo
+	}
+
+	txBytes, err := txnEnvelope.Tx.MarshalBinary()
+	require.NoError(t, err)
+	hash := sha256.Sum256(txBytes)
+
+	network, err := kin.GetNetwork()
+	require.NoError(t, err)
+	signedEnvelope, err := transaction.SignEnvelope(&txnEnvelope, network, sender.Seed())
+	require.NoError(t, err)
+
+	envelopeBytes, err = signedEnvelope.MarshalBinary()
+	require.NoError(t, err)
+
+	return txnEnvelope, envelopeBytes, hash[:]
+}
+
+func marshalMemo(t *testing.T, memo xdr.Memo) []byte {
+	b, err := memo.MarshalBinary()
+	require.NoError(t, err)
+	return b
 }

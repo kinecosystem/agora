@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	rootKeypairIDEnv = "ROOT_KEYPAIR_ID"
-	keystoreTypeEnv  = "KEYSTORE_TYPE"
+	rootKeypairIDEnv      = "ROOT_KEYPAIR_ID"
+	whitelistKeypairIDEnv = "WHITELIST_KEYPAIR_ID"
+	keystoreTypeEnv       = "KEYSTORE_TYPE"
 )
 
 type app struct {
@@ -52,7 +53,12 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 	rootAccountKP, err := keystore.Get(context.Background(), os.Getenv(rootKeypairIDEnv))
 	if err != nil {
-		return errors.Wrap(err, "failed to determine root accountpb keypair")
+		return errors.Wrap(err, "failed to determine root keypair")
+	}
+
+	whitelistAccountKP, err := keystore.Get(context.Background(), os.Getenv(whitelistKeypairIDEnv))
+	if err != nil {
+		return errors.Wrap(err, "failed to load whitelist keypair")
 	}
 
 	client, err := kin.GetClient()
@@ -75,12 +81,16 @@ func (a *app) Init(_ agoraapp.Config) error {
 	invoiceStore := invoicedb.New(dynamoClient)
 
 	a.accountServer = accountserver.New(rootAccountKP, client)
-	a.txnServer = transactionserver.New(
+	a.txnServer, err = transactionserver.New(
+		whitelistAccountKP,
 		appConfigStore,
 		invoiceStore,
 		client,
 		clientV2,
 	)
+	if err != nil {
+		return errors.Wrap(err, "failed to init transaction server")
+	}
 
 	return nil
 }

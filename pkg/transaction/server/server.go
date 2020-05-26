@@ -9,7 +9,9 @@ import (
 	"net/http"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/kinecosystem/go/keypair"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -22,10 +24,13 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 type server struct {
-	log *logrus.Entry
+	log              *logrus.Entry
+	whitelistAccount *keypair.Full
+	network          build.Network
 
 	appConfigStore app.ConfigStore
 	invoiceStore   invoice.Store
@@ -36,42 +41,50 @@ type server struct {
 
 // New returns a new transactionpb.TransactionServer.
 func New(
+	whitelistAccount *keypair.Full,
 	appConfigStore app.ConfigStore,
 	invoiceStore invoice.Store,
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
-) transactionpb.TransactionServer {
+) (transactionpb.TransactionServer, error) {
+	network, err := kin.GetNetwork()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get network")
+	}
+
 	return &server{
-		log: logrus.StandardLogger().WithField("type", "transaction/server"),
+		log:              logrus.StandardLogger().WithField("type", "transaction/server"),
+		whitelistAccount: whitelistAccount,
+		network:          network,
 
 		appConfigStore: appConfigStore,
 		invoiceStore:   invoiceStore,
 
 		client:   client,
 		clientV2: clientV2,
-	}
+	}, nil
 }
 
 // SubmitTransaction implements transactionpb.TransactionServer.SubmitTransaction.
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
 
-	var tx xdr.Transaction
-	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.TransactionXdr), &tx); err != nil {
+	e := &xdr.TransactionEnvelope{}
+	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.EnvelopeXdr), e); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid xdr")
 	}
 
 	// todo: memo verification even if invoice is nil
 	if req.InvoiceList != nil {
-		if len(req.InvoiceList.Invoices) != len(tx.Operations) {
+		if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
 			return nil, status.Error(codes.InvalidArgument, "invoice list size does not match op count")
 		}
 
-		if tx.Memo.Hash == nil {
+		if e.Tx.Memo.Hash == nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid memo")
 		}
 
-		memo := kin.Memo(*tx.Memo.Hash)
+		memo := kin.Memo(*e.Tx.Memo.Hash)
 		if !kin.IsValidMemoStrict(memo) {
 			return nil, status.Error(codes.InvalidArgument, "invalid memo")
 		}
@@ -87,9 +100,22 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
 		}
 
+		log = log.WithField("fk", hex.EncodeToString(fk))
+
+		// todo(testing): it's likely better to setup a 'test' webhook that
+		//                will perform the whitelisting, rather than hack it in
+		//                here.
+		if memo.AppIndex() == 0 && s.whitelistAccount != nil {
+			whitelisted, err := transaction.SignEnvelope(e, s.network, s.whitelistAccount.Seed())
+			if err != nil {
+				return nil, status.Error(codes.Internal, "failed to whitelist txn")
+			}
+			e = whitelisted
+		}
+
 		// todo(callback): verify with third party before.
 
-		txBytes, err := tx.MarshalBinary()
+		txBytes, err := e.MarshalBinary()
 		if err != nil {
 			return nil, status.Error(codes.Internal, "failed to marshal transaction")
 		}
@@ -104,7 +130,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	// todo: timeout on txn send?
-	resp, err := s.client.SubmitTransaction(base64.StdEncoding.EncodeToString(req.TransactionXdr))
+	envelopeBytes, err := e.MarshalBinary()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
+	}
+
+	resp, err := s.client.SubmitTransaction(base64.StdEncoding.EncodeToString(envelopeBytes))
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
