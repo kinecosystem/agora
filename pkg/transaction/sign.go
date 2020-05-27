@@ -5,7 +5,7 @@ import (
 	"github.com/kinecosystem/go/xdr"
 )
 
-// SignEnvelope whitelists a transaction envelope with the specified seed and network passphrase.
+// SignEnvelope signs a transaction envelope with the specified seed and network passphrase.
 func SignEnvelope(envelope *xdr.TransactionEnvelope, network build.Network, seed string) (*xdr.TransactionEnvelope, error) {
 	builder := build.TransactionEnvelopeBuilder{E: envelope}
 
