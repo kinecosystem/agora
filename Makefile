@@ -5,6 +5,8 @@ GO_FLAGS :=
 ENV := dev
 GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 
+.NOTPARALLEL:
+
 all: clean deps test images
 
 .PHONY: clean
