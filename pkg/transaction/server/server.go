@@ -74,6 +74,10 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.InvalidArgument, "invalid xdr")
 	}
 
+	if len(e.Signatures) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "missing transaction signature")
+	}
+
 	// todo: memo verification even if invoice is nil
 	if req.InvoiceList != nil {
 		if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
