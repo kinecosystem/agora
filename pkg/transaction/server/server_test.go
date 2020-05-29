@@ -6,7 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -39,6 +42,9 @@ import (
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/webhook"
+	"github.com/kinecosystem/agora/pkg/webhook/common"
+	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 var (
@@ -86,7 +92,7 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 
 	env.appConfigStore = appconfigdb.New()
 	env.invoiceStore = invoicedb.New()
-	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2)
+	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2, webhook.NewClient(http.DefaultClient))
 	require.NoError(t, err)
 	serv.RegisterService(func(server *grpc.Server) {
 		transactionpb.RegisterTransactionServer(server, s)
@@ -98,11 +104,12 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 	return env, cleanup
 }
 
-func TestSubmit_Happy(t *testing.T) {
+func TestSubmit_NoKinMemo(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	_, envelopeBytes, txHash := generateEnvelope(t, nil, 0)
+
 	horizonResult := horizonprotocols.TransactionSuccess{
 		Hash:   hex.EncodeToString(txHash),
 		Ledger: 10,
@@ -117,37 +124,6 @@ func TestSubmit_Happy(t *testing.T) {
 	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
 	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
 	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
-	require.Len(t, env.hClient.Calls, 1)
-
-	var submittedEnvelope xdr.TransactionEnvelope
-	submittedEnvelopeBytes, err := base64.StdEncoding.DecodeString(env.hClient.Calls[0].Arguments[0].(string))
-	require.NoError(t, err)
-	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
-	require.Len(t, submittedEnvelope.Signatures, 1)
-}
-
-func TestSubmitTransaction_WithInvoice(t *testing.T) {
-	env, cleanup := setup(t, false)
-	defer cleanup()
-
-	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
-	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(txHash),
-		Ledger: 10,
-		Result: base64.StdEncoding.EncodeToString([]byte("test")),
-	}
-	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
-
-	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
-	})
-
-	assert.NoError(t, err)
-	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
-	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
-	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
-
 	require.Len(t, env.hClient.Calls, 1)
 
 	var submittedEnvelope xdr.TransactionEnvelope
@@ -199,6 +175,12 @@ func TestSubmitTransaction_NonTestAppWhitelist_Enabled(t *testing.T) {
 	env, cleanup := setup(t, true)
 	defer cleanup()
 
+	err := env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:          "some name",
+		InvoicingEnabled: true,
+	})
+	require.NoError(t, err)
+
 	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
 	horizonResult := horizonprotocols.TransactionSuccess{
 		Hash:   hex.EncodeToString(txHash),
@@ -228,6 +210,12 @@ func TestSubmitTransaction_TestAppWhitelist_Disabled(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
+	err := env.appConfigStore.Add(context.Background(), 0, &app.Config{
+		AppName:          "some name",
+		InvoicingEnabled: true,
+	})
+	require.NoError(t, err)
+
 	_, envelopeBytes, txHash := generateEnvelope(t, il, 0)
 	horizonResult := horizonprotocols.TransactionSuccess{
 		Hash:   hex.EncodeToString(txHash),
@@ -250,6 +238,272 @@ func TestSubmitTransaction_TestAppWhitelist_Disabled(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, submittedEnvelope.UnmarshalBinary(submittedEnvelopeBytes))
 	require.Len(t, submittedEnvelope.Signatures, 1)
+}
+
+func TestSubmitTransaction_AppNotFound(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 0)
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Nil(t, resp)
+}
+
+func TestSubmitTransaction_AppSignTxURLNotSet(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	err := env.appConfigStore.Add(context.Background(), 0, &app.Config{
+		AppName:          "some name",
+		InvoicingEnabled: true,
+	})
+	require.NoError(t, err)
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 0)
+	hashBytes := sha256.Sum256(envelopeBytes)
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(hashBytes[:]),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	assert.NoError(t, err)
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+}
+
+func TestSubmitTransaction_SignTransaction400(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	// Set up test server with 400 response
+	webhookResp := &signtransaction.BadRequestResponse{Message: "some message"}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 400, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   false,
+	})
+	require.NoError(t, err)
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+	})
+
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Nil(t, resp)
+}
+
+func TestSubmitTransaction_SignTransaction403(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	// Set up test server with 403 response
+	webhookResp := &signtransaction.ForbiddenResponse{
+		Message: "some message",
+		InvoiceErrors: []signtransaction.InvoiceError{
+			{
+				OperationIndex: 0,
+				Reason:         signtransaction.AlreadyPaid,
+			},
+			{
+				OperationIndex: 1,
+				Reason:         signtransaction.WrongDestination,
+			},
+			{
+				OperationIndex: 2,
+				Reason:         "other",
+			},
+		},
+	}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 403, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   false,
+	})
+	require.NoError(t, err)
+
+	invoiceList := &commonpb.InvoiceList{
+		Invoices: []*commonpb.Invoice{
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "1",
+						Description: "desc1",
+						Amount:      5,
+					},
+				},
+			},
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "2",
+						Description: "desc1",
+						Amount:      10,
+					},
+				},
+			},
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "3",
+						Description: "desc1",
+						Amount:      15,
+					},
+				},
+			},
+		},
+	}
+
+	_, envelopeBytes, _ := generateEnvelope(t, invoiceList, 1)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: invoiceList,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_INVOICE_ERROR, resp.Result)
+	assert.Equal(t, len(webhookResp.InvoiceErrors), len(resp.InvoiceErrors))
+
+	assert.Equal(t, uint32(0), resp.InvoiceErrors[0].OpIndex)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID, resp.InvoiceErrors[0].Reason)
+	assert.True(t, proto.Equal(invoiceList.Invoices[0], resp.InvoiceErrors[0].Invoice))
+
+	assert.Equal(t, uint32(1), resp.InvoiceErrors[1].OpIndex)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION, resp.InvoiceErrors[1].Reason)
+	assert.True(t, proto.Equal(invoiceList.Invoices[1], resp.InvoiceErrors[1].Invoice))
+
+	assert.Equal(t, uint32(2), resp.InvoiceErrors[2].OpIndex)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN, resp.InvoiceErrors[2].Reason)
+	assert.True(t, proto.Equal(invoiceList.Invoices[2], resp.InvoiceErrors[2].Invoice))
+}
+
+func TestSubmitTransaction_SignTransaction404(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	// Set up test server with 400 response
+	webhookResp := &signtransaction.NotFoundResponse{Message: "some message"}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 404, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   true,
+	})
+	require.NoError(t, err)
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Nil(t, resp)
+}
+
+func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+
+	// Set up test server with a successful sign response
+	webhookResp := &signtransaction.SuccessResponse{TransactionXDR: common.TransactionXDR(base64.StdEncoding.EncodeToString(envelopeBytes))}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 200, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   true,
+	})
+	require.NoError(t, err)
+
+	hashBytes := sha256.Sum256(envelopeBytes)
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(hashBytes[:]),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	assert.NoError(t, err)
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+}
+
+func TestSubmitTransaction_SignTransaction200InvalidResponse(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+
+	// Set up test server with a successful sign response
+	webhookResp := &signtransaction.SuccessResponse{TransactionXDR: "invalidxdr"}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 200, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   false,
+	})
+	require.NoError(t, err)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+	})
+
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Nil(t, resp)
 }
 
 func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
@@ -303,50 +557,28 @@ func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
+
 func TestSubmitTransaction_WithInvoiceInvalidMemo(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	envelope, envelopeBytes, _ := generateEnvelope(t, nil, 0)
-
-	// missing memo
-	_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
-	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-
-	// invalid agora memo
-	wrongTxn := envelope.Tx
-	xdrHash := xdr.Hash{byte(1)}
-	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
-	require.NoError(t, err)
-
-	wrongTxn.Memo = xdrMemo
-	envelopeBytes, err = wrongTxn.MarshalBinary()
-	require.NoError(t, err)
-
-	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
-	})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	envelope, _, _ := generateEnvelope(t, nil, 0)
 
 	// wrong fk in memo
-	wrongTxn = envelope.Tx
+	wrongTxn := envelope.Tx
 	wrongBytes := sha256.Sum256([]byte("somedata"))
 	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, wrongBytes[:29])
 	require.NoError(t, err)
 
-	xdrHash = xdr.Hash{}
+	xdrHash := xdr.Hash{}
 	for i := 0; i < len(memo); i++ {
 		xdrHash[i] = memo[i]
 	}
-	xdrMemo, err = xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
 	require.NoError(t, err)
 
 	wrongTxn.Memo = xdrMemo
-	envelopeBytes, err = wrongTxn.MarshalBinary()
+	envelopeBytes, err := wrongTxn.MarshalBinary()
 	require.NoError(t, err)
 
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
@@ -371,15 +603,12 @@ func TestSubmitTransaction_Invalid(t *testing.T) {
 		todo: when we do memo verification, uncomment this
 		m, err := kin.NewMemo(2, kin.TransactionTypeSpend, 0, make([]byte, 29))
 		require.NoError(t, err)
-
 		txn := emptyTxn
 		txn.Memo.Type = xdr.MemoTypeMemoHash
 		h := xdr.Hash(m)
 		txn.Memo.Hash = &h
-
 		txnEnvelopeBytes, err := txn.MarshalBinary()
 		require.NoError(t, err)
-
 		invalidRequests = append(invalidRequests, &transactionpb.SubmitTransactionRequest{
 			EnvelopeXdr: txnEnvelopeBytes,
 		})
@@ -863,6 +1092,17 @@ func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex 
 		require.NoError(t, err)
 
 		txnEnvelope.Tx.Memo = xdrMemo
+		txnEnvelope.Tx.Operations = make([]xdr.Operation, len(invoiceList.Invoices))
+		for idx := range invoiceList.Invoices {
+			txnEnvelope.Tx.Operations[idx] = xdr.Operation{
+				Body: xdr.OperationBody{
+					Type: xdr.OperationTypePayment,
+					PaymentOp: &xdr.PaymentOp{
+						Destination: senderAcc,
+					},
+				},
+			}
+		}
 	}
 
 	txBytes, err := txnEnvelope.Tx.MarshalBinary()
@@ -884,4 +1124,14 @@ func marshalMemo(t *testing.T, memo xdr.Memo) []byte {
 	b, err := memo.MarshalBinary()
 	require.NoError(t, err)
 	return b
+}
+
+func newTestServerWithJSONResponse(t *testing.T, statusCode int, b []byte) *httptest.Server {
+	testServer := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		resp.WriteHeader(statusCode)
+		resp.Header().Set("Content-Type", "application/json")
+		_, err := resp.Write(b)
+		require.NoError(t, err)
+	}))
+	return testServer
 }

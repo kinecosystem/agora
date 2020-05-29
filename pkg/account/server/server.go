@@ -26,7 +26,7 @@ type server struct {
 }
 
 // New returns a new account server
-func New(rootAccountKP *keypair.Full, horizonClient horizonclient.ClientInterface) *server {
+func New(rootAccountKP *keypair.Full, horizonClient horizonclient.ClientInterface) accountpb.AccountServer {
 	return &server{
 		log:           logrus.StandardLogger().WithField("type", "account/server"),
 		rootAccountKP: rootAccountKP,
@@ -127,10 +127,10 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		horizonError, ok := err.(*horizonclient.Error)
 		if ok && horizonError.Problem.Status == 404 {
 			return &accountpb.GetAccountInfoResponse{Result: accountpb.GetAccountInfoResponse_NOT_FOUND}, nil
-		} else {
-			log.WithError(err).Warn("Failed to load account")
-			return nil, status.Error(codes.Internal, err.Error())
 		}
+
+		log.WithError(err).Warn("Failed to load account")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	accountInfo, err := parseAccountInfo(req.AccountId, horizonAccount)
@@ -146,7 +146,7 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 }
 
 // parseAccountInfo parses AccountInfo from an account fetched from Horizon
-func parseAccountInfo(accountId *commonpb.StellarAccountId, horizonAccount horizonprotocols.Account) (info *accountpb.AccountInfo, err error) {
+func parseAccountInfo(accountID *commonpb.StellarAccountId, horizonAccount horizonprotocols.Account) (info *accountpb.AccountInfo, err error) {
 	strBalance, err := horizonAccount.GetNativeBalance()
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func parseAccountInfo(accountId *commonpb.StellarAccountId, horizonAccount horiz
 	}
 
 	return &accountpb.AccountInfo{
-		AccountId:      accountId,
+		AccountId:      accountID,
 		SequenceNumber: sequence,
 		Balance:        balance,
 	}, nil

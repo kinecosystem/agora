@@ -54,7 +54,7 @@ func (s *store) Get(ctx context.Context, appIndex uint16) (*app.Config, error) {
 	defer s.Unlock()
 
 	config, exists := s.configs[appIndex]
-	if ! exists {
+	if !exists {
 		return nil, app.ErrNotFound
 	}
 

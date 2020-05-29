@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
+	"github.com/kinecosystem/agora-common/aws/dynamodb/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -40,11 +40,8 @@ func (d *db) Add(ctx context.Context, appIndex uint16, config *app.Config) error
 		ConditionExpression: putConditionStr,
 	}).Send(ctx)
 	if err != nil {
-		if aErr, ok := err.(awserr.Error); ok {
-			switch aErr.Code() {
-			case dynamodb.ErrCodeConditionalCheckFailedException:
-				return app.ErrExists
-			}
+		if util.IsConditionalCheckFailed(err) {
+			return app.ErrExists
 		}
 
 		return errors.Wrap(err, "failed to store app config")

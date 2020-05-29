@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -21,6 +23,7 @@ import (
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
+	"github.com/kinecosystem/agora/pkg/webhook"
 	// Configurable keystore options:
 	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
 	_ "github.com/kinecosystem/agora/pkg/keypair/environment"
@@ -79,6 +82,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
 	invoiceStore := invoicedb.New(dynamoClient)
+	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
 	a.accountServer = accountserver.New(rootAccountKP, client)
 	a.txnServer, err = transactionserver.New(
@@ -87,6 +91,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		invoiceStore,
 		client,
 		clientV2,
+		webhookClient,
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to init transaction server")

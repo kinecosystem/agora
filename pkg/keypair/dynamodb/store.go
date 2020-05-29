@@ -5,11 +5,11 @@ import (
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/awserr"
 	"github.com/aws/aws-sdk-go-v2/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
+	"github.com/kinecosystem/agora-common/aws/dynamodb/util"
 	kinkeypair "github.com/kinecosystem/go/keypair"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -83,11 +83,8 @@ func (s *store) Put(ctx context.Context, id string, full *kinkeypair.Full) error
 		ConditionExpression: putKeypairConditionStr,
 	}
 	if _, err = s.client.PutItemRequest(req).Send(ctx); err != nil {
-		if awsErr, ok := err.(awserr.Error); ok {
-			switch awsErr.Code() {
-			case dynamodb.ErrCodeConditionalCheckFailedException:
-				return keypair.ErrKeypairAlreadyExists
-			}
+		if util.IsConditionalCheckFailed(err) {
+			return keypair.ErrKeypairAlreadyExists
 		}
 		return errors.Wrapf(err, "failed to put keypair")
 	}

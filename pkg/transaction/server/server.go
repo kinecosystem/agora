@@ -25,6 +25,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/webhook"
+	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 type server struct {
@@ -35,8 +37,9 @@ type server struct {
 	appConfigStore app.ConfigStore
 	invoiceStore   invoice.Store
 
-	client   horizon.ClientInterface
-	clientV2 horizonclient.ClientInterface
+	client        horizon.ClientInterface
+	clientV2      horizonclient.ClientInterface
+	webhookClient *webhook.Client
 }
 
 // New returns a new transactionpb.TransactionServer.
@@ -46,6 +49,7 @@ func New(
 	invoiceStore invoice.Store,
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
+	webhookClient *webhook.Client,
 ) (transactionpb.TransactionServer, error) {
 	network, err := kin.GetNetwork()
 	if err != nil {
@@ -60,8 +64,9 @@ func New(
 		appConfigStore: appConfigStore,
 		invoiceStore:   invoiceStore,
 
-		client:   client,
-		clientV2: clientV2,
+		client:        client,
+		clientV2:      clientV2,
+		webhookClient: webhookClient,
 	}, nil
 }
 
@@ -78,33 +83,26 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.InvalidArgument, "missing transaction signature")
 	}
 
-	// todo: memo verification even if invoice is nil
-	if req.InvoiceList != nil {
-		if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
-			return nil, status.Error(codes.InvalidArgument, "invoice list size does not match op count")
-		}
-
-		if e.Tx.Memo.Hash == nil {
-			return nil, status.Error(codes.InvalidArgument, "invalid memo")
-		}
-
+	encodedXDR := base64.StdEncoding.EncodeToString(req.EnvelopeXdr)
+	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
 		memo := kin.Memo(*e.Tx.Memo.Hash)
-		if !kin.IsValidMemoStrict(memo) {
-			return nil, status.Error(codes.InvalidArgument, "invalid memo")
-		}
 
-		expectedFK, err := invoice.GetSHA224Hash(req.InvoiceList)
-		if err != nil {
-			log.WithError(err).Warn("failed to get invoice list hash")
-			return nil, status.Error(codes.Internal, "failed to validate invoice list hash")
-		}
+		if req.InvoiceList != nil {
+			if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
+				return nil, status.Error(codes.InvalidArgument, "invoice list size does not match op count")
+			}
 
-		fk := memo.ForeignKey()
-		if !(bytes.Equal(fk[:28], expectedFK)) || fk[28] != byte(0) {
-			return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
-		}
+			expectedFK, err := invoice.GetSHA224Hash(req.InvoiceList)
+			if err != nil {
+				log.WithError(err).Warn("failed to get invoice list hash")
+				return nil, status.Error(codes.Internal, "failed to validate invoice list hash")
+			}
 
-		log = log.WithField("fk", hex.EncodeToString(fk))
+			fk := memo.ForeignKey()
+			if !(bytes.Equal(fk[:28], expectedFK)) || fk[28] != byte(0) {
+				return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
+			}
+		}
 
 		// todo(testing): it's likely better to setup a 'test' webhook that
 		//                will perform the whitelisting, rather than hack it in
@@ -115,31 +113,105 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.Internal, "failed to whitelist txn")
 			}
 			e = whitelisted
+
+			envelopeBytes, err := e.MarshalBinary()
+			if err != nil {
+				return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
+			}
+			encodedXDR = base64.StdEncoding.EncodeToString(envelopeBytes)
+		} else {
+			config, err := s.appConfigStore.Get(ctx, memo.AppIndex())
+			if err == app.ErrNotFound {
+				return nil, status.Error(codes.InvalidArgument, "app index not found")
+			}
+			if err != nil {
+				log.WithError(err).Warn("failed to get app config")
+				return nil, status.Error(codes.Internal, "failed to get app config")
+			}
+
+			log.WithField("appIndex", memo.AppIndex())
+
+			reqBody, err := signtransaction.RequestBodyFromProto(req)
+			if err != nil {
+				log.WithError(err).Warn("failed to convert request for signing")
+				return nil, status.Error(codes.Internal, "failed to submit transaction")
+			}
+
+			envelopeXDR, err := s.webhookClient.SignTransaction(ctx, config, reqBody)
+			if err != nil {
+				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
+					switch signTxErr.StatusCode {
+					case 400:
+						log.WithError(signTxErr).Warn("Received 400 from app server")
+						return nil, status.Error(codes.Internal, "failed to submit transaction")
+					case 403:
+						invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
+						for idx, opErr := range signTxErr.OperationErrors {
+							var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
+							switch opErr.Reason {
+							case signtransaction.AlreadyPaid:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
+							case signtransaction.WrongDestination:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
+							default:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
+							}
+
+							invoiceErrs[idx] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+								OpIndex: opErr.OperationIndex,
+								Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
+								Reason:  reason,
+							}
+						}
+						return &transactionpb.SubmitTransactionResponse{
+							Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
+							InvoiceErrors: invoiceErrs,
+						}, nil
+					case 404:
+						return nil, status.Error(codes.InvalidArgument, signTxErr.Message)
+					default:
+						log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
+						return nil, status.Error(codes.Internal, "failed to submit transaction")
+					}
+				}
+
+				log.WithError(err).Warn("failed to call sign transaction webhook")
+				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
+			}
+			encodedXDR = envelopeXDR
+
+			decodedXDR, err := base64.StdEncoding.DecodeString(encodedXDR)
+			if err != nil {
+				// TODO: clean this up
+				log.WithError(err).Warn("failed to call sign transaction webhook")
+				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
+			}
+
+			signedEnv := &xdr.TransactionEnvelope{}
+			if _, err := xdr.Unmarshal(bytes.NewBuffer(decodedXDR), signedEnv); err != nil {
+				return nil, status.Error(codes.InvalidArgument, "invalid xdr")
+			}
+			e = signedEnv
 		}
 
-		// todo(callback): verify with third party before.
+		if req.InvoiceList != nil {
+			txBytes, err := e.MarshalBinary()
+			if err != nil {
+				return nil, status.Error(codes.Internal, "failed to marshal transaction")
+			}
 
-		txBytes, err := e.MarshalBinary()
-		if err != nil {
-			return nil, status.Error(codes.Internal, "failed to marshal transaction")
-		}
-
-		txHash := sha256.Sum256(txBytes)
-		err = s.invoiceStore.Put(ctx, txHash[:], req.InvoiceList)
-		if err != nil && err != invoice.ErrExists {
-		} else if err != nil {
-			log.WithError(err).Warn("failed to store invoice")
-			return nil, status.Error(codes.Internal, "failed to store invoice")
+			txHash := sha256.Sum256(txBytes)
+			err = s.invoiceStore.Put(ctx, txHash[:], req.InvoiceList)
+			if err != nil && err != invoice.ErrExists {
+			} else if err != nil {
+				log.WithError(err).Warn("failed to store invoice")
+				return nil, status.Error(codes.Internal, "failed to store invoice")
+			}
 		}
 	}
 
 	// todo: timeout on txn send?
-	envelopeBytes, err := e.MarshalBinary()
-	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
-	}
-
-	resp, err := s.client.SubmitTransaction(base64.StdEncoding.EncodeToString(envelopeBytes))
+	resp, err := s.client.SubmitTransaction(encodedXDR)
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
@@ -378,5 +450,5 @@ func (s *server) getInvoiceList(ctx context.Context, appConfig *app.Config, txHa
 	if err == invoice.ErrNotFound {
 		return nil, nil
 	}
-	return il, nil
+	return il, err
 }
