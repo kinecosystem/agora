@@ -137,7 +137,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.Internal, "failed to submit transaction")
 			}
 
-			envelopeXDR, err := s.webhookClient.SignTransaction(ctx, config, reqBody)
+			encodedXDR, e, err = s.webhookClient.SignTransaction(ctx, config, reqBody)
 			if err != nil {
 				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
 					switch signTxErr.StatusCode {
@@ -178,20 +178,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				log.WithError(err).Warn("failed to call sign transaction webhook")
 				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
 			}
-			encodedXDR = envelopeXDR
-
-			decodedXDR, err := base64.StdEncoding.DecodeString(encodedXDR)
-			if err != nil {
-				// TODO: clean this up
-				log.WithError(err).Warn("failed to call sign transaction webhook")
-				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
-			}
-
-			signedEnv := &xdr.TransactionEnvelope{}
-			if _, err := xdr.Unmarshal(bytes.NewBuffer(decodedXDR), signedEnv); err != nil {
-				return nil, status.Error(codes.InvalidArgument, "invalid xdr")
-			}
-			e = signedEnv
 		}
 
 		if req.InvoiceList != nil {

@@ -3,6 +3,7 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
+	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 
 	"github.com/kinecosystem/agora/pkg/app"
@@ -38,19 +40,29 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 // SignTransaction submits a sign transaction request to an app webhook
-func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req *signtransaction.RequestBody) (envelopeXDR string, err error) {
+func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
 	if appConfig.SignTransactionURL == nil {
-		return string(req.EnvelopeXDR), nil
+		envelopeBytes, err := base64.StdEncoding.DecodeString(string(req.EnvelopeXDR))
+		if err != nil {
+			return "", nil, errors.New("request envelope_xdr was not base64-encoded")
+		}
+
+		e := &xdr.TransactionEnvelope{}
+		if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), e); err != nil {
+			return "", nil, errors.New("request envelope_xdr was not a valid transaction envelope")
+		}
+
+		return string(req.EnvelopeXDR), e, nil
 	}
 
 	signTxJSON, err := json.Marshal(req)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to marshal sign transaction request body")
+		return "", nil, errors.Wrap(err, "failed to marshal sign transaction request body")
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, appConfig.SignTransactionURL.String(), bytes.NewBuffer(signTxJSON))
 	if err != nil {
-		return "", errors.Wrap(err, "failed to create sign transaction http request")
+		return "", nil, errors.Wrap(err, "failed to create sign transaction http request")
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
@@ -66,51 +78,52 @@ func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req
 	)
 	defer resp.Body.Close()
 	if err != nil {
-		return "", errors.Wrap(err, "failed to call sign transaction webhook")
+		return "", nil, errors.Wrap(err, "failed to call sign transaction webhook")
 	}
 
 	if resp.StatusCode == 200 {
 		decodedResp := &signtransaction.SuccessResponse{}
 		err = json.NewDecoder(resp.Body).Decode(decodedResp)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to decode 200 response")
+			return "", nil, errors.Wrap(err, "failed to decode 200 response")
 		}
-		if err = decodedResp.Validate(); err != nil {
-			return "", errors.Wrap(err, "received invalid response")
+		e, err := decodedResp.GetEnvelopeXDR()
+		if err != nil {
+			return "", nil, errors.Wrap(err, "received invalid response")
 		}
 
-		return string(decodedResp.EnvelopeXDR), nil
+		return string(decodedResp.EnvelopeXDR), e, nil
 	}
 
 	if resp.StatusCode == 400 {
 		decodedResp := &signtransaction.BadRequestResponse{}
 		err := json.NewDecoder(resp.Body).Decode(decodedResp)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to decode 400 response")
+			return "", nil, errors.Wrap(err, "failed to decode 400 response")
 		}
 
-		return "", &SignTransactionError{Message: decodedResp.Message, StatusCode: 400}
+		return "", nil, &SignTransactionError{Message: decodedResp.Message, StatusCode: 400}
 	}
 
 	if resp.StatusCode == 403 {
 		decodedResp := &signtransaction.ForbiddenResponse{}
 		err := json.NewDecoder(resp.Body).Decode(decodedResp)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to decode 403 response")
+			return "", nil, errors.Wrap(err, "failed to decode 403 response")
 		}
 
-		return "", &SignTransactionError{Message: decodedResp.Message, StatusCode: 403, OperationErrors: decodedResp.InvoiceErrors}
+		return "", nil, &SignTransactionError{Message: decodedResp.Message, StatusCode: 403, OperationErrors: decodedResp.InvoiceErrors}
 	}
 
 	if resp.StatusCode == 404 {
 		decodedResp := &signtransaction.NotFoundResponse{}
 		err := json.NewDecoder(resp.Body).Decode(decodedResp)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to decode 404 response")
+			return "", nil, errors.Wrap(err, "failed to decode 404 response")
 		}
 
-		return "", &SignTransactionError{Message: decodedResp.Message, StatusCode: 404}
+		return "", nil, &SignTransactionError{Message: decodedResp.Message, StatusCode: 404}
 	}
 
-	return "", &SignTransactionError{Message: "failed to sign transaction", StatusCode: resp.StatusCode}
+	return "", nil, &SignTransactionError{Message: "failed to sign transaction", StatusCode: resp.StatusCode}
 }

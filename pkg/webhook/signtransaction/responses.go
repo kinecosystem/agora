@@ -45,20 +45,20 @@ type InvoiceError struct {
 // Reason indicates why a transaction operation was rejected
 type Reason string
 
-func (r *SuccessResponse) Validate() error {
+func (r *SuccessResponse) GetEnvelopeXDR() (*xdr.TransactionEnvelope, error) {
 	if len(r.EnvelopeXDR) == 0 {
-		return errors.New("envelope_xdr cannot have length of 0")
+		return nil, errors.New("envelope_xdr cannot have length of 0")
 	}
 
 	envelopeBytes, err := base64.StdEncoding.DecodeString(string(r.EnvelopeXDR))
 	if err != nil {
-		return errors.New("envelope_xdr was not base64-encoded")
+		return nil, errors.New("envelope_xdr was not base64-encoded")
 	}
 
 	e := &xdr.TransactionEnvelope{}
-	if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), &e); err != nil {
-		return errors.New("envelope_xdr was not a valid transaction envelope")
+	if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), e); err != nil {
+		return nil, errors.New("envelope_xdr was not a valid transaction envelope")
 	}
 
-	return nil
+	return e, nil
 }

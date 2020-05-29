@@ -58,12 +58,13 @@ func TestSendSignTransactionRequest_AppURLNotSet(t *testing.T) {
 		AppName: "some name",
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, &signtransaction.RequestBody{
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, &signtransaction.RequestBody{
 		EnvelopeXDR: common.EnvelopeXDR(expectedXDR),
 		InvoiceList: "someinvoice",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, expectedXDR, actualXDR)
+	assert.NotNil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_200Valid(t *testing.T) {
@@ -86,9 +87,10 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 	require.NoError(t, err)
 	assert.Equal(t, expectedXDR, actualXDR)
+	assert.NotNil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
@@ -104,10 +106,11 @@ func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_400Valid(t *testing.T) {
@@ -127,13 +130,14 @@ func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 400, signTxErr.StatusCode)
 	assert.Equal(t, webhookResp.Message, signTxErr.Message)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_400Invalid(t *testing.T) {
@@ -149,10 +153,11 @@ func TestSendSignTransactionRequest_400Invalid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_403Valid(t *testing.T) {
@@ -180,7 +185,7 @@ func TestSendSignTransactionRequest_403Valid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
@@ -188,6 +193,7 @@ func TestSendSignTransactionRequest_403Valid(t *testing.T) {
 	assert.Equal(t, webhookResp.Message, signTxErr.Message)
 	assert.Equal(t, webhookResp.InvoiceErrors, signTxErr.OperationErrors)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
@@ -203,10 +209,11 @@ func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_404Valid(t *testing.T) {
@@ -226,13 +233,14 @@ func TestSendSignTransactionRequest_404Valid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 404, signTxErr.StatusCode)
 	assert.Equal(t, webhookResp.Message, signTxErr.Message)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_404Invalid(t *testing.T) {
@@ -248,10 +256,11 @@ func TestSendSignTransactionRequest_404Invalid(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_OtherStatusCode(t *testing.T) {
@@ -267,11 +276,12 @@ func TestSendSignTransactionRequest_OtherStatusCode(t *testing.T) {
 		SignTransactionURL: signURL,
 	}
 
-	actualXDR, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 500, signTxErr.StatusCode)
 	require.Empty(t, actualXDR)
+	assert.Nil(t, actualEnvelope)
 }
 
 func newTestServerWithJSONResponse(t *testing.T, statusCode int, b []byte) *httptest.Server {
