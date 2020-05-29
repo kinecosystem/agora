@@ -13,9 +13,9 @@ import (
 )
 
 func TestRequest(t *testing.T) {
-	transactionXdr := []byte("somedata")
+	envelopeXDR := []byte("somedata")
 	req := &transactionpb.SubmitTransactionRequest{
-		EnvelopeXdr: transactionXdr,
+		EnvelopeXdr: envelopeXDR,
 		InvoiceList: &commonpb.InvoiceList{
 			Invoices: []*commonpb.Invoice{
 				{
@@ -62,7 +62,7 @@ func TestRequest(t *testing.T) {
 
 	actual, err := RequestBodyFromProto(req)
 	require.NoError(t, err)
-	assert.Equal(t, base64.StdEncoding.EncodeToString(transactionXdr), string(actual.TransactionXDR))
+	assert.Equal(t, base64.StdEncoding.EncodeToString(envelopeXDR), string(actual.EnvelopeXDR))
 
 	decodedIL, err := base64.StdEncoding.DecodeString(string(actual.InvoiceList))
 	require.NoError(t, err)

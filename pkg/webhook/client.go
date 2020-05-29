@@ -40,7 +40,7 @@ func NewClient(httpClient *http.Client) *Client {
 // SignTransaction submits a sign transaction request to an app webhook
 func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req *signtransaction.RequestBody) (envelopeXDR string, err error) {
 	if appConfig.SignTransactionURL == nil {
-		return string(req.TransactionXDR), nil
+		return string(req.EnvelopeXDR), nil
 	}
 
 	signTxJSON, err := json.Marshal(req)
@@ -79,7 +79,7 @@ func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req
 			return "", errors.Wrap(err, "received invalid response")
 		}
 
-		return string(decodedResp.TransactionXDR), nil
+		return string(decodedResp.EnvelopeXDR), nil
 	}
 
 	if resp.StatusCode == 400 {

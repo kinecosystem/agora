@@ -17,7 +17,7 @@ const (
 
 // SuccessResponse represents a 200 OK response to a sign transaction request.
 type SuccessResponse struct {
-	TransactionXDR common.TransactionXDR `json:"transaction_xdr"`
+	EnvelopeXDR common.EnvelopeXDR `json:"envelope_xdr"`
 }
 
 // BadRequestResponse represents a 400 Bad Request response to a sign transaction request.
@@ -46,18 +46,18 @@ type InvoiceError struct {
 type Reason string
 
 func (r *SuccessResponse) Validate() error {
-	if len(r.TransactionXDR) == 0 {
-		return errors.New("transaction_xdr cannot have length of 0")
+	if len(r.EnvelopeXDR) == 0 {
+		return errors.New("envelope_xdr cannot have length of 0")
 	}
 
-	transactionXDRBytes, err := base64.StdEncoding.DecodeString(string(r.TransactionXDR))
+	envelopeBytes, err := base64.StdEncoding.DecodeString(string(r.EnvelopeXDR))
 	if err != nil {
-		return errors.New("transaction_xdr was not base64-encoded")
+		return errors.New("envelope_xdr was not base64-encoded")
 	}
 
-	var tx xdr.Transaction
-	if _, err := xdr.Unmarshal(bytes.NewBuffer(transactionXDRBytes), &tx); err != nil {
-		return errors.New("transaction_xdr was not a valid transaction")
+	e := &xdr.TransactionEnvelope{}
+	if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), &e); err != nil {
+		return errors.New("envelope_xdr was not a valid transaction envelope")
 	}
 
 	return nil

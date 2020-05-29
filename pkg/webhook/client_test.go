@@ -19,20 +19,22 @@ import (
 )
 
 var (
-	emptyAcc xdr.Uint256
-	emptyTxn = xdr.Transaction{
-		SourceAccount: xdr.AccountId{
-			Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-			Ed25519: &emptyAcc,
-		},
-		Operations: []xdr.Operation{
-			{
-				Body: xdr.OperationBody{
-					Type: xdr.OperationTypePayment,
-					PaymentOp: &xdr.PaymentOp{
-						Destination: xdr.AccountId{
-							Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-							Ed25519: &emptyAcc,
+	emptyAcc      xdr.Uint256
+	emptyEnvelope = xdr.TransactionEnvelope{
+		Tx: xdr.Transaction{
+			SourceAccount: xdr.AccountId{
+				Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+				Ed25519: &emptyAcc,
+			},
+			Operations: []xdr.Operation{
+				{
+					Body: xdr.OperationBody{
+						Type: xdr.OperationTypePayment,
+						PaymentOp: &xdr.PaymentOp{
+							Destination: xdr.AccountId{
+								Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+								Ed25519: &emptyAcc,
+							},
 						},
 					},
 				},
@@ -40,25 +42,25 @@ var (
 		},
 	}
 	basicReq = &signtransaction.RequestBody{
-		TransactionXDR: "sometx",
-		InvoiceList:    "someinvoice",
+		EnvelopeXDR: "sometx",
+		InvoiceList: "someinvoice",
 	}
 )
 
 func TestSendSignTransactionRequest_AppURLNotSet(t *testing.T) {
 	client := NewClient(http.DefaultClient)
 
-	txnBytes, err := emptyTxn.MarshalBinary()
+	envelopeBytes, err := emptyEnvelope.MarshalBinary()
 	require.NoError(t, err)
-	expectedXDR := base64.StdEncoding.EncodeToString(txnBytes)
+	expectedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
 
 	config := &app.Config{
 		AppName: "some name",
 	}
 
 	actualXDR, err := client.SignTransaction(context.Background(), config, &signtransaction.RequestBody{
-		TransactionXDR: common.TransactionXDR(expectedXDR),
-		InvoiceList:    "someinvoice",
+		EnvelopeXDR: common.EnvelopeXDR(expectedXDR),
+		InvoiceList: "someinvoice",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, expectedXDR, actualXDR)
@@ -67,10 +69,10 @@ func TestSendSignTransactionRequest_AppURLNotSet(t *testing.T) {
 func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 	client := NewClient(http.DefaultClient)
 
-	txnBytes, err := emptyTxn.MarshalBinary()
+	envelopeBytes, err := emptyEnvelope.MarshalBinary()
 	require.NoError(t, err)
-	expectedXDR := base64.StdEncoding.EncodeToString(txnBytes)
-	webhookResp := &signtransaction.SuccessResponse{TransactionXDR: common.TransactionXDR(expectedXDR)}
+	expectedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: common.EnvelopeXDR(expectedXDR)}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 

@@ -13,13 +13,13 @@ import (
 
 // RequestBody contains the body of a sign transaction request.
 type RequestBody struct {
-	TransactionXDR common.TransactionXDR `json:"transaction_xdr"`
-	InvoiceList    common.InvoiceList    `json:"invoice_list,omitempty"`
+	EnvelopeXDR common.EnvelopeXDR `json:"envelope_xdr"`
+	InvoiceList common.InvoiceList `json:"invoice_list,omitempty"`
 }
 
 func RequestBodyFromProto(req *transactionpb.SubmitTransactionRequest) (*RequestBody, error) {
 	reqBody := &RequestBody{
-		TransactionXDR: common.TransactionXDR(base64.StdEncoding.EncodeToString(req.EnvelopeXdr)),
+		EnvelopeXDR: common.EnvelopeXDR(base64.StdEncoding.EncodeToString(req.EnvelopeXdr)),
 	}
 
 	if req.InvoiceList != nil {
