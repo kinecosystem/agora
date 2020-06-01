@@ -153,6 +153,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 								reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
 							case signtransaction.WrongDestination:
 								reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
+							case signtransaction.SKUNotFound:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
 							default:
 								reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
 							}
@@ -167,8 +169,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
 							InvoiceErrors: invoiceErrs,
 						}, nil
-					case 404:
-						return nil, status.Error(codes.InvalidArgument, signTxErr.Message)
 					default:
 						log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
 						return nil, status.Error(codes.Internal, "failed to submit transaction")

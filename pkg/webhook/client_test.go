@@ -216,53 +216,6 @@ func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
 	assert.Nil(t, actualEnvelope)
 }
 
-func TestSendSignTransactionRequest_404Valid(t *testing.T) {
-	client := NewClient(http.DefaultClient)
-
-	webhookResp := &signtransaction.NotFoundResponse{Message: "some message"}
-	b, err := json.Marshal(webhookResp)
-	require.NoError(t, err)
-
-	testServer := newTestServerWithJSONResponse(t, 404, b)
-	defer func() { testServer.Close() }()
-
-	signURL, err := url.Parse(testServer.URL)
-	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
-
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
-
-	signTxErr, ok := err.(*SignTransactionError)
-	assert.True(t, ok)
-	assert.Equal(t, 404, signTxErr.StatusCode)
-	assert.Equal(t, webhookResp.Message, signTxErr.Message)
-	require.Empty(t, actualXDR)
-	assert.Nil(t, actualEnvelope)
-}
-
-func TestSendSignTransactionRequest_404Invalid(t *testing.T) {
-	client := NewClient(http.DefaultClient)
-
-	testServer := newTestServerWithJSONResponse(t, 404, make([]byte, 0))
-	defer func() { testServer.Close() }()
-
-	signURL, err := url.Parse(testServer.URL)
-	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
-
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
-
-	require.Error(t, err)
-	require.Empty(t, actualXDR)
-	assert.Nil(t, actualEnvelope)
-}
-
 func TestSendSignTransactionRequest_OtherStatusCode(t *testing.T) {
 	client := NewClient(http.DefaultClient)
 

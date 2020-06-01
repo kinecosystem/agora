@@ -13,6 +13,7 @@ import (
 const (
 	AlreadyPaid      Reason = "already_paid"
 	WrongDestination Reason = "wrong_destination"
+	SKUNotFound      Reason = "sku_not_found"
 )
 
 // SuccessResponse represents a 200 OK response to a sign transaction request.
@@ -29,11 +30,6 @@ type BadRequestResponse struct {
 type ForbiddenResponse struct {
 	Message       string         `json:"message"`
 	InvoiceErrors []InvoiceError `json:"invoice_errors"`
-}
-
-// NotFoundResponse represents a 404 Not Found response to a sign trasnaction request.
-type NotFoundResponse struct {
-	Message string `json:"message"`
 }
 
 // InvoiceError is an error specific to an operation (or its corresponding invoice) in the transaction

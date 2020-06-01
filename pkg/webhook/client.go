@@ -115,15 +115,5 @@ func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req
 		return "", nil, &SignTransactionError{Message: decodedResp.Message, StatusCode: 403, OperationErrors: decodedResp.InvoiceErrors}
 	}
 
-	if resp.StatusCode == 404 {
-		decodedResp := &signtransaction.NotFoundResponse{}
-		err := json.NewDecoder(resp.Body).Decode(decodedResp)
-		if err != nil {
-			return "", nil, errors.Wrap(err, "failed to decode 404 response")
-		}
-
-		return "", nil, &SignTransactionError{Message: decodedResp.Message, StatusCode: 404}
-	}
-
 	return "", nil, &SignTransactionError{Message: "failed to sign transaction", StatusCode: resp.StatusCode}
 }

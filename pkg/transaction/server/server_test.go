@@ -331,6 +331,10 @@ func TestSubmitTransaction_SignTransaction403(t *testing.T) {
 			},
 			{
 				OperationIndex: 2,
+				Reason:         signtransaction.SKUNotFound,
+			},
+			{
+				OperationIndex: 3,
 				Reason:         "other",
 			},
 		},
@@ -378,6 +382,15 @@ func TestSubmitTransaction_SignTransaction403(t *testing.T) {
 					},
 				},
 			},
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "4",
+						Description: "desc1",
+						Amount:      20,
+					},
+				},
+			},
 		},
 	}
 
@@ -401,38 +414,12 @@ func TestSubmitTransaction_SignTransaction403(t *testing.T) {
 	assert.True(t, proto.Equal(invoiceList.Invoices[1], resp.InvoiceErrors[1].Invoice))
 
 	assert.Equal(t, uint32(2), resp.InvoiceErrors[2].OpIndex)
-	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN, resp.InvoiceErrors[2].Reason)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND, resp.InvoiceErrors[2].Reason)
 	assert.True(t, proto.Equal(invoiceList.Invoices[2], resp.InvoiceErrors[2].Invoice))
-}
 
-func TestSubmitTransaction_SignTransaction404(t *testing.T) {
-	env, cleanup := setup(t, false)
-	defer cleanup()
-
-	// Set up test server with 400 response
-	webhookResp := &signtransaction.NotFoundResponse{Message: "some message"}
-	b, err := json.Marshal(webhookResp)
-	require.NoError(t, err)
-	testServer := newTestServerWithJSONResponse(t, 404, b)
-
-	// Set test server URL to app config
-	signURL, err := url.Parse(testServer.URL)
-	require.NoError(t, err)
-	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-		InvoicingEnabled:   true,
-	})
-	require.NoError(t, err)
-
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
-	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
-	})
-
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	assert.Nil(t, resp)
+	assert.Equal(t, uint32(3), resp.InvoiceErrors[3].OpIndex)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN, resp.InvoiceErrors[3].Reason)
+	assert.True(t, proto.Equal(invoiceList.Invoices[3], resp.InvoiceErrors[3].Invoice))
 }
 
 func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
