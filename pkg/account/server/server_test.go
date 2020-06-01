@@ -8,8 +8,8 @@ import (
 	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
-	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
-	"github.com/kinecosystem/go/protocols/horizon/base"
+	hProtocol "github.com/kinecosystem/go/protocols/horizon"
+	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -17,12 +17,15 @@ import (
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
+
+	"github.com/kinecosystem/agora/pkg/account/server/test"
 )
 
 type testEnv struct {
-	client        accountpb.AccountClient
-	horizonClient *horizon.MockClient
-	rootAccountKP *keypair.Full
+	client          accountpb.AccountClient
+	horizonClient   *horizon.MockClient
+	rootAccountKP   *keypair.Full
+	accountNotifier *AccountNotifier
 }
 
 func setup(t *testing.T) (env testEnv, cleanup func()) {
@@ -39,7 +42,9 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	require.NoError(t, err)
 	env.rootAccountKP = kp
 
-	s := New(env.rootAccountKP, env.horizonClient)
+	env.accountNotifier = NewAccountNotifier(env.horizonClient).(*AccountNotifier)
+
+	s := New(env.rootAccountKP, env.horizonClient, env.accountNotifier)
 	serv.RegisterService(func(server *grpc.Server) {
 		accountpb.RegisterAccountServer(server, s)
 	})
@@ -58,10 +63,10 @@ func TestCreateAccount(t *testing.T) {
 	require.NoError(t, err)
 
 	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(horizonprotocols.Account{}, horizonErr).Once()
-	env.horizonClient.On("LoadAccount", env.rootAccountKP.Address()).Return(horizonprotocols.Account{Sequence: "1"}, nil).Once()
-	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonprotocols.TransactionSuccess{}, nil).Once()
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(*generateHorizonAccount("100", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
+	env.horizonClient.On("LoadAccount", env.rootAccountKP.Address()).Return(hProtocol.Account{Sequence: "1"}, nil).Once()
+	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*test.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.CreateAccountRequest{
 		AccountId: &commonpb.StellarAccountId{Value: kp.Address()},
@@ -84,7 +89,7 @@ func TestCreateAccountExists(t *testing.T) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(*generateHorizonAccount("100", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*test.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.CreateAccountRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
 
@@ -106,7 +111,7 @@ func TestGetAccountInfo(t *testing.T) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(*generateHorizonAccount("100", "1"), nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*test.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.GetAccountInfoRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
 	resp, err := env.client.GetAccountInfo(context.Background(), &req)
@@ -128,7 +133,7 @@ func TestGetAccountInfoNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
-	env.horizonClient.On("LoadAccount", kp.Address()).Return(horizonprotocols.Account{}, horizonErr).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
 
 	req := accountpb.GetAccountInfoRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
 	resp, err := env.client.GetAccountInfo(context.Background(), &req)
@@ -139,12 +144,71 @@ func TestGetAccountInfoNotFound(t *testing.T) {
 	env.horizonClient.AssertExpectations(t)
 }
 
-func generateHorizonAccount(nativeBalance string, sequence string) *horizonprotocols.Account {
-	return &horizonprotocols.Account{
-		Balances: []horizonprotocols.Balance{{
-			Balance: nativeBalance,
-			Asset:   base.Asset{Type: "native"},
-		}},
-		Sequence: sequence,
-	}
+func TestGetEvents_HappyPath(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	kp1, acc1 := test.GenerateAccountID(t)
+	_, acc2 := test.GenerateAccountID(t)
+
+	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
+	m := test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+		{
+			Changes: []xdr.LedgerEntryChange{
+				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 900000),
+				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
+			},
+		},
+	})
+
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+
+	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
+	stream, err := env.client.GetEvents(context.Background(), req)
+	require.NoError(t, err)
+
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 1, len(resp.Events))
+	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+
+	env.accountNotifier.NewTransaction(e, m)
+
+	resp, err = stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 2, len(resp.Events))
+
+	expectedBytes, err := e.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, expectedBytes, resp.Events[0].GetTransactionEvent().EnvelopeXdr)
+
+	assert.Equal(t, kp1.Address(), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(900000), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(2), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+}
+
+func TestGetEvents_NotFound(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	kp, err := keypair.Random()
+	require.NoError(t, err)
+
+	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
+
+	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
+	stream, err := env.client.GetEvents(context.Background(), req)
+	require.NoError(t, err)
+
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_NOT_FOUND, resp.Result)
 }

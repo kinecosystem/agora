@@ -18,3 +18,5 @@ require (
 	google.golang.org/genproto v0.0.0-20200417142217-fb6d0575620b // indirect
 	google.golang.org/grpc v1.28.1
 )
+
+replace github.com/kinecosystem/agora-api => ../agora-api-internal

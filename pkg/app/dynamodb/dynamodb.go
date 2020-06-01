@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
-	"github.com/kinecosystem/agora-common/aws/dynamodb/util"
+	dynamodbutil "github.com/kinecosystem/agora-common/aws/dynamodb/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -40,7 +40,7 @@ func (d *db) Add(ctx context.Context, appIndex uint16, config *app.Config) error
 		ConditionExpression: putConditionStr,
 	}).Send(ctx)
 	if err != nil {
-		if util.IsConditionalCheckFailed(err) {
+		if dynamodbutil.IsConditionalCheckFailed(err) {
 			return app.ErrExists
 		}
 

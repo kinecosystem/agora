@@ -5,32 +5,35 @@ import (
 	"strconv"
 
 	"github.com/kinecosystem/agora-common/kin"
-	"github.com/kinecosystem/go/amount"
-	horizonbuild "github.com/kinecosystem/go/build"
-	horizonclient "github.com/kinecosystem/go/clients/horizon"
+	"github.com/kinecosystem/go/build"
+	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
-	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
-	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
+)
+
+const (
+	eventStreamBufferSize = 64
 )
 
 type server struct {
-	log           *logrus.Entry
-	rootAccountKP *keypair.Full
-	horizonClient horizonclient.ClientInterface
+	log             *logrus.Entry
+	rootAccountKP   *keypair.Full
+	horizonClient   horizon.ClientInterface
+	accountNotifier *AccountNotifier
 }
 
 // New returns a new account server
-func New(rootAccountKP *keypair.Full, horizonClient horizonclient.ClientInterface) accountpb.AccountServer {
+func New(rootAccountKP *keypair.Full, horizonClient horizon.ClientInterface, accountNotifier *AccountNotifier) accountpb.AccountServer {
 	return &server{
-		log:           logrus.StandardLogger().WithField("type", "account/server"),
-		rootAccountKP: rootAccountKP,
-		horizonClient: horizonClient,
+		log:             logrus.StandardLogger().WithField("type", "account/server"),
+		rootAccountKP:   rootAccountKP,
+		horizonClient:   horizonClient,
+		accountNotifier: accountNotifier,
 	}
 }
 
@@ -41,7 +44,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	// Check if account exists on the blockchain
 	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)
 	if err == nil {
-		accountInfo, err := parseAccountInfo(req.AccountId, horizonAccount)
+		accountInfo, err := parseAccountInfo(horizonAccount)
 		if err != nil {
 			log.WithError(err).Warn("Failed to parse account info from horizon account")
 			return nil, status.Error(codes.Internal, err.Error())
@@ -53,7 +56,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		}, nil
 	}
 
-	horizonError, ok := err.(*horizonclient.Error)
+	horizonError, ok := err.(*horizon.Error)
 	// 404 indicates that the account doesn't exist, which is acceptable
 	if !ok || (ok && horizonError.Problem.Status != 404) {
 		log.WithError(err).Warn("Failed to check if account exists")
@@ -81,12 +84,12 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	}
 
 	encodedTx, err := buildSignEncodeTransaction(s.rootAccountKP,
-		horizonbuild.SourceAccount{AddressOrSeed: s.rootAccountKP.Address()},
-		horizonbuild.Sequence{Sequence: prevSeq + 1},
+		build.SourceAccount{AddressOrSeed: s.rootAccountKP.Address()},
+		build.Sequence{Sequence: prevSeq + 1},
 		network,
-		horizonbuild.CreateAccount(
-			horizonbuild.Destination{AddressOrSeed: req.AccountId.Value},
-			horizonbuild.NativeAmount{Amount: "0"},
+		build.CreateAccount(
+			build.Destination{AddressOrSeed: req.AccountId.Value},
+			build.NativeAmount{Amount: "0"},
 		))
 
 	if err != nil {
@@ -106,7 +109,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	accountInfo, err := parseAccountInfo(req.AccountId, horizonAccount)
+	accountInfo, err := parseAccountInfo(horizonAccount)
 	if err != nil {
 		log.WithError(err).Warn("Failed to parse account info from horizon account")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -124,7 +127,7 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 
 	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)
 	if err != nil {
-		horizonError, ok := err.(*horizonclient.Error)
+		horizonError, ok := err.(*horizon.Error)
 		if ok && horizonError.Problem.Status == 404 {
 			return &accountpb.GetAccountInfoResponse{Result: accountpb.GetAccountInfoResponse_NOT_FOUND}, nil
 		}
@@ -133,7 +136,7 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	accountInfo, err := parseAccountInfo(req.AccountId, horizonAccount)
+	accountInfo, err := parseAccountInfo(horizonAccount)
 	if err != nil {
 		log.WithError(err).Warn("Failed to parse account info from horizon account")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -145,34 +148,75 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	}, nil
 }
 
-// parseAccountInfo parses AccountInfo from an account fetched from Horizon
-func parseAccountInfo(accountID *commonpb.StellarAccountId, horizonAccount horizonprotocols.Account) (info *accountpb.AccountInfo, err error) {
-	strBalance, err := horizonAccount.GetNativeBalance()
+func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Account_GetEventsServer) error {
+	log := s.log.WithField("method", "GetEvents")
+
+	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)
 	if err != nil {
-		return nil, err
+		horizonError, ok := err.(*horizon.Error)
+		if ok && horizonError.Problem.Status == 404 {
+			sendErr := stream.Send(&accountpb.Events{Result: accountpb.Events_NOT_FOUND})
+			if sendErr != nil {
+				return status.Error(codes.Internal, err.Error())
+			}
+			return nil
+		}
+
+		log.WithError(err).Warn("Failed to load account")
+		return status.Error(codes.Internal, err.Error())
 	}
 
-	balance, err := amount.ParseInt64(strBalance)
+	accountInfo, err := parseAccountInfo(horizonAccount)
 	if err != nil {
-		return nil, err
+		log.WithError(err).Warn("Failed to parse account info from horizon account")
+		return status.Error(codes.Internal, err.Error())
 	}
 
-	sequence, err := strconv.ParseInt(horizonAccount.Sequence, 10, 64)
+	err = stream.Send(&accountpb.Events{
+		Events: []*accountpb.Event{
+			{
+				Type: &accountpb.Event_AccountUpdateEvent{
+					AccountUpdateEvent: &accountpb.AccountUpdateEvent{
+						AccountInfo: accountInfo,
+					},
+				},
+			},
+		},
+	})
 	if err != nil {
-		return nil, err
+		return status.Error(codes.Internal, err.Error())
 	}
 
-	return &accountpb.AccountInfo{
-		AccountId:      accountID,
-		SequenceNumber: sequence,
-		Balance:        balance,
-	}, nil
+	as := newEventStream(eventStreamBufferSize)
+	s.accountNotifier.AddStream(req.AccountId.Value, as)
+
+	defer func() {
+		s.accountNotifier.RemoveStream(req.AccountId.Value, as)
+	}()
+
+	for {
+		select {
+		case events, ok := <-as.streamCh:
+			if !ok {
+				return status.Error(codes.Aborted, "")
+			}
+
+			err := stream.Send(&events)
+			if err != nil {
+				log.WithError(err).Info("failed to send events")
+				return err
+			}
+		case <-stream.Context().Done():
+			log.Debug("Stream context cancelled, ending stream")
+			return status.Error(codes.Canceled, "")
+		}
+	}
 }
 
 // buildSignEncodeTransaction builds a transaction with the provided transaction mutators, signs it with the provided
 // keypair and returns the base 64 XDR representation of the transaction envelope ready for submission to the network.
-func buildSignEncodeTransaction(keypair *keypair.Full, muts ...horizonbuild.TransactionMutator) (string, error) {
-	tx, err := horizonbuild.Transaction(muts...)
+func buildSignEncodeTransaction(keypair *keypair.Full, muts ...build.TransactionMutator) (string, error) {
+	tx, err := build.Transaction(muts...)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to build transaction")
 	}

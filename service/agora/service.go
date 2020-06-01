@@ -24,6 +24,7 @@ import (
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
+	"github.com/kinecosystem/agora/pkg/transaction"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
 	// Configurable keystore options:
 	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
@@ -40,6 +41,8 @@ const (
 type app struct {
 	accountServer accountpb.AccountServer
 	txnServer     transactionpb.TransactionServer
+
+	streamCancelFunc context.CancelFunc
 
 	shutdown   sync.Once
 	shutdownCh chan struct{}
@@ -80,12 +83,14 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return err
 	}
 
+	accountNotifier := accountserver.NewAccountNotifier(client).(*accountserver.AccountNotifier)
+
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
-	a.accountServer = accountserver.New(rootAccountKP, client)
+	a.accountServer = accountserver.New(rootAccountKP, client, accountNotifier)
 	a.txnServer, err = transactionserver.New(
 		whitelistAccountKP,
 		appConfigStore,
@@ -97,6 +102,13 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to init transaction server")
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	a.streamCancelFunc = cancel
+
+	go func() {
+		transaction.StreamTransactions(ctx, clientV2, accountNotifier)
+	}()
 
 	return nil
 }
@@ -116,6 +128,8 @@ func (a *app) ShutdownChan() <-chan struct{} {
 func (a *app) Stop() {
 	a.shutdown.Do(func() {
 		close(a.shutdownCh)
+
+		a.streamCancelFunc()
 	})
 }
 
