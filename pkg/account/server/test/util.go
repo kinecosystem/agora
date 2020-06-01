@@ -68,6 +68,16 @@ func GeneratePaymentOperation(src *xdr.AccountId, dest xdr.AccountId) xdr.Operat
 	}
 }
 
+func GenerateMergeOperation(src *xdr.AccountId, dest xdr.AccountId) xdr.Operation {
+	return xdr.Operation{
+		SourceAccount: src,
+		Body: xdr.OperationBody{
+			Type:        xdr.OperationTypeAccountMerge,
+			Destination: &dest,
+		},
+	}
+}
+
 func GenerateLEC(lecType xdr.LedgerEntryChangeType, id xdr.AccountId, seqNum xdr.SequenceNumber, balance xdr.Int64) xdr.LedgerEntryChange {
 	lec := xdr.LedgerEntryChange{
 		Type: lecType,

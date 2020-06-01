@@ -5,27 +5,32 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/sirupsen/logrus"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 )
 
+type eventNotification struct {
+	// events are the events that should be sent to the client
+	events accountpb.Events
+
+	// terminateStream indicates if the stream should be closed after these events get sent
+	terminateStream bool
+}
+
 type eventStream struct {
 	sync.Mutex
 	closed   bool
-	streamCh chan accountpb.Events
+	streamCh chan eventNotification
 }
 
 func newEventStream(bufferSize int) *eventStream {
 	return &eventStream{
-		streamCh: make(chan accountpb.Events, bufferSize),
+		streamCh: make(chan eventNotification, bufferSize),
 	}
 }
 
-func (a *eventStream) notify(e *accountpb.Events, timeout time.Duration) error {
-	events := proto.Clone(e).(*accountpb.Events)
-
+func (a *eventStream) notify(e eventNotification, timeout time.Duration) error {
 	a.Lock()
 
 	if a.closed {
@@ -34,7 +39,7 @@ func (a *eventStream) notify(e *accountpb.Events, timeout time.Duration) error {
 	}
 
 	select {
-	case a.streamCh <- *events:
+	case a.streamCh <- e:
 	case <-time.After(timeout):
 		a.Unlock()
 		a.close()

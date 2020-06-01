@@ -196,15 +196,18 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 
 	for {
 		select {
-		case events, ok := <-as.streamCh:
+		case eventNotification, ok := <-as.streamCh:
 			if !ok {
 				return status.Error(codes.Aborted, "")
 			}
 
-			err := stream.Send(&events)
+			err := stream.Send(&eventNotification.events)
 			if err != nil {
 				log.WithError(err).Info("failed to send events")
 				return err
+			}
+			if eventNotification.terminateStream {
+				return nil
 			}
 		case <-stream.Context().Done():
 			log.Debug("Stream context cancelled, ending stream")

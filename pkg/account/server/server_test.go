@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"os"
 	"testing"
 
@@ -191,6 +192,55 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, kp1.Address(), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
 	assert.Equal(t, int64(900000), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(2), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+}
+
+func TestGetEvents_TerminateStream(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	kp1, acc1 := test.GenerateAccountID(t)
+	_, acc2 := test.GenerateAccountID(t)
+
+	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GenerateMergeOperation(nil, acc2)})
+	m := test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+		{
+			Changes: []xdr.LedgerEntryChange{
+				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryRemoved, acc1, 2, 900000),
+				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc2, 2, 1100000),
+			},
+		},
+	})
+
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+
+	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
+	stream, err := env.client.GetEvents(context.Background(), req)
+	require.NoError(t, err)
+
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 1, len(resp.Events))
+	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+
+	env.accountNotifier.NewTransaction(e, m)
+
+	resp, err = stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 1, len(resp.Events))
+
+	expectedBytes, err := e.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, expectedBytes, resp.Events[0].GetTransactionEvent().EnvelopeXdr)
+
+	resp, err = stream.Recv()
+	require.Nil(t, resp)
+	assert.Equal(t, err, io.EOF)
 }
 
 func TestGetEvents_NotFound(t *testing.T) {

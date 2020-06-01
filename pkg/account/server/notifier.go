@@ -38,14 +38,110 @@ func NewAccountNotifier(hClient horizon.ClientInterface) transaction.Notifier {
 // NewTransaction implements transaction.Notifier.NewTransaction
 func (a *AccountNotifier) NewTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
 	log := a.log.WithField("method", "NewTransaction")
-	log.Info(m)
 
 	envBytes, err := e.MarshalBinary()
 	if err != nil {
-		log.WithError(err).Warn("failed to marshal transaction e, dropping transaction")
+		log.WithError(err).Warn("failed to marshal transaction envelope, dropping transaction")
 		return
 	}
 
+	// accountIDs and removedAccountIDs are maps to avoid duplicates; value has no meaning
+	accountIDs := a.getUniqueAccounts(e)
+	accounts, removedAccountIDs := a.getMetaAccountInfo(m)
+
+	for accountID := range accountIDs {
+		a.streamsMu.Lock()
+		streams := a.streams[accountID]
+		if len(streams) > 0 {
+			events := &accountpb.Events{
+				Events: []*accountpb.Event{
+					{
+						Type: &accountpb.Event_TransactionEvent{
+							TransactionEvent: &accountpb.TransactionEvent{
+								EnvelopeXdr: envBytes,
+							},
+						},
+					},
+				},
+			}
+
+			// if the key is present in the map, the account was removed
+			_, removed := removedAccountIDs[accountID]
+			if !removed {
+				accountInfo, ok := accounts[accountID]
+				if !ok {
+					log.WithError(err).Info("account info not present in result meta, fetching from Horizon")
+
+					account, err := a.hClient.LoadAccount(accountID)
+					if err != nil {
+						log.WithError(err).Warnf("failed to get account %s, excluding account event", accountID)
+					}
+
+					accountInfo, err = parseAccountInfo(account)
+					if err != nil {
+						log.WithError(err).Warnf("failed to parse account info for account %s, excluding account event", accountID)
+					}
+				}
+
+				if accountInfo != nil {
+					events.Events = append(events.Events, &accountpb.Event{
+						Type: &accountpb.Event_AccountUpdateEvent{
+							AccountUpdateEvent: &accountpb.AccountUpdateEvent{
+								AccountInfo: accountInfo,
+							},
+						},
+					})
+				}
+			}
+
+			notification := eventNotification{
+				events:          *events,
+				terminateStream: removed,
+			}
+			for _, s := range streams {
+				if s != nil {
+					err := s.notify(notification, notifyTimeout)
+					if err != nil {
+						log.WithError(err).Warn("failed to notify stream")
+					}
+				}
+			}
+		}
+		a.streamsMu.Unlock()
+	}
+}
+
+// AddStream adds a stream to the notifier.
+func (a *AccountNotifier) AddStream(accountID string, stream *eventStream) {
+	a.streamsMu.Lock()
+	a.streams[accountID] = append(a.streams[accountID], stream)
+	a.streamsMu.Unlock()
+}
+
+// RemoveStream removes a stream from the notifier.
+func (a *AccountNotifier) RemoveStream(accountID string, stream *eventStream) {
+	a.streamsMu.Lock()
+	defer a.streamsMu.Unlock()
+
+	streamIdx := -1
+	for idx, s := range a.streams[accountID] {
+		if s == stream {
+			streamIdx = idx
+			break
+		}
+	}
+
+	if streamIdx == -1 {
+		return
+	}
+
+	a.streams[accountID] = append(a.streams[accountID][:streamIdx], a.streams[accountID][streamIdx+1:]...)
+}
+
+func (a *AccountNotifier) getUniqueAccounts(e xdr.TransactionEnvelope) map[string]bool {
+	log := a.log.WithField("method", "getUniqueAccounts")
+
+	// this map is used to avoid duplicates; the boolean value has no meaning
 	accountIDs := make(map[string]bool)
 	txSourceAddr, err := e.Tx.SourceAccount.GetAddress()
 	if err != nil {
@@ -85,14 +181,21 @@ func (a *AccountNotifier) NewTransaction(e xdr.TransactionEnvelope, m xdr.Transa
 		}
 	}
 
-	accounts := make(map[string]*accountpb.AccountInfo)
+	return accountIDs
+}
+
+func (a *AccountNotifier) getMetaAccountInfo(m xdr.TransactionMeta) (accounts map[string]*accountpb.AccountInfo, removedAccountIDs map[string]bool) {
+	log := a.log.WithField("method", "getMetaAccountInfo")
+
+	accounts = make(map[string]*accountpb.AccountInfo)
+	removedAccountIDs = make(map[string]bool)
 	for _, opMeta := range m.OperationsMeta() {
 		for _, lec := range opMeta.Changes {
 			switch lec.Type {
 			case xdr.LedgerEntryChangeTypeLedgerEntryCreated, xdr.LedgerEntryChangeTypeLedgerEntryUpdated:
 				entry, ok := lec.GetLedgerEntry()
 				if !ok {
-					log.Warn("state ledger entry not present in state ledger entry change")
+					log.Warnf("ledger entry not present in ledger entry change of type %d", lec.Type)
 				}
 
 				if entry.Data.Type == xdr.LedgerEntryTypeAccount {
@@ -108,90 +211,23 @@ func (a *AccountNotifier) NewTransaction(e xdr.TransactionEnvelope, m xdr.Transa
 
 					accounts[accountInfo.AccountId.Value] = accountInfo
 				}
-			}
-		}
-	}
+			case xdr.LedgerEntryChangeTypeLedgerEntryRemoved:
+				ledgerKey := lec.Removed
+				if ledgerKey != nil {
+					if ledgerKey.Type == xdr.LedgerEntryTypeAccount {
+						accountKey, ok := ledgerKey.GetAccount()
+						if !ok {
+							log.Warn("account key not present in account ledger key")
+						}
 
-	for accountID := range accountIDs {
-		a.streamsMu.Lock()
-		streams := a.streams[accountID]
-		if len(streams) > 0 {
-			events := &accountpb.Events{
-				Events: []*accountpb.Event{
-					{
-						Type: &accountpb.Event_TransactionEvent{
-							TransactionEvent: &accountpb.TransactionEvent{
-								EnvelopeXdr: envBytes,
-							},
-						},
-					},
-				},
-			}
-
-			accountInfo, ok := accounts[accountID]
-			if !ok {
-				log.WithError(err).Info("account info not present in result meta, fetching from Horizon")
-
-				account, err := a.hClient.LoadAccount(accountID)
-				if err != nil {
-					log.WithError(err).Warnf("failed to get account %s, excluding account event", accountID)
-				}
-
-				accountInfo, err = parseAccountInfo(account)
-				if err != nil {
-					log.WithError(err).Warnf("failed to parse account info for account %s, excluding account event", accountID)
-				}
-			}
-
-			if accountInfo != nil {
-				events.Events = append(events.Events, &accountpb.Event{
-					Type: &accountpb.Event_AccountUpdateEvent{
-						AccountUpdateEvent: &accountpb.AccountUpdateEvent{
-							AccountInfo: accountInfo,
-						},
-					},
-				})
-				log.Infof("balance: %d", accountInfo.Balance)
-			}
-
-			for _, s := range streams {
-				if s != nil {
-					err := s.notify(events, notifyTimeout)
-					if err != nil {
-						log.WithError(err).Warn("failed to notify stream")
+						removedAccountIDs[accountKey.AccountId.Address()] = true
 					}
 				}
 			}
 		}
-		a.streamsMu.Unlock()
-	}
-}
-
-// AddStream adds a stream to the notifier.
-func (a *AccountNotifier) AddStream(accountID string, stream *eventStream) {
-	a.streamsMu.Lock()
-	a.streams[accountID] = append(a.streams[accountID], stream)
-	a.streamsMu.Unlock()
-}
-
-// RemoveStream removes a stream from the notifier.
-func (a *AccountNotifier) RemoveStream(accountID string, stream *eventStream) {
-	a.streamsMu.Lock()
-	defer a.streamsMu.Unlock()
-
-	streamIdx := -1
-	for idx, s := range a.streams[accountID] {
-		if s == stream {
-			streamIdx = idx
-			break
-		}
 	}
 
-	if streamIdx == -1 {
-		return
-	}
-
-	a.streams[accountID] = append(a.streams[accountID][:streamIdx], a.streams[accountID][streamIdx+1:]...)
+	return accounts, removedAccountIDs
 }
 
 func parseAccountInfoFromEntry(entry xdr.AccountEntry) (*accountpb.AccountInfo, error) {
