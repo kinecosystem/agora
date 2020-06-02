@@ -1079,8 +1079,8 @@ func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex 
 
 		txnEnvelope.Tx.Memo = xdrMemo
 		txnEnvelope.Tx.Operations = make([]xdr.Operation, len(invoiceList.Invoices))
-		for idx := range invoiceList.Invoices {
-			txnEnvelope.Tx.Operations[idx] = xdr.Operation{
+		for i := range invoiceList.Invoices {
+			txnEnvelope.Tx.Operations[i] = xdr.Operation{
 				Body: xdr.OperationBody{
 					Type: xdr.OperationTypePayment,
 					PaymentOp: &xdr.PaymentOp{

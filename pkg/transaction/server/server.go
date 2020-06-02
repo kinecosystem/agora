@@ -147,7 +147,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							return nil, status.Error(codes.Internal, "failed to submit transaction")
 						case 403:
 							invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
-							for idx, opErr := range signTxErr.OperationErrors {
+							for i, opErr := range signTxErr.OperationErrors {
 								var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
 								switch opErr.Reason {
 								case signtransaction.AlreadyPaid:
@@ -160,7 +160,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 									reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
 								}
 
-								invoiceErrs[idx] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+								invoiceErrs[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
 									OpIndex: opErr.OperationIndex,
 									Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
 									Reason:  reason,
