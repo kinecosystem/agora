@@ -137,46 +137,48 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.Internal, "failed to submit transaction")
 			}
 
-			encodedXDR, e, err = s.webhookClient.SignTransaction(ctx, config, reqBody)
-			if err != nil {
-				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
-					switch signTxErr.StatusCode {
-					case 400:
-						log.WithError(signTxErr).Warn("Received 400 from app server")
-						return nil, status.Error(codes.Internal, "failed to submit transaction")
-					case 403:
-						invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
-						for idx, opErr := range signTxErr.OperationErrors {
-							var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
-							switch opErr.Reason {
-							case signtransaction.AlreadyPaid:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
-							case signtransaction.WrongDestination:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
-							case signtransaction.SKUNotFound:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
-							default:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
-							}
+			if config.SignTransactionURL != nil {
+				encodedXDR, e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, reqBody)
+				if err != nil {
+					if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
+						switch signTxErr.StatusCode {
+						case 400:
+							log.WithError(signTxErr).Warn("Received 400 from app server")
+							return nil, status.Error(codes.Internal, "failed to submit transaction")
+						case 403:
+							invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
+							for idx, opErr := range signTxErr.OperationErrors {
+								var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
+								switch opErr.Reason {
+								case signtransaction.AlreadyPaid:
+									reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
+								case signtransaction.WrongDestination:
+									reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
+								case signtransaction.SKUNotFound:
+									reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
+								default:
+									reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
+								}
 
-							invoiceErrs[idx] = &transactionpb.SubmitTransactionResponse_InvoiceError{
-								OpIndex: opErr.OperationIndex,
-								Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
-								Reason:  reason,
+								invoiceErrs[idx] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+									OpIndex: opErr.OperationIndex,
+									Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
+									Reason:  reason,
+								}
 							}
+							return &transactionpb.SubmitTransactionResponse{
+								Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
+								InvoiceErrors: invoiceErrs,
+							}, nil
+						default:
+							log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
+							return nil, status.Error(codes.Internal, "failed to submit transaction")
 						}
-						return &transactionpb.SubmitTransactionResponse{
-							Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
-							InvoiceErrors: invoiceErrs,
-						}, nil
-					default:
-						log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
-						return nil, status.Error(codes.Internal, "failed to submit transaction")
 					}
-				}
 
-				log.WithError(err).Warn("failed to call sign transaction webhook")
-				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
+					log.WithError(err).Warn("failed to call sign transaction webhook")
+					return nil, status.Error(codes.Internal, "failed to whitelist transaction")
+				}
 			}
 		}
 

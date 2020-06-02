@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/webhook/common"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
@@ -47,26 +46,6 @@ var (
 	}
 )
 
-func TestSendSignTransactionRequest_AppURLNotSet(t *testing.T) {
-	client := NewClient(http.DefaultClient)
-
-	envelopeBytes, err := emptyEnvelope.MarshalBinary()
-	require.NoError(t, err)
-	expectedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
-
-	config := &app.Config{
-		AppName: "some name",
-	}
-
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, &signtransaction.RequestBody{
-		EnvelopeXDR: common.EnvelopeXDR(expectedXDR),
-		InvoiceList: "someinvoice",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, expectedXDR, actualXDR)
-	assert.NotNil(t, actualEnvelope)
-}
-
 func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 	client := NewClient(http.DefaultClient)
 
@@ -82,12 +61,8 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 	require.NoError(t, err)
 	assert.Equal(t, expectedXDR, actualXDR)
 	assert.NotNil(t, actualEnvelope)
@@ -101,12 +76,8 @@ func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
@@ -125,12 +96,8 @@ func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
@@ -148,12 +115,8 @@ func TestSendSignTransactionRequest_400Invalid(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
@@ -180,12 +143,8 @@ func TestSendSignTransactionRequest_403Valid(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
@@ -204,12 +163,8 @@ func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 
 	require.Error(t, err)
 	require.Empty(t, actualXDR)
@@ -224,12 +179,8 @@ func TestSendSignTransactionRequest_OtherStatusCode(t *testing.T) {
 
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
-	config := &app.Config{
-		AppName:            "some name",
-		SignTransactionURL: signURL,
-	}
 
-	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), config, basicReq)
+	actualXDR, actualEnvelope, err := client.SignTransaction(context.Background(), *signURL, basicReq)
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 500, signTxErr.StatusCode)

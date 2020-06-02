@@ -3,10 +3,10 @@ package webhook
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/kinecosystem/agora-common/retry"
@@ -40,27 +40,13 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 // SignTransaction submits a sign transaction request to an app webhook
-func (c *Client) SignTransaction(ctx context.Context, appConfig *app.Config, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
-	if appConfig.SignTransactionURL == nil {
-		envelopeBytes, err := base64.StdEncoding.DecodeString(string(req.EnvelopeXDR))
-		if err != nil {
-			return "", nil, errors.New("request envelope_xdr was not base64-encoded")
-		}
-
-		e := &xdr.TransactionEnvelope{}
-		if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), e); err != nil {
-			return "", nil, errors.New("request envelope_xdr was not a valid transaction envelope")
-		}
-
-		return string(req.EnvelopeXDR), e, nil
-	}
-
+func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
 	signTxJSON, err := json.Marshal(req)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to marshal sign transaction request body")
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, appConfig.SignTransactionURL.String(), bytes.NewBuffer(signTxJSON))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, signURL.String(), bytes.NewBuffer(signTxJSON))
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to create sign transaction http request")
 	}
