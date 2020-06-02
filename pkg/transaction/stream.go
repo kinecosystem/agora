@@ -16,8 +16,7 @@ import (
 
 // Notifier notifies that a new transaction has been confirmed on the blockchain.
 type Notifier interface {
-	// NewTransaction
-	NewTransaction(xdr.TransactionEnvelope, xdr.TransactionMeta)
+	OnTransaction(xdr.TransactionEnvelope, xdr.TransactionMeta)
 }
 
 // StreamTransactions streams transactions from horizon, notifying the provided notifiers with received transactions.
@@ -50,7 +49,7 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 		}
 
 		for _, n := range notifiers {
-			n.NewTransaction(e, m)
+			n.OnTransaction(e, m)
 		}
 	}
 

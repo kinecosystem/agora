@@ -75,7 +75,7 @@ func newTestNotifier(count int, cancel context.CancelFunc) *testNotifier {
 	}
 }
 
-func (n *testNotifier) NewTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
+func (n *testNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
 	n.Lock()
 	n.receivedTxns = append(n.receivedTxns, transactionData{
 		e: e,

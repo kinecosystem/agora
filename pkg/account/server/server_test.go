@@ -177,7 +177,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
-	env.accountNotifier.NewTransaction(e, m)
+	env.accountNotifier.OnTransaction(e, m)
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -226,7 +226,7 @@ func TestGetEvents_TerminateStream(t *testing.T) {
 	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
-	env.accountNotifier.NewTransaction(e, m)
+	env.accountNotifier.OnTransaction(e, m)
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)

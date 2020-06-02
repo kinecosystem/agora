@@ -33,9 +33,9 @@ func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
 	}
 }
 
-// NewTransaction implements transaction.Notifier.NewTransaction
-func (a *AccountNotifier) NewTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
-	log := a.log.WithField("method", "NewTransaction")
+// OnTransaction implements transaction.Notifier.OnTransaction
+func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
+	log := a.log.WithField("method", "OnTransaction")
 
 	envBytes, err := e.MarshalBinary()
 	if err != nil {

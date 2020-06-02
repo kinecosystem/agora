@@ -35,7 +35,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 
 	// Payment from 1 -> 2
 	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	accountNotifier.NewTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	accountNotifier.OnTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
 				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 9),
@@ -65,7 +65,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 
 	// Payment from 2 -> 3, with 1 as a "channel" source
 	e = test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(&acc2, acc3)})
-	accountNotifier.NewTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	accountNotifier.OnTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
 				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 9),
@@ -115,7 +115,7 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 
 	// Create from 1 -> 2
 	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GenerateCreateOperation(nil, acc2)})
-	accountNotifier.NewTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	accountNotifier.OnTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
 				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryUpdated, acc1, 2, 9),
@@ -157,7 +157,7 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 
 	// Merge 1 into 2
 	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GenerateMergeOperation(nil, acc2)})
-	accountNotifier.NewTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
+	accountNotifier.OnTransaction(e, test.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
 				test.GenerateLEC(xdr.LedgerEntryChangeTypeLedgerEntryRemoved, acc1, 2, 9),
@@ -207,7 +207,7 @@ func TestAccountNotifier_MissingAccountInfo(t *testing.T) {
 
 	horizonClient.On("LoadAccount", kp2.Address()).Return(*test.GenerateHorizonAccount(kp2.Address(), "100", "3"), nil).Once()
 	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	accountNotifier.NewTransaction(e, meta)
+	accountNotifier.OnTransaction(e, meta)
 
 	envBytes, err := e.MarshalBinary()
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestAccountNotifier_MissingAccountInfo(t *testing.T) {
 	// Payment from 1 -> 2; missing account data for 2 + fail to fetch from horizon
 	horizonClient.On("LoadAccount", kp2.Address()).Return(hProtocol.Account{}, errors.New("some error")).Once()
 	e = test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
-	accountNotifier.NewTransaction(e, meta)
+	accountNotifier.OnTransaction(e, meta)
 
 	assertReceived(t, &accountpb.Events{
 		Result: 0,
