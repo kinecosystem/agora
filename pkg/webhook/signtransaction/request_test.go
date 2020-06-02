@@ -62,9 +62,9 @@ func TestRequest(t *testing.T) {
 
 	actual, err := RequestBodyFromProto(req)
 	require.NoError(t, err)
-	assert.Equal(t, base64.StdEncoding.EncodeToString(envelopeXDR), string(actual.EnvelopeXDR))
+	assert.Equal(t, base64.StdEncoding.EncodeToString(envelopeXDR), actual.EnvelopeXDR)
 
-	decodedIL, err := base64.StdEncoding.DecodeString(string(actual.InvoiceList))
+	decodedIL, err := base64.StdEncoding.DecodeString(actual.InvoiceList)
 	require.NoError(t, err)
 
 	actualProtoIL := &commonpb.InvoiceList{}

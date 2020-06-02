@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kinecosystem/agora/pkg/webhook/common"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
@@ -52,7 +51,7 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 	envelopeBytes, err := emptyEnvelope.MarshalBinary()
 	require.NoError(t, err)
 	expectedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: common.EnvelopeXDR(expectedXDR)}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: expectedXDR}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 

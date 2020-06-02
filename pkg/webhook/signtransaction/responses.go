@@ -6,8 +6,6 @@ import (
 
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
-
-	"github.com/kinecosystem/agora/pkg/webhook/common"
 )
 
 const (
@@ -18,7 +16,8 @@ const (
 
 // SuccessResponse represents a 200 OK response to a sign transaction request.
 type SuccessResponse struct {
-	EnvelopeXDR common.EnvelopeXDR `json:"envelope_xdr"`
+	// EnvelopeXDR is a base64-encoded transaction envelope XDR
+	EnvelopeXDR string `json:"envelope_xdr"`
 }
 
 // BadRequestResponse represents a 400 Bad Request response to a sign transaction request.

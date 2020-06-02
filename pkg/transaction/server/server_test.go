@@ -43,7 +43,6 @@ import (
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/webhook"
-	"github.com/kinecosystem/agora/pkg/webhook/common"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
@@ -429,7 +428,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: common.EnvelopeXDR(base64.StdEncoding.EncodeToString(envelopeBytes))}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: base64.StdEncoding.EncodeToString(envelopeBytes)}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)
