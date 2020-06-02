@@ -19,7 +19,7 @@ import (
 
 func TestAccountNotifier_PaymentOperation(t *testing.T) {
 	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient).(*AccountNotifier)
+	accountNotifier := NewAccountNotifier(horizonClient)
 
 	kp1, acc1 := test.GenerateAccountID(t)
 	s1 := newEventStream(5)
@@ -103,7 +103,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 
 func TestAccountNotifier_CreateOperation(t *testing.T) {
 	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient).(*AccountNotifier)
+	accountNotifier := NewAccountNotifier(horizonClient)
 
 	kp1, acc1 := test.GenerateAccountID(t)
 	s1 := newEventStream(5)
@@ -145,7 +145,7 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 
 func TestAccountNotifier_MergeOperation(t *testing.T) {
 	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient).(*AccountNotifier)
+	accountNotifier := NewAccountNotifier(horizonClient)
 
 	kp1, acc1 := test.GenerateAccountID(t)
 	s1 := newEventStream(5)
@@ -186,7 +186,7 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 
 func TestAccountNotifier_MissingAccountInfo(t *testing.T) {
 	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient).(*AccountNotifier)
+	accountNotifier := NewAccountNotifier(horizonClient)
 
 	kp1, acc1 := test.GenerateAccountID(t)
 	s1 := newEventStream(5)

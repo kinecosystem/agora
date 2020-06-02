@@ -43,7 +43,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	require.NoError(t, err)
 	env.rootAccountKP = kp
 
-	env.accountNotifier = NewAccountNotifier(env.horizonClient).(*AccountNotifier)
+	env.accountNotifier = NewAccountNotifier(env.horizonClient)
 
 	s := New(env.rootAccountKP, env.horizonClient, env.accountNotifier)
 	serv.RegisterService(func(server *grpc.Server) {

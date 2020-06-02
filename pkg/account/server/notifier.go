@@ -10,8 +10,6 @@ import (
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
-
-	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 const (
@@ -27,7 +25,7 @@ type AccountNotifier struct {
 	hClient horizon.ClientInterface
 }
 
-func NewAccountNotifier(hClient horizon.ClientInterface) transaction.Notifier {
+func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
 	return &AccountNotifier{
 		log:     logrus.StandardLogger().WithField("type", "account/server/notifier"),
 		streams: make(map[string][]*eventStream),

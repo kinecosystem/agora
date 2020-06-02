@@ -83,7 +83,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return err
 	}
 
-	accountNotifier := accountserver.NewAccountNotifier(client).(*accountserver.AccountNotifier)
+	accountNotifier := accountserver.NewAccountNotifier(client)
 
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
