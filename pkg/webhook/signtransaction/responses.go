@@ -45,7 +45,7 @@ func (r *SuccessResponse) GetEnvelopeXDR() (*xdr.TransactionEnvelope, error) {
 		return nil, errors.New("envelope_xdr cannot have length of 0")
 	}
 
-	envelopeBytes, err := base64.StdEncoding.DecodeString(string(r.EnvelopeXDR))
+	envelopeBytes, err := base64.StdEncoding.DecodeString(r.EnvelopeXDR)
 	if err != nil {
 		return nil, errors.New("envelope_xdr was not base64-encoded")
 	}

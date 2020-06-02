@@ -78,7 +78,7 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, req *sign
 			return "", nil, errors.Wrap(err, "received invalid response")
 		}
 
-		return string(decodedResp.EnvelopeXDR), e, nil
+		return decodedResp.EnvelopeXDR, e, nil
 	}
 
 	if resp.StatusCode == 400 {
