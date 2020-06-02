@@ -53,8 +53,15 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 		}
 	}
 
+	var errContextCancelled error
 	_, _ = retry.Retry(
 		func() error {
+			select {
+			case <-ctx.Done():
+				return errContextCancelled
+			default:
+			}
+
 			// A nil error will only get returned if the context gets cancelled
 			err := hClient.StreamTransactions(ctx, req, handler)
 			if err != nil {
@@ -62,6 +69,7 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 			}
 			return err
 		},
+		retry.NonRetriableErrors(errContextCancelled),
 		retry.BackoffWithJitter(backoff.Constant(10*time.Second), 12*time.Second, 0.2),
 	)
 }
