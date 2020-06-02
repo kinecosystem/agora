@@ -5,8 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
-
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 )
 
@@ -51,7 +49,6 @@ func (a *eventStream) notify(e eventNotification, timeout time.Duration) error {
 }
 
 func (a *eventStream) close() {
-	logrus.StandardLogger().Info("close called")
 	a.Lock()
 	defer a.Unlock()
 
