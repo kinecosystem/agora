@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/go/xdr"
@@ -16,6 +17,11 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
+)
+
+const (
+	AppUserIDHeader      = "app-user-id"
+	AppUserPasskeyHeader = "app-user-passkey"
 )
 
 type Client struct {
@@ -51,6 +57,22 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, req *sign
 		return "", nil, errors.Wrap(err, "failed to create sign transaction http request")
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+
+	userID, err := headers.GetASCIIHeaderByName(ctx, AppUserIDHeader)
+	if err != nil {
+		return "", nil, errors.Wrap(err, "failed to get app user ID header")
+	}
+	userPasskey, err := headers.GetASCIIHeaderByName(ctx, AppUserPasskeyHeader)
+	if err != nil {
+		return "", nil, errors.Wrap(err, "failed to get app user passkey header")
+	}
+
+	if (userID != "") != (userPasskey != "") {
+		return "", nil, errors.New("if app user auth headers are used, both must be present")
+	} else if userID != "" {
+		httpReq.Header.Set("X-App-User-ID", userID)
+		httpReq.Header.Set("X-App-User-Passkey", userPasskey)
+	}
 
 	var resp *http.Response
 	_, err = retry.Retry(

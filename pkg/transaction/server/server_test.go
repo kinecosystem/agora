@@ -17,6 +17,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	agoraenv "github.com/kinecosystem/agora-common/env"
+	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
@@ -82,7 +83,10 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 		require.NoError(t, err)
 	}
 
-	conn, serv, err := testutil.NewServer()
+	conn, serv, err := testutil.NewServer(
+		testutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
+		testutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+	)
 	require.NoError(t, err)
 
 	env.client = transactionpb.NewTransactionClient(conn)

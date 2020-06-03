@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	agoraapp "github.com/kinecosystem/agora-common/app"
+	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -119,7 +120,11 @@ func (a *app) Stop() {
 }
 
 func main() {
-	if err := agoraapp.Run(&app{}); err != nil {
+	if err := agoraapp.Run(
+		&app{},
+		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
+		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+	); err != nil {
 		logrus.WithError(err).Fatal("error running service")
 	}
 }
