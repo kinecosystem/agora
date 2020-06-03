@@ -5,57 +5,63 @@ import (
 	"sync"
 	"time"
 
-	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+	"github.com/sirupsen/logrus"
+	"github.com/stellar/go/xdr"
 )
 
-type eventNotification struct {
-	// events are the events that should be sent to the client
-	events accountpb.Events
-
-	// terminateStream indicates if the stream should be closed after these events get sent
-	terminateStream bool
+type eventData struct {
+	e xdr.TransactionEnvelope
+	m xdr.TransactionMeta
 }
 
 type eventStream struct {
 	sync.Mutex
+
+	log *logrus.Entry
+
 	closed   bool
-	streamCh chan eventNotification
+	streamCh chan eventData
 }
 
 func newEventStream(bufferSize int) *eventStream {
 	return &eventStream{
-		streamCh: make(chan eventNotification, bufferSize),
+		log:      logrus.StandardLogger().WithField("type", "account/server/stream"),
+		streamCh: make(chan eventData, bufferSize),
 	}
 }
 
-func (a *eventStream) notify(e eventNotification, timeout time.Duration) error {
-	a.Lock()
+func (s *eventStream) notify(e xdr.TransactionEnvelope, m xdr.TransactionMeta, timeout time.Duration) error {
+	s.Lock()
 
-	if a.closed {
-		a.Unlock()
+	if s.closed {
+		s.Unlock()
 		return errors.New("cannot notify closed stream")
 	}
 
 	select {
-	case a.streamCh <- e:
+	case s.streamCh <- eventData{e: e, m: m}:
 	case <-time.After(timeout):
-		a.Unlock()
-		a.close()
-		return errors.New("timed out sending events to account stream")
+		s.Unlock()
+		s.close()
+		return errors.New("timed out sending events to account event stream")
+	default:
+		s.Unlock()
+		s.close()
+		return errors.New("account event stream channel full")
 	}
 
-	a.Unlock()
+	s.Unlock()
 	return nil
 }
 
-func (a *eventStream) close() {
-	a.Lock()
-	defer a.Unlock()
+func (s *eventStream) close() {
+	s.Lock()
+	defer s.Unlock()
 
-	if a.closed {
+	if s.closed {
 		return
 	}
 
-	a.closed = true
-	close(a.streamCh)
+	s.closed = true
+	close(s.streamCh)
 }

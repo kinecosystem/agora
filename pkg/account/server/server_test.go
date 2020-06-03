@@ -194,7 +194,94 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, int64(2), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 }
 
-func TestGetEvents_TerminateStream(t *testing.T) {
+func TestGetEvents_LoadAccount(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	kp1, acc1 := test.GenerateAccountID(t)
+	_, acc2 := test.GenerateAccountID(t)
+
+	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
+	m := test.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
+
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+
+	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
+	stream, err := env.client.GetEvents(context.Background(), req)
+	require.NoError(t, err)
+
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 1, len(resp.Events))
+	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+
+	// Successfully obtain account info; both the transaction and account events should get sent
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "9", "2"), nil).Once()
+
+	env.accountNotifier.OnTransaction(e, m)
+
+	resp, err = stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 2, len(resp.Events))
+
+	expectedBytes, err := e.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, expectedBytes, resp.Events[0].GetTransactionEvent().EnvelopeXdr)
+
+	assert.Equal(t, kp1.Address(), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(900000), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(2), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+}
+
+func TestGetEvents_LoadAccountFailure(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	kp1, acc1 := test.GenerateAccountID(t)
+	_, acc2 := test.GenerateAccountID(t)
+
+	e := test.GenerateTransactionEnvelope(acc1, []xdr.Operation{test.GeneratePaymentOperation(nil, acc2)})
+	m := test.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
+
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*test.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
+
+	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
+	stream, err := env.client.GetEvents(context.Background(), req)
+	require.NoError(t, err)
+
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 1, len(resp.Events))
+	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
+
+	// Unable to get account info; only the transaction event should get sent
+	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 500}}
+	env.horizonClient.On("LoadAccount", kp1.Address()).Return(hProtocol.Account{}, horizonErr).Once()
+
+	env.accountNotifier.OnTransaction(e, m)
+
+	resp, err = stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Equal(t, 1, len(resp.Events))
+
+	expectedBytes, err := e.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, expectedBytes, resp.Events[0].GetTransactionEvent().EnvelopeXdr)
+}
+
+func TestGetEvents_AccountRemoved(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 

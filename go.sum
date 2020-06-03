@@ -143,6 +143,8 @@ github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 h1:uC1QfSlInpQ
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88/go.mod h1:3w7q1U84EfirKl04SVQ/s7nPm1ZPhiXd34z40TNz36k=
 github.com/kinecosystem/agora-api v0.13.0 h1:p3M/V39qxM7t2cwFbbOJXVz0YYWMZVR77XZH8P3/ZIs=
 github.com/kinecosystem/agora-api v0.13.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
+github.com/kinecosystem/agora-api v0.14.0 h1:bx+BDEyUZJGhdEbsPjh+Syhg1+iZsLVEUPqwf5eikQo=
+github.com/kinecosystem/agora-api v0.14.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
 github.com/kinecosystem/agora-common v0.32.0 h1:pBBkkuQApbUd1BDMSpm9hwQrVYM3065FJ8+MCz5AiGg=
 github.com/kinecosystem/agora-common v0.32.0/go.mod h1:TewS5W1uQLXnXuHUa/OY0hfmnkPV2al6Cq4NdNWZwlk=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e h1:YP9l6K2VUnIc9SmT9irPeCrJ9JCWMQjOj0Pq2xSpEfs=

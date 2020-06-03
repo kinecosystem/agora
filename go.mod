@@ -5,7 +5,7 @@ go 1.13
 require (
 	github.com/aws/aws-sdk-go-v2 v0.17.0
 	github.com/golang/protobuf v1.3.3
-	github.com/kinecosystem/agora-api v0.13.0
+	github.com/kinecosystem/agora-api v0.14.0
 	github.com/kinecosystem/agora-common v0.32.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/ory/dockertest v3.3.5+incompatible
@@ -18,5 +18,3 @@ require (
 	google.golang.org/genproto v0.0.0-20200417142217-fb6d0575620b // indirect
 	google.golang.org/grpc v1.28.1
 )
-
-replace github.com/kinecosystem/agora-api => ../agora-api-internal

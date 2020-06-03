@@ -10,6 +10,7 @@ import (
 	"github.com/kinecosystem/go/keypair"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/stellar/go/xdr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -166,6 +167,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 		return status.Error(codes.Internal, err.Error())
 	}
 
+	log = log.WithField("account", req.AccountId.Value)
 	accountInfo, err := parseAccountInfo(horizonAccount)
 	if err != nil {
 		log.WithError(err).Warn("Failed to parse account info from horizon account")
@@ -191,22 +193,54 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 	s.accountNotifier.AddStream(req.AccountId.Value, as)
 
 	defer func() {
+		as.close()
 		s.accountNotifier.RemoveStream(req.AccountId.Value, as)
 	}()
 
 	for {
 		select {
-		case eventNotification, ok := <-as.streamCh:
+		case eventData, ok := <-as.streamCh:
 			if !ok {
 				return status.Error(codes.Aborted, "")
 			}
 
-			err := stream.Send(&eventNotification.events)
+			envBytes, err := eventData.e.MarshalBinary()
+			if err != nil {
+				log.WithError(err).Warn("failed to marshal transaction envelope, dropping transaction")
+				break
+			}
+
+			events := &accountpb.Events{
+				Events: []*accountpb.Event{
+					{
+						Type: &accountpb.Event_TransactionEvent{
+							TransactionEvent: &accountpb.TransactionEvent{
+								EnvelopeXdr: envBytes,
+							},
+						},
+					},
+				},
+			}
+
+			accountInfo, accountRemoved, err := s.getMetaAccountInfoOrLoad(req.AccountId.Value, eventData.m)
+			if err != nil {
+				log.WithError(err).Warn("failed to get account info, excluding account event")
+			} else if accountInfo != nil {
+				events.Events = append(events.Events, &accountpb.Event{
+					Type: &accountpb.Event_AccountUpdateEvent{
+						AccountUpdateEvent: &accountpb.AccountUpdateEvent{
+							AccountInfo: accountInfo,
+						},
+					},
+				})
+			}
+
+			err = stream.Send(events)
 			if err != nil {
 				log.WithError(err).Info("failed to send events")
 				return err
 			}
-			if eventNotification.terminateStream {
+			if accountRemoved {
 				return nil
 			}
 		case <-stream.Context().Done():
@@ -214,6 +248,68 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 			return status.Error(codes.Canceled, "")
 		}
 	}
+}
+
+// getMetaAccountInfoOrLoad attempts to parse account info from the provided TransactionMeta. If the account info is
+// not present in the TransactionMeta, it will attempt to fetch the account info from Horizon.
+func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMeta) (accountInfo *accountpb.AccountInfo, accountRemoved bool, err error) {
+	log := s.log.WithField("method", "getMetaAccountInfoOrLoad")
+
+	for _, opMeta := range m.OperationsMeta() {
+		for _, lec := range opMeta.Changes {
+			switch lec.Type {
+			case xdr.LedgerEntryChangeTypeLedgerEntryCreated, xdr.LedgerEntryChangeTypeLedgerEntryUpdated:
+				entry, ok := lec.GetLedgerEntry()
+				if !ok {
+					log.Warnf("ledger entry not present in ledger entry change of type %d", lec.Type)
+				}
+
+				if entry.Data.Type == xdr.LedgerEntryTypeAccount {
+					account, ok := entry.Data.GetAccount()
+					if !ok {
+						log.Warn("account not present in account ledger entry data")
+					}
+
+					if account.AccountId.Address() == accountID {
+						info, err := parseAccountInfoFromEntry(account)
+						if err != nil {
+							log.WithError(err).Warn("failed to parse account info from account entry")
+						}
+
+						accountInfo = info
+					}
+				}
+			case xdr.LedgerEntryChangeTypeLedgerEntryRemoved:
+				ledgerKey := lec.Removed
+				if ledgerKey != nil {
+					if ledgerKey.Type == xdr.LedgerEntryTypeAccount {
+						accountKey, ok := ledgerKey.GetAccount()
+						if !ok {
+							log.Warn("account key not present in account ledger key")
+						}
+
+						if accountKey.AccountId.Address() == accountID {
+							accountRemoved = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if accountInfo == nil && !accountRemoved {
+		account, err := s.horizonClient.LoadAccount(accountID)
+		if err != nil {
+			return nil, false, err
+		}
+
+		accountInfo, err = parseAccountInfo(account)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+
+	return accountInfo, accountRemoved, err
 }
 
 // buildSignEncodeTransaction builds a transaction with the provided transaction mutators, signs it with the provided
