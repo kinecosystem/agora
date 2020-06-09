@@ -12,6 +12,7 @@ import (
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -24,7 +25,6 @@ import (
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
-	"github.com/kinecosystem/agora/pkg/webhook"
 	// Configurable keystore options:
 	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
 	_ "github.com/kinecosystem/agora/pkg/keypair/environment"

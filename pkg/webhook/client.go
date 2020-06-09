@@ -3,6 +3,9 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,8 +23,12 @@ import (
 )
 
 const (
-	AppUserIDHeader      = "app-user-id"
-	AppUserPasskeyHeader = "app-user-passkey"
+	AppUserIDCtxHeader      = "app-user-id"
+	AppUserPasskeyCtxHeader = "app-user-passkey"
+
+	AgoraHMACHeader      = "X-Agora-HMAC-SHA256"
+	AppUserIDHeader      = "X-App-User-ID"
+	AppUserPasskeyHeader = "X-App-User-Passkey"
 )
 
 type Client struct {
@@ -46,23 +53,35 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 // SignTransaction submits a sign transaction request to an app webhook
-func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
+func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret []byte, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
 	signTxJSON, err := json.Marshal(req)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to marshal sign transaction request body")
 	}
+
+	if len(webhookSecret) < 32 {
+		return "", nil, errors.New("webhook secret must be at least 32 bytes")
+	}
+
+	h := hmac.New(sha256.New, webhookSecret)
+	_, err = h.Write(signTxJSON)
+	if err != nil {
+		return "", nil, errors.Wrap(err, "failed to generate hmac signature")
+	}
+	agoraSig := base64.StdEncoding.EncodeToString(h.Sum(nil))
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, signURL.String(), bytes.NewBuffer(signTxJSON))
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to create sign transaction http request")
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set(AgoraHMACHeader, agoraSig)
 
-	userID, err := headers.GetASCIIHeaderByName(ctx, AppUserIDHeader)
+	userID, err := headers.GetASCIIHeaderByName(ctx, AppUserIDCtxHeader)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to get app user ID header")
 	}
-	userPasskey, err := headers.GetASCIIHeaderByName(ctx, AppUserPasskeyHeader)
+	userPasskey, err := headers.GetASCIIHeaderByName(ctx, AppUserPasskeyCtxHeader)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to get app user passkey header")
 	}
@@ -70,8 +89,8 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, req *sign
 	if (userID != "") != (userPasskey != "") {
 		return "", nil, errors.New("if app user auth headers are used, both must be present")
 	} else if userID != "" {
-		httpReq.Header.Set("X-App-User-ID", userID)
-		httpReq.Header.Set("X-App-User-Passkey", userPasskey)
+		httpReq.Header.Set(AppUserIDHeader, userID)
+		httpReq.Header.Set(AppUserPasskeyHeader, userPasskey)
 	}
 
 	var resp *http.Response

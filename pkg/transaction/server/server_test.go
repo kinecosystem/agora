@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -95,6 +96,7 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 
 	env.appConfigStore = appconfigdb.New()
 	env.invoiceStore = invoicedb.New()
+
 	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2, webhook.NewClient(http.DefaultClient))
 	require.NoError(t, err)
 	serv.RegisterService(func(server *grpc.Server) {
@@ -304,6 +306,7 @@ func TestSubmitTransaction_SignTransaction400(t *testing.T) {
 		AppName:            "some name",
 		SignTransactionURL: signURL,
 		InvoicingEnabled:   false,
+		WebhookSecret:      generateWebhookKey(t),
 	})
 	require.NoError(t, err)
 
@@ -353,6 +356,7 @@ func TestSubmitTransaction_SignTransaction403(t *testing.T) {
 		AppName:            "some name",
 		SignTransactionURL: signURL,
 		InvoicingEnabled:   false,
+		WebhookSecret:      generateWebhookKey(t),
 	})
 	require.NoError(t, err)
 
@@ -444,6 +448,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 		AppName:            "some name",
 		SignTransactionURL: signURL,
 		InvoicingEnabled:   true,
+		WebhookSecret:      generateWebhookKey(t),
 	})
 	require.NoError(t, err)
 
@@ -481,6 +486,39 @@ func TestSubmitTransaction_SignTransaction200InvalidResponse(t *testing.T) {
 	// Set test server URL to app config
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   false,
+		WebhookSecret:      generateWebhookKey(t),
+	})
+	require.NoError(t, err)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+	})
+
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Nil(t, resp)
+}
+
+func TestSubmitTransaction_SignTransactionError(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+
+	// Set up test server with a successful sign response
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: "invalidxdr"}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 200, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+
+	// Create an app config which is missing a webhook secret, which should cause an error when signing the transaction
 	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
 		AppName:            "some name",
 		SignTransactionURL: signURL,
@@ -1124,4 +1162,11 @@ func newTestServerWithJSONResponse(t *testing.T, statusCode int, b []byte) *http
 		require.NoError(t, err)
 	}))
 	return testServer
+}
+
+func generateWebhookKey(t *testing.T) []byte {
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	require.NoError(t, err)
+	return b
 }
