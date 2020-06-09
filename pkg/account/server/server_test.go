@@ -77,7 +77,7 @@ func TestCreateAccount(t *testing.T) {
 
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.GetResult())
 	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(100*100000), resp.GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
 
 	env.horizonClient.AssertExpectations(t)
@@ -99,7 +99,7 @@ func TestCreateAccountExists(t *testing.T) {
 
 	assert.Equal(t, accountpb.CreateAccountResponse_EXISTS, resp.GetResult())
 	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(100*100000), resp.GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
 
 	env.horizonClient.AssertExpectations(t)
@@ -120,7 +120,7 @@ func TestGetAccountInfo(t *testing.T) {
 
 	assert.Equal(t, accountpb.GetAccountInfoResponse_OK, resp.Result)
 	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(100*100000), resp.GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
 
 	env.horizonClient.AssertExpectations(t)
@@ -174,7 +174,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, accountpb.Events_OK, resp.Result)
 	assert.Equal(t, 1, len(resp.Events))
 	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
 	env.accountNotifier.OnTransaction(e, m)
@@ -190,7 +190,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	require.Equal(t, expectedBytes, resp.Events[0].GetTransactionEvent().EnvelopeXdr)
 
 	assert.Equal(t, kp1.Address(), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(900000), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(9*1e5), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(2), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 }
 
@@ -216,7 +216,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	assert.Equal(t, accountpb.Events_OK, resp.Result)
 	assert.Equal(t, 1, len(resp.Events))
 	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
 	// Successfully obtain account info; both the transaction and account events should get sent
@@ -235,7 +235,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	require.Equal(t, expectedBytes, resp.Events[0].GetTransactionEvent().EnvelopeXdr)
 
 	assert.Equal(t, kp1.Address(), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(900000), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(9*1e5), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(2), resp.Events[1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 }
 
@@ -261,7 +261,7 @@ func TestGetEvents_LoadAccountFailure(t *testing.T) {
 	assert.Equal(t, accountpb.Events_OK, resp.Result)
 	assert.Equal(t, 1, len(resp.Events))
 	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
 	// Unable to get account info; only the transaction event should get sent
@@ -310,7 +310,7 @@ func TestGetEvents_AccountRemoved(t *testing.T) {
 	assert.Equal(t, accountpb.Events_OK, resp.Result)
 	assert.Equal(t, 1, len(resp.Events))
 	assert.Equal(t, kp1.Address(), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetAccountId().Value)
-	assert.Equal(t, int64(10*100000), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
 	env.accountNotifier.OnTransaction(e, m)
