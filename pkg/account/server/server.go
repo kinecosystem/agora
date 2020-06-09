@@ -197,6 +197,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 		s.accountNotifier.RemoveStream(req.AccountId.Value, as)
 	}()
 
+	events := make([]*accountpb.Event, 0)
 	for {
 		select {
 		case eventData, ok := <-as.streamCh:
@@ -210,23 +211,19 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				break
 			}
 
-			events := &accountpb.Events{
-				Events: []*accountpb.Event{
-					{
-						Type: &accountpb.Event_TransactionEvent{
-							TransactionEvent: &accountpb.TransactionEvent{
-								EnvelopeXdr: envBytes,
-							},
-						},
+			events = append(events, &accountpb.Event{
+				Type: &accountpb.Event_TransactionEvent{
+					TransactionEvent: &accountpb.TransactionEvent{
+						EnvelopeXdr: envBytes,
 					},
 				},
-			}
+			})
 
 			accountInfo, accountRemoved, err := s.getMetaAccountInfoOrLoad(req.AccountId.Value, eventData.m)
 			if err != nil {
 				log.WithError(err).Warn("failed to get account info, excluding account event")
 			} else if accountInfo != nil {
-				events.Events = append(events.Events, &accountpb.Event{
+				events = append(events, &accountpb.Event{
 					Type: &accountpb.Event_AccountUpdateEvent{
 						AccountUpdateEvent: &accountpb.AccountUpdateEvent{
 							AccountInfo: accountInfo,
@@ -235,17 +232,35 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				})
 			}
 
-			err = stream.Send(events)
-			if err != nil {
-				log.WithError(err).Info("failed to send events")
-				return err
-			}
-			if accountRemoved {
-				return nil
+			// The max # of events that can be sent is 128 and each eventData received from streamCh results in up to 2
+			// events, so we should flush at a length >= 127.
+			if len(events) >= 127 || accountRemoved {
+				err = stream.Send(&accountpb.Events{
+					Events: events,
+				})
+				if err != nil {
+					log.WithError(err).Info("failed to send events")
+					return err
+				}
+				if accountRemoved {
+					return nil
+				}
+				events = make([]*accountpb.Event, 0)
 			}
 		case <-stream.Context().Done():
 			log.Debug("Stream context cancelled, ending stream")
 			return status.Error(codes.Canceled, "")
+		default:
+			if len(events) > 0 {
+				err = stream.Send(&accountpb.Events{
+					Events: events,
+				})
+				if err != nil {
+					log.WithError(err).Info("failed to send events")
+					return err
+				}
+				events = make([]*accountpb.Event, 0)
+			}
 		}
 	}
 }
