@@ -234,7 +234,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 
 			// The max # of events that can be sent is 128 and each eventData received from streamCh results in up to 2
 			// events, so we should flush at a length >= 127.
-			if len(events) >= 127 || accountRemoved {
+			if len(events) >= 127 || accountRemoved || len(as.streamCh) == 0 {
 				err = stream.Send(&accountpb.Events{
 					Events: events,
 				})
@@ -250,17 +250,6 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 		case <-stream.Context().Done():
 			log.Debug("Stream context cancelled, ending stream")
 			return status.Error(codes.Canceled, "")
-		default:
-			if len(events) > 0 {
-				err = stream.Send(&accountpb.Events{
-					Events: events,
-				})
-				if err != nil {
-					log.WithError(err).Info("failed to send events")
-					return err
-				}
-				events = make([]*accountpb.Event, 0)
-			}
 		}
 	}
 }
