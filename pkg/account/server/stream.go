@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
@@ -30,7 +29,7 @@ func newEventStream(bufferSize int) *eventStream {
 	}
 }
 
-func (s *eventStream) notify(e xdr.TransactionEnvelope, m xdr.TransactionMeta, timeout time.Duration) error {
+func (s *eventStream) notify(e xdr.TransactionEnvelope, m xdr.TransactionMeta) error {
 	s.Lock()
 
 	if s.closed {
@@ -40,10 +39,6 @@ func (s *eventStream) notify(e xdr.TransactionEnvelope, m xdr.TransactionMeta, t
 
 	select {
 	case s.streamCh <- eventData{e: e, m: m}:
-	case <-time.After(timeout):
-		s.Unlock()
-		s.close()
-		return errors.New("timed out sending events to account event stream")
 	default:
 		s.Unlock()
 		s.close()

@@ -2,15 +2,10 @@ package server
 
 import (
 	"sync"
-	"time"
 
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
-)
-
-const (
-	notifyTimeout = 10 * time.Second
 )
 
 type AccountNotifier struct {
@@ -47,7 +42,7 @@ func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.Transac
 
 		for _, s := range streams {
 			if s != nil {
-				err := s.notify(e, m, notifyTimeout)
+				err := s.notify(e, m)
 				if err != nil {
 					log.WithError(err).Warn("failed to notify stream")
 				}
