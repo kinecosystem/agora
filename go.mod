@@ -7,6 +7,8 @@ require (
 	github.com/aws/aws-sdk-go v1.25.25
 	github.com/aws/aws-sdk-go-v2 v0.17.0
 	github.com/envoyproxy/protoc-gen-validate v0.1.0
+	github.com/go-redis/redis/v7 v7.0.0
+	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.1
 	github.com/kinecosystem/agora-api v0.14.0
 	github.com/kinecosystem/agora-common v0.34.0
@@ -20,3 +22,5 @@ require (
 	golang.org/x/sys v0.0.0-20200413165638-669c56c373c4 // indirect
 	google.golang.org/grpc v1.28.1
 )
+
+replace github.com/kinecosystem/agora-common => ../agora-common-internal

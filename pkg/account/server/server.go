@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
@@ -15,10 +16,14 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+
+	"github.com/kinecosystem/agora/pkg/ratelimiter"
 )
 
 const (
 	eventStreamBufferSize = 64
+
+	globalRateLimitKey = "create-account-rate-limit-global"
 )
 
 type server struct {
@@ -26,21 +31,38 @@ type server struct {
 	rootAccountKP   *keypair.Full
 	horizonClient   horizon.ClientInterface
 	accountNotifier *AccountNotifier
+	limiter         *redis_rate.Limiter
+	config          *Config
+}
+
+type Config struct {
+	CreateAccountGlobalLimit int
 }
 
 // New returns a new account server
-func New(rootAccountKP *keypair.Full, horizonClient horizon.ClientInterface, accountNotifier *AccountNotifier) accountpb.AccountServer {
+func New(rootAccountKP *keypair.Full, horizonClient horizon.ClientInterface, accountNotifier *AccountNotifier, limiter *redis_rate.Limiter, c *Config) accountpb.AccountServer {
 	return &server{
 		log:             logrus.StandardLogger().WithField("type", "account/server"),
 		rootAccountKP:   rootAccountKP,
 		horizonClient:   horizonClient,
 		accountNotifier: accountNotifier,
+		limiter:         limiter,
+		config:          c,
 	}
 }
 
 // CreateAccount implements AccountServer.CreateAccount
 func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
 	log := s.log.WithField("method", "CreateAccount")
+
+	canProceed, err := ratelimiter.CanProceed(s.limiter, globalRateLimitKey, s.config.CreateAccountGlobalLimit)
+	if err != nil {
+		log.WithError(err).Warn("failed to check global rate limit")
+		return nil, status.Error(codes.Internal, "failed to create account")
+	}
+	if !canProceed {
+		return nil, status.Error(codes.Unavailable, "rate limited")
+	}
 
 	// Check if account exists on the blockchain
 	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)

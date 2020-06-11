@@ -15,17 +15,23 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-redis/redis/v7"
+	"github.com/go-redis/redis_rate/v8"
 	"github.com/golang/protobuf/proto"
 	agoraenv "github.com/kinecosystem/agora-common/env"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
+	redistest "github.com/kinecosystem/agora-common/redis/test"
 	"github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
 	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/kinecosystem/go/xdr"
+	"github.com/ory/dockertest"
+	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/clients/horizonclient"
 	horizonprotocolsv2 "github.com/stellar/go/protocols/horizon"
 	"github.com/stellar/go/support/render/problem"
@@ -49,6 +55,8 @@ import (
 )
 
 var (
+	redisConnString string
+
 	il = &commonpb.InvoiceList{
 		Invoices: []*commonpb.Invoice{
 			{
@@ -75,6 +83,27 @@ type testEnv struct {
 	invoiceStore   invoice.Store
 }
 
+func TestMain(m *testing.M) {
+	log := logrus.StandardLogger()
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.WithError(err).Error("Error creating docker pool")
+		os.Exit(1)
+	}
+
+	var cleanUpFunc func()
+	redisConnString, cleanUpFunc, err = redistest.StartRedis(context.Background(), pool)
+	if err != nil {
+		log.WithError(err).Error("Error starting redis connection")
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	cleanUpFunc()
+	os.Exit(code)
+}
+
 func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 	os.Setenv("AGORA_ENVIRONMENT", string(agoraenv.AgoraEnvironmentDev))
 
@@ -97,7 +126,23 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 	env.appConfigStore = appconfigdb.New()
 	env.invoiceStore = invoicedb.New()
 
-	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2, webhook.NewClient(http.DefaultClient))
+	ring := redis.NewRing(&redis.RingOptions{
+		Addrs: map[string]string{
+			"server1": redisConnString,
+		},
+	})
+	limiter := redis_rate.NewLimiter(ring)
+	// reset global & app rate limits (the key format is hardcoded inside redis_rate/rate.go)
+	ring.Del(
+		fmt.Sprintf("rate:%s", globalRateLimitKey),
+		fmt.Sprintf("rate:%s", fmt.Sprintf(appRateLimitKeyFormat, 0)),
+		fmt.Sprintf("rate:%s", fmt.Sprintf(appRateLimitKeyFormat, 1)),
+	)
+
+	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2, webhook.NewClient(http.DefaultClient), limiter, &Config{
+		SubmitTxGlobalLimit: 5,
+		SubmitTxAppLimit:    3,
+	})
 	require.NoError(t, err)
 	serv.RegisterService(func(server *grpc.Server) {
 		transactionpb.RegisterTransactionServer(server, s)
@@ -677,6 +722,140 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 		})
 		assert.Equal(t, tc.grpcCode, status.Code(err))
 	}
+}
+
+func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	var err error
+	for i := uint16(0); i < 5; i++ {
+		_, envelopeBytes, _ := generateEnvelope(t, nil, i)
+		hashBytes := sha256.Sum256(envelopeBytes)
+		horizonResult := horizonprotocols.TransactionSuccess{
+			Hash:   hex.EncodeToString(hashBytes[:]),
+			Ledger: 10,
+			Result: base64.StdEncoding.EncodeToString([]byte("test")),
+		}
+		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+		_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			EnvelopeXdr: envelopeBytes,
+			InvoiceList: il,
+		})
+		require.NoError(t, err)
+	}
+
+	_, envelopeBytes, _ := generateEnvelope(t, il, 0)
+	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	require.Equal(t, codes.Unavailable, status.Code(err))
+
+	// wait until the rate limit resets
+	time.Sleep(1 * time.Second)
+
+	for i := uint16(0); i < 5; i++ {
+		_, envelopeBytes, _ := generateEnvelope(t, nil, i)
+		hashBytes := sha256.Sum256(envelopeBytes)
+		horizonResult := horizonprotocols.TransactionSuccess{
+			Hash:   hex.EncodeToString(hashBytes[:]),
+			Ledger: 10,
+			Result: base64.StdEncoding.EncodeToString([]byte("test")),
+		}
+		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+		_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			EnvelopeXdr: envelopeBytes,
+			InvoiceList: il,
+		})
+		require.NoError(t, err)
+	}
+
+	_, envelopeBytes, _ = generateEnvelope(t, il, 0)
+	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	env.hClient.AssertExpectations(t)
+}
+
+func TestSubmitTransaction_AppRateLimited(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	envelope, _, _ := generateEnvelope(t, nil, 1)
+
+	// a memo is required for the app index rate limit
+	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, make([]byte, 0))
+	require.NoError(t, err)
+	xdrHash := xdr.Hash{}
+	for i := 0; i < len(memo); i++ {
+		xdrHash[i] = memo[i]
+	}
+	xdrMemo, err := xdr.NewMemo(xdr.MemoTypeMemoHash, xdrHash)
+	require.NoError(t, err)
+
+	envelope.Tx.Memo = xdrMemo
+
+	envelopeBytes, err := envelope.MarshalBinary()
+	require.NoError(t, err)
+
+	// Set up test server with a successful sign response
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: base64.StdEncoding.EncodeToString(envelopeBytes)}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 200, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   true,
+		WebhookSecret:      generateWebhookKey(t),
+	})
+	require.NoError(t, err)
+
+	hashBytes := sha256.Sum256(envelopeBytes)
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(hashBytes[:]),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Times(6)
+
+	for i := 0; i < 3; i++ {
+		_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			EnvelopeXdr: envelopeBytes,
+		})
+		require.NoError(t, err)
+	}
+
+	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+	})
+	require.Equal(t, codes.Unavailable, status.Code(err))
+
+	// wait until the rate limit resets
+	time.Sleep(1 * time.Second)
+
+	for i := 0; i < 3; i++ {
+		_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			EnvelopeXdr: envelopeBytes,
+		})
+		require.NoError(t, err)
+	}
+
+	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+	})
+	require.Equal(t, codes.Unavailable, status.Code(err))
+
+	env.hClient.AssertExpectations(t)
 }
 
 func TestGetTransaction_Happy(t *testing.T) {

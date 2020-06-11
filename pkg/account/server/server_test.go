@@ -2,19 +2,28 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/go-redis/redis/v7"
+	"github.com/go-redis/redis_rate/v8"
+	redistest "github.com/kinecosystem/agora-common/redis/test"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
 	hProtocol "github.com/kinecosystem/go/protocols/horizon"
+	"github.com/ory/dockertest"
+	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
@@ -22,11 +31,36 @@ import (
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
+var (
+	redisConnString string
+)
+
 type testEnv struct {
 	client          accountpb.AccountClient
 	horizonClient   *horizon.MockClient
 	rootAccountKP   *keypair.Full
 	accountNotifier *AccountNotifier
+}
+
+func TestMain(m *testing.M) {
+	log := logrus.StandardLogger()
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.WithError(err).Error("Error creating docker pool")
+		os.Exit(1)
+	}
+
+	var cleanUpFunc func()
+	redisConnString, cleanUpFunc, err = redistest.StartRedis(context.Background(), pool)
+	if err != nil {
+		log.WithError(err).Error("Error starting redis connection")
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	cleanUpFunc()
+	os.Exit(code)
 }
 
 func setup(t *testing.T) (env testEnv, cleanup func()) {
@@ -45,7 +79,16 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 
 	env.accountNotifier = NewAccountNotifier(env.horizonClient)
 
-	s := New(env.rootAccountKP, env.horizonClient, env.accountNotifier)
+	ring := redis.NewRing(&redis.RingOptions{
+		Addrs: map[string]string{
+			"server1": redisConnString,
+		},
+	})
+	limiter := redis_rate.NewLimiter(ring)
+	// reset the global rate limit (the key format is hardcoded inside redis_rate/rate.go)
+	ring.Del(fmt.Sprintf("rate:%s", globalRateLimitKey))
+
+	s := New(env.rootAccountKP, env.horizonClient, env.accountNotifier, limiter, &Config{CreateAccountGlobalLimit: 5})
 	serv.RegisterService(func(server *grpc.Server) {
 		accountpb.RegisterAccountServer(server, s)
 	})
@@ -83,7 +126,7 @@ func TestCreateAccount(t *testing.T) {
 	env.horizonClient.AssertExpectations(t)
 }
 
-func TestCreateAccountExists(t *testing.T) {
+func TestCreateAccount_Exists(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
@@ -101,6 +144,38 @@ func TestCreateAccountExists(t *testing.T) {
 	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
 	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
+
+	env.horizonClient.AssertExpectations(t)
+}
+
+func TestCreateAccount_RateLimited(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	kp, err := keypair.Random()
+	require.NoError(t, err)
+
+	req := accountpb.CreateAccountRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
+	for i := 0; i < 5; i++ {
+		env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+		_, err = env.client.CreateAccount(context.Background(), &req)
+		require.NoError(t, err)
+	}
+
+	_, err = env.client.CreateAccount(context.Background(), &req)
+	require.Equal(t, codes.Unavailable, status.Code(err))
+
+	// wait until the rate limit resets
+	time.Sleep(1 * time.Second)
+
+	for i := 0; i < 5; i++ {
+		env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+		_, err = env.client.CreateAccount(context.Background(), &req)
+		require.NoError(t, err)
+	}
+
+	_, err = env.client.CreateAccount(context.Background(), &req)
+	require.Equal(t, codes.Unavailable, status.Code(err))
 
 	env.horizonClient.AssertExpectations(t)
 }

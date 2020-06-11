@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 
+	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
@@ -24,9 +26,15 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/ratelimiter"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
+)
+
+const (
+	globalRateLimitKey    = "submit-transaction-rate-limit-global"
+	appRateLimitKeyFormat = "submit-transaction-rate-limit-app-%d"
 )
 
 type server struct {
@@ -40,6 +48,14 @@ type server struct {
 	client        horizon.ClientInterface
 	clientV2      horizonclient.ClientInterface
 	webhookClient *webhook.Client
+
+	limiter *redis_rate.Limiter
+	config  *Config
+}
+
+type Config struct {
+	SubmitTxGlobalLimit int
+	SubmitTxAppLimit    int
 }
 
 // New returns a new transactionpb.TransactionServer.
@@ -50,6 +66,8 @@ func New(
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
 	webhookClient *webhook.Client,
+	limiter *redis_rate.Limiter,
+	config *Config,
 ) (transactionpb.TransactionServer, error) {
 	network, err := kin.GetNetwork()
 	if err != nil {
@@ -67,12 +85,24 @@ func New(
 		client:        client,
 		clientV2:      clientV2,
 		webhookClient: webhookClient,
+
+		limiter: limiter,
+		config:  config,
 	}, nil
 }
 
 // SubmitTransaction implements transactionpb.TransactionServer.SubmitTransaction.
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
+
+	canProceed, err := ratelimiter.CanProceed(s.limiter, globalRateLimitKey, s.config.SubmitTxGlobalLimit)
+	if err != nil {
+		log.WithError(err).Warn("failed to check global rate limit")
+		return nil, status.Error(codes.Internal, "failed to submit transaction")
+	}
+	if !canProceed {
+		return nil, status.Error(codes.Unavailable, "rate limited")
+	}
 
 	e := &xdr.TransactionEnvelope{}
 	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.EnvelopeXdr), e); err != nil {
@@ -86,6 +116,15 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	encodedXDR := base64.StdEncoding.EncodeToString(req.EnvelopeXdr)
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
 		memo := kin.Memo(*e.Tx.Memo.Hash)
+
+		canProceed, err := ratelimiter.CanProceed(s.limiter, fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), s.config.SubmitTxAppLimit)
+		if err != nil {
+			log.WithError(err).Warn("failed to check per app rate limit")
+			return nil, status.Error(codes.Internal, "failed to submit transaction")
+		}
+		if !canProceed {
+			return nil, status.Error(codes.Unavailable, "rate limited")
+		}
 
 		if req.InvoiceList != nil {
 			if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {

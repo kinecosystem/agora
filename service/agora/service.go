@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go/aws/session"
 	dynamodbv1 "github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/go-redis/redis/v7"
+	"github.com/go-redis/redis_rate/v8"
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
@@ -45,6 +50,13 @@ const (
 	rootKeypairIDEnv      = "ROOT_KEYPAIR_ID"
 	whitelistKeypairIDEnv = "WHITELIST_KEYPAIR_ID"
 	keystoreTypeEnv       = "KEYSTORE_TYPE"
+
+	redisConnStringEnv = "REDIS_CONN_STRING"
+
+	// Rate Limit Configs
+	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
+	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
+	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
 )
 
 type app struct {
@@ -98,6 +110,21 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init v1 aws sdk")
 	}
 
+	redisConnString := os.Getenv(redisConnStringEnv)
+	if redisConnString == "" {
+		return errors.Errorf("%s must be set", redisConnStringEnv)
+	}
+
+	hosts := strings.Split(redisConnString, ",")
+	addrs := make(map[string]string)
+	for i, host := range hosts {
+		addrs[fmt.Sprintf("server%d", i)] = host
+	}
+
+	limiter := redis_rate.NewLimiter(redis.NewRing(&redis.RingOptions{
+		Addrs: addrs,
+	}))
+
 	accountNotifier := accountserver.NewAccountNotifier(client)
 
 	dynamoClient := dynamodb.New(cfg)
@@ -105,7 +132,36 @@ func (a *app) Init(_ agoraapp.Config) error {
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
-	a.accountServer = accountserver.New(rootAccountKP, client, accountNotifier)
+	if err != nil {
+		return errors.Wrap(err, "failed to create rate limiter")
+	}
+
+	createAccountRLStr := os.Getenv(createAccountGlobalRLEnv)
+	createAccLimit, err := strconv.Atoi(createAccountRLStr)
+	if err != nil {
+		return errors.Wrapf(err, "%s must be an integer", createAccountGlobalRLEnv)
+	}
+
+	submitTxGlobalRLStr := os.Getenv(submitTxGlobalRLEnv)
+	submitTxGlobalLimit, err := strconv.Atoi(submitTxGlobalRLStr)
+	if err != nil {
+		return errors.Wrapf(err, "%s must be an integer", submitTxGlobalRLEnv)
+	}
+
+	submitTxAppRLStr := os.Getenv(submitTxAppRLEnv)
+	submitTxAppLimit, err := strconv.Atoi(submitTxAppRLStr)
+	if err != nil {
+		return errors.Wrapf(err, "%s must be an integer", submitTxAppRLEnv)
+	}
+
+	a.accountServer = accountserver.New(
+		rootAccountKP,
+		client,
+		accountNotifier,
+		limiter,
+		&accountserver.Config{CreateAccountGlobalLimit: createAccLimit},
+	)
+
 	a.txnServer, err = transactionserver.New(
 		whitelistAccountKP,
 		appConfigStore,
@@ -113,6 +169,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 		client,
 		clientV2,
 		webhookClient,
+		limiter,
+		&transactionserver.Config{
+			SubmitTxGlobalLimit: submitTxGlobalLimit,
+			SubmitTxAppLimit:    submitTxAppLimit,
+		},
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to init transaction server")
