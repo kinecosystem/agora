@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"strconv"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -57,19 +58,25 @@ func (m *Entry) GetAccounts() ([]string, error) {
 func (m *Entry) GetOrderingKey() ([]byte, error) {
 	switch v := m.Kind.(type) {
 	case *Entry_Stellar:
-		return OrderKeyFromSequence(m.Version, uint32(v.Stellar.Ledger)), nil
+		var b [9]byte
+		b[0] = byte(m.Version)
+		binary.BigEndian.PutUint64(b[1:], v.Stellar.PagingToken)
+		return b[:], nil
 	default:
 		return nil, errors.Errorf("unsupported entry version: %d", m.Version)
 	}
 }
 
-// OrderKeyFromSequence returns the ordering key for a stellar version
-// and ledger sequence number.
-func OrderKeyFromSequence(v KinVersion, seq uint32) []byte {
-	var b [5]byte
+func OrderingKeyFromCursor(v KinVersion, cursor string) ([]byte, error) {
+	pt, err := strconv.ParseUint(cursor, 10, 64)
+	if err != nil {
+		return nil, errors.Wrap(err, "cursor is not in toid format")
+	}
+
+	var b [9]byte
 	b[0] = byte(v)
-	binary.BigEndian.PutUint32(b[1:], seq)
-	return b[:]
+	binary.BigEndian.PutUint64(b[1:], pt)
+	return b[:], nil
 }
 
 // GetAccountsFromEnvelope returns the set of accounts involved in a transaction

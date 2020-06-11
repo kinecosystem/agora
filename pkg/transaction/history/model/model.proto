@@ -26,16 +26,18 @@ message Entry {
 message StellarEntry {
     uint64 ledger = 1;
 
-    google.protobuf.Timestamp ledger_close_time = 2 [(validate.rules).timestamp = {
+    uint64 paging_token = 2;
+
+    google.protobuf.Timestamp ledger_close_time = 3 [(validate.rules).timestamp = {
         required: true,
     }];
 
-    bytes envelope_xdr = 3 [(validate.rules).bytes = {
+    bytes envelope_xdr = 4 [(validate.rules).bytes = {
         min_len: 1
         max_len: 10240
     }];
 
-    bytes result_xdr = 4 [(validate.rules).bytes = {
+    bytes result_xdr = 5 [(validate.rules).bytes = {
         min_len: 1
         max_len: 10240
     }];

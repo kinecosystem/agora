@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 
 	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
@@ -27,6 +26,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/transaction/history"
+	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
@@ -43,6 +44,7 @@ type server struct {
 
 	appConfigStore app.ConfigStore
 	invoiceStore   invoice.Store
+	loader         *historyLoader
 
 	client        horizon.ClientInterface
 	clientV2      horizonclient.ClientInterface
@@ -62,6 +64,8 @@ func New(
 	whitelistAccount *keypair.Full,
 	appConfigStore app.ConfigStore,
 	invoiceStore invoice.Store,
+	reader history.Reader,
+	committer ingestion.Committer,
 	client horizon.ClientInterface,
 	clientV2 horizonclient.ClientInterface,
 	webhookClient *webhook.Client,
@@ -80,6 +84,7 @@ func New(
 
 		appConfigStore: appConfigStore,
 		invoiceStore:   invoiceStore,
+		loader:         newLoader(client, reader, committer),
 
 		client:        client,
 		clientV2:      clientV2,
@@ -270,52 +275,31 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		"hash":   hex.EncodeToString(req.TransactionHash.Value),
 	})
 
-	// todo: figure out the details of non-success states to properly populate the State.
-	tx, err := s.client.LoadTransaction(hex.EncodeToString(req.TransactionHash.Value))
-	if err != nil {
-		if hErr, ok := err.(*horizon.Error); ok {
-			switch hErr.Problem.Status {
-			case http.StatusNotFound:
-				return nil, status.Error(codes.NotFound, "")
-			default:
-				log.WithField("problem", hErr.Problem).Warn("Unexpected error from horizon")
-			}
-		}
-
-		log.WithError(err).Warn("Unexpected error from horizon")
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	_, result, envelope, err := getBinaryBlobs(tx.Hash, tx.ResultXdr, tx.EnvelopeXdr)
-	if err != nil {
+	tx, err := s.loader.getTransaction(ctx, req.TransactionHash.Value)
+	if err == history.ErrNotFound {
+		return nil, status.Error(codes.NotFound, "")
+	} else if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	resp := &transactionpb.GetTransactionResponse{
 		State:  transactionpb.GetTransactionResponse_SUCCESS,
-		Ledger: int64(tx.Ledger),
+		Ledger: tx.ledger,
 		Item: &transactionpb.HistoryItem{
-			Hash:        req.TransactionHash,
-			ResultXdr:   result,
-			EnvelopeXdr: envelope,
-			Cursor:      getCursor(tx.PT),
+			Hash: &commonpb.TransactionHash{
+				Value: tx.hash,
+			},
+			ResultXdr:   tx.resultXDR,
+			EnvelopeXdr: tx.envelopeXDR,
+			Cursor:      tx.cursor,
 		},
 	}
-
-	// todo: configurable encoding strictness?
-	//
-	// If the memo was valid, and we found the corresponding data for
-	// it, populate the response. Otherwise, unless it was an unexpected
-	// failure, we simply don't include the data.
-	memo, err := kin.MemoFromXDRString(tx.Memo, true)
-	if err != nil {
-		// This simply means it wasn't a valid agora memo, so we just
-		// don't include any agora data.
+	if tx.memo == nil {
 		return resp, nil
 	}
 
 	// todo(caching): cache config
-	appConfig, err := s.appConfigStore.Get(ctx, memo.AppIndex())
+	appConfig, err := s.appConfigStore.Get(ctx, tx.memo.AppIndex())
 	if err != nil {
 		if err == app.ErrNotFound {
 			return resp, nil
@@ -341,55 +325,23 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		"account": req.AccountId.Value,
 	})
 
-	txnReq := horizonclient.TransactionRequest{
-		ForAccount:    req.AccountId.Value,
-		IncludeFailed: false,
-		Limit:         100, // todo: we may eventually want to reduce this
-	}
-
-	switch req.Direction {
-	case transactionpb.GetHistoryRequest_ASC:
-		txnReq.Order = horizonclient.OrderAsc
-	case transactionpb.GetHistoryRequest_DESC:
-		txnReq.Order = horizonclient.OrderDesc
-	}
-
-	if req.Cursor != nil {
-		// todo: formalize an internal encoding?
-		txnReq.Cursor = string(req.Cursor.Value)
-	}
-
-	txns, err := s.clientV2.Transactions(txnReq)
+	txns, err := s.loader.getTransactions(ctx, req.AccountId.Value, req.Cursor, req.Direction)
 	if err != nil {
-		if hErr, ok := err.(*horizonclient.Error); ok {
-			switch hErr.Problem.Status {
-			case http.StatusNotFound:
-				return nil, status.Error(codes.NotFound, "")
-			default:
-				log.WithField("problem", hErr.Problem).Warn("Unexpected error from horizon")
-			}
-		}
-
 		log.WithError(err).Warn("Failed to get history txns")
-		return nil, status.Error(codes.Internal, "failed to get horizon txns")
+		return nil, status.Error(codes.Internal, "failed to get txns")
 	}
 
 	resp := &transactionpb.GetHistoryResponse{}
 
 	// todo:  parallelize history lookups
-	for _, tx := range txns.Embedded.Records {
-		hash, result, envelope, err := getBinaryBlobs(tx.Hash, tx.ResultXdr, tx.EnvelopeXdr)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
+	for _, tx := range txns {
 		item := &transactionpb.HistoryItem{
 			Hash: &commonpb.TransactionHash{
-				Value: hash,
+				Value: tx.hash,
 			},
-			ResultXdr:   result,
-			EnvelopeXdr: envelope,
-			Cursor:      getCursor(tx.PT),
+			ResultXdr:   tx.resultXDR,
+			EnvelopeXdr: tx.envelopeXDR,
+			Cursor:      tx.cursor,
 		}
 
 		// We append before filling out the rest of the data component
@@ -400,19 +352,12 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		//
 		// Note: this only works because we're appending pointers.
 		resp.Items = append(resp.Items, item)
-
-		// todo: configurable encoding strictness?
-		//
-		// If the memo was valid, and we found the corresponding data for
-		// it, populate the response. Otherwise, unless it was an unexpected
-		// failure, we simply don't include the data.
-		memo, err := kin.MemoFromXDRString(tx.Memo, true)
-		if err != nil {
+		if tx.memo == nil {
 			continue
 		}
 
 		// todo(caching): cache config
-		appConfig, err := s.appConfigStore.Get(ctx, memo.AppIndex())
+		appConfig, err := s.appConfigStore.Get(ctx, tx.memo.AppIndex())
 		if err != nil {
 			if err == app.ErrNotFound {
 				return resp, nil
@@ -422,7 +367,7 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 		}
 
-		item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, hash)
+		item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, tx.hash)
 		if err != nil {
 			log.WithError(err).Warn("Failed to retrieve invoice list")
 			return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
@@ -430,36 +375,6 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 	}
 
 	return resp, nil
-}
-
-func getBinaryBlobs(hash, result, envelope string) (hashBytes, resultBytes, envelopeBytes []byte, err error) {
-	hashBytes, err = hex.DecodeString(hash)
-	if err != nil {
-		return nil, nil, nil, errors.Wrap(err, "failed to decode hash")
-	}
-
-	resultBytes, err = base64.StdEncoding.DecodeString(result)
-	if err != nil {
-		return nil, nil, nil, errors.Wrap(err, "failed to decode xdr")
-	}
-
-	envelopeBytes, err = base64.StdEncoding.DecodeString(envelope)
-	if err != nil {
-		return nil, nil, nil, errors.Wrap(err, "failed to decode envelope")
-	}
-
-	return hashBytes, resultBytes, envelopeBytes, nil
-}
-
-func getCursor(c string) *transactionpb.Cursor {
-	if c == "" {
-		return nil
-	}
-
-	// todo: it may be better to wrap the token, or something.
-	return &transactionpb.Cursor{
-		Value: []byte(c),
-	}
 }
 
 func (s *server) getInvoiceList(ctx context.Context, appConfig *app.Config, txHash []byte) (*commonpb.InvoiceList, error) {

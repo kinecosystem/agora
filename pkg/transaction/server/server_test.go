@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
 	redistest "github.com/kinecosystem/agora-common/redis/test"
-	"github.com/kinecosystem/agora-common/testutil"
+	agoratestutil "github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
 	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
@@ -33,8 +34,6 @@ import (
 	"github.com/ory/dockertest"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/clients/horizonclient"
-	horizonprotocolsv2 "github.com/stellar/go/protocols/horizon"
-	"github.com/stellar/go/support/render/problem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -49,7 +48,14 @@ import (
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/memory"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
+	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/transaction/history"
+	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
+	ingestionmemory "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/memory"
+	historymemory "github.com/kinecosystem/agora/pkg/transaction/history/memory"
+	"github.com/kinecosystem/agora/pkg/transaction/history/model"
+	historytestutil "github.com/kinecosystem/agora/pkg/transaction/history/model/testutil"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
@@ -81,6 +87,8 @@ type testEnv struct {
 
 	appConfigStore app.ConfigStore
 	invoiceStore   invoice.Store
+	rw             history.ReaderWriter
+	committer      ingestion.Committer
 }
 
 func TestMain(m *testing.M) {
@@ -113,9 +121,9 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 		require.NoError(t, err)
 	}
 
-	conn, serv, err := testutil.NewServer(
-		testutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
-		testutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+	conn, serv, err := agoratestutil.NewServer(
+		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
+		agoratestutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
 	)
 	require.NoError(t, err)
 
@@ -125,6 +133,9 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 
 	env.appConfigStore = appconfigdb.New()
 	env.invoiceStore = invoicedb.New()
+
+	env.rw = historymemory.New()
+	env.committer = ingestionmemory.New()
 
 	ring := redis.NewRing(&redis.RingOptions{
 		Addrs: map[string]string{
@@ -139,10 +150,21 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 		fmt.Sprintf("rate:%s", fmt.Sprintf(appRateLimitKeyFormat, 1)),
 	)
 
-	s, err := New(env.whitelistAccount, env.appConfigStore, env.invoiceStore, env.hClient, env.hClientV2, webhook.NewClient(http.DefaultClient), limiter, &Config{
-		SubmitTxGlobalLimit: 5,
-		SubmitTxAppLimit:    3,
-	})
+	s, err := New(
+		env.whitelistAccount,
+		env.appConfigStore,
+		env.invoiceStore,
+		env.rw,
+		env.committer,
+		env.hClient,
+		env.hClientV2,
+		webhook.NewClient(http.DefaultClient),
+		limiter,
+		&Config{
+			SubmitTxGlobalLimit: 5,
+			SubmitTxAppLimit:    3,
+		},
+	)
 	require.NoError(t, err)
 	serv.RegisterService(func(server *grpc.Server) {
 		transactionpb.RegisterTransactionServer(server, s)
@@ -858,12 +880,37 @@ func TestSubmitTransaction_AppRateLimited(t *testing.T) {
 	env.hClient.AssertExpectations(t)
 }
 
-func TestGetTransaction_Happy(t *testing.T) {
+func TestGetTransaction_Loader(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	accounts := testutil.GenerateAccountIDs(t, 2)
+	generated, hash := historytestutil.GenerateEntry(t, 1, 2, accounts[0], accounts[1:], nil)
+	require.NoError(t, env.rw.Write(context.Background(), generated))
+
+	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated)))
+
+	resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
+		TransactionHash: &commonpb.TransactionHash{
+			Value: hash,
+		},
+	})
+	require.NoError(t, err)
+
+	assert.NotNil(t, resp.Item)
+	assert.Equal(t, hash, resp.Item.Hash.Value)
+	assert.EqualValues(t, generated.Kind.(*model.Entry_Stellar).Stellar.ResultXdr, resp.Item.ResultXdr)
+	assert.EqualValues(t, generated.Kind.(*model.Entry_Stellar).Stellar.EnvelopeXdr, resp.Item.EnvelopeXdr)
+	assert.Nil(t, resp.Item.InvoiceList)
+}
+
+func TestGetTransaction_HorizonFallback(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
 	_, txnEnvelopeBytes, txHash := generateEnvelope(t, nil, 0)
 	horizonResult := horizonprotocols.Transaction{
+		PT:          strconv.FormatInt(10<<32, 10),
 		Hash:        hex.EncodeToString(txHash),
 		Ledger:      10,
 		ResultXdr:   base64.StdEncoding.EncodeToString([]byte("result")),
@@ -909,6 +956,7 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 
 	horizonResult := horizonprotocols.Transaction{
 		Hash:        hex.EncodeToString(txHash),
+		PT:          strconv.FormatInt(10<<32, 10),
 		Ledger:      10,
 		ResultXdr:   base64.StdEncoding.EncodeToString([]byte("result")),
 		EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
@@ -960,6 +1008,7 @@ func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
 
 	horizonResult := horizonprotocols.Transaction{
 		Hash:        hex.EncodeToString([]byte(strings.Repeat("h", 32))),
+		PT:          strconv.FormatInt(10<<32, 10),
 		Ledger:      10,
 		ResultXdr:   base64.StdEncoding.EncodeToString([]byte("result")),
 		EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelope")),
@@ -1022,87 +1071,107 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 	}
 }
 
-func TestGetHistory_Happy(t *testing.T) {
+func TestGetHistory_Query(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	page := horizonprotocolsv2.TransactionsPage{
-		Embedded: struct {
-			Records []horizonprotocolsv2.Transaction
-		}{
-			Records: []horizonprotocolsv2.Transaction{
-				{
-					PT:          "cursor",
-					Hash:        hex.EncodeToString([]byte(strings.Repeat("h", 32))),
-					ResultXdr:   base64.StdEncoding.EncodeToString([]byte("resultXdr")),
-					EnvelopeXdr: base64.StdEncoding.EncodeToString([]byte("envelopeXdr")),
-					Successful:  true,
-					Ledger:      1,
-				},
-			},
-		},
+	accounts := testutil.GenerateAccountIDs(t, 10)
+	generated := make([]*model.Entry, 20)
+	for i := 0; i < len(generated); i++ {
+		generated[i], _ = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil)
+		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
-	type testCase struct {
-		cursor    string
-		direction horizonclient.Order
-		request   *transactionpb.GetHistoryRequest
-	}
-
-	testCases := []testCase{
-		{
-			// No cursor or direction specified
-			request:   &transactionpb.GetHistoryRequest{},
-			direction: horizonclient.OrderAsc,
+	// Request history from beginning, but without any committed entries.
+	resp, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
+		AccountId: &commonpb.StellarAccountId{
+			Value: accounts[0].Address(),
 		},
-		{
-			request: &transactionpb.GetHistoryRequest{
-				Cursor: &transactionpb.Cursor{
-					Value: []byte("abc"),
-				},
-			},
-			cursor:    "abc",
-			direction: horizonclient.OrderAsc,
-		},
-		{
-			request: &transactionpb.GetHistoryRequest{
-				Direction: transactionpb.GetHistoryRequest_DESC,
-			},
-			direction: horizonclient.OrderDesc,
-		},
-		{
-			request: &transactionpb.GetHistoryRequest{
-				Cursor: &transactionpb.Cursor{
-					Value: []byte("def"),
-				},
-				Direction: transactionpb.GetHistoryRequest_DESC,
-			},
-			cursor:    "def",
-			direction: horizonclient.OrderDesc,
-		},
-	}
+	})
+	require.NoError(t, err)
+	require.Empty(t, resp.Items)
 
-	for i, tc := range testCases {
-		env.hClientV2.On("Transactions", mock.Anything).Return(page, nil).Once()
-
-		tc.request.AccountId = &commonpb.StellarAccountId{
-			Value: strings.Repeat("G", 56),
-		}
-
-		resp, err := env.client.GetHistory(context.Background(), tc.request)
+	// Advance to the 5th entry
+	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[4])))
+	resp, err = env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
+		AccountId: &commonpb.StellarAccountId{
+			Value: accounts[0].Address(),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 5)
+	for i, item := range resp.Items {
+		expected, err := txDataFromEntry(generated[i])
 		require.NoError(t, err)
 
-		require.Len(t, resp.Items, 1)
-		item := resp.Items[0]
-		assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
-		assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
-		assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
-		assert.Nil(t, item.InvoiceList)
+		assert.EqualValues(t, expected.hash, item.Hash.Value)
+		assert.EqualValues(t, expected.resultXDR, item.ResultXdr)
+		assert.EqualValues(t, expected.envelopeXDR, item.EnvelopeXdr)
+	}
 
-		require.Len(t, env.hClientV2.Calls, i+1)
-		txnReq := env.hClientV2.Calls[i].Arguments[0].(horizonclient.TransactionRequest)
-		assert.Equal(t, tc.cursor, txnReq.Cursor)
-		assert.Equal(t, tc.direction, txnReq.Order)
+	// Mark all as committed
+	previous := historytestutil.GetOrderingKey(t, generated[4])
+	latest := historytestutil.GetOrderingKey(t, generated[len(generated)-1])
+	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), previous, latest))
+
+	testCases := []struct {
+		direction transactionpb.GetHistoryRequest_Direction
+		start     int
+		expected  []*model.Entry
+	}{
+		{
+			start:    -1,
+			expected: generated,
+		},
+		{
+			start:    10,
+			expected: generated[10:],
+		},
+		{
+			start:     -1,
+			direction: transactionpb.GetHistoryRequest_DESC,
+			expected:  []*model.Entry{},
+		},
+		{
+			direction: transactionpb.GetHistoryRequest_DESC,
+			start:     len(generated) - 1,
+			expected:  generated,
+		},
+	}
+
+	for _, tc := range testCases {
+		var cursor *transactionpb.Cursor
+		if tc.start >= 0 {
+			k, err := generated[tc.start].GetOrderingKey()
+			require.NoError(t, err)
+			cursor = &transactionpb.Cursor{
+				Value: k,
+			}
+		}
+
+		resp, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
+			AccountId: &commonpb.StellarAccountId{
+				Value: accounts[0].Address(),
+			},
+			Direction: tc.direction,
+			Cursor:    cursor,
+		})
+		require.NoError(t, err)
+		require.Equal(t, len(tc.expected), len(resp.Items))
+
+		for i := 0; i < len(tc.expected); i++ {
+			var expected txData
+			if tc.direction == transactionpb.GetHistoryRequest_ASC {
+				expected, err = txDataFromEntry(tc.expected[i])
+			} else {
+				expected, err = txDataFromEntry(tc.expected[len(tc.expected)-1-i])
+			}
+			require.NoError(t, err)
+
+			assert.EqualValues(t, expected.hash, resp.Items[i].Hash.Value)
+			assert.EqualValues(t, expected.resultXDR, resp.Items[i].ResultXdr)
+			assert.EqualValues(t, expected.envelopeXDR, resp.Items[i].EnvelopeXdr)
+		}
 	}
 }
 
@@ -1122,135 +1191,82 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
 
-	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 0)
-	err = env.invoiceStore.Put(context.Background(), txHash, il)
+	ilBytes, err := proto.Marshal(il)
 	require.NoError(t, err)
+	ilHash := sha256.Sum224(ilBytes)
 
-	page := horizonprotocolsv2.TransactionsPage{
-		Embedded: struct {
-			Records []horizonprotocolsv2.Transaction
-		}{
-			Records: []horizonprotocolsv2.Transaction{
-				{
-					PT:          "cursor",
-					Hash:        hex.EncodeToString(txHash),
-					ResultXdr:   base64.StdEncoding.EncodeToString([]byte("resultXdr")),
-					EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
-					Successful:  true,
-					Ledger:      1,
-					Memo:        base64.StdEncoding.EncodeToString(marshalMemo(t, envelope.Tx.Memo)),
-				},
-			},
-		},
+	accounts := testutil.GenerateAccountIDs(t, 21)
+	generated := make([]*model.Entry, 20)
+	hashes := make([][]byte, 20)
+	for i := 0; i < len(generated); i++ {
+		generated[i], hashes[i] = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[i:i+1], ilHash[:])
+		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
-	env.hClientV2.On("Transactions", mock.Anything).Return(page, nil).Once()
+
+	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
+
+	for _, hash := range hashes {
+		require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))
+	}
 
 	resp, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
 		AccountId: &commonpb.StellarAccountId{
-			Value: strings.Repeat("G", 56),
+			Value: accounts[0].Address(),
 		},
 	})
 	require.NoError(t, err)
+	require.Len(t, resp.Items, len(generated))
 
-	require.Len(t, resp.Items, 1)
-	require.NotNil(t, resp.Items[0].InvoiceList)
-	item := resp.Items[0]
-	assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
-	assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
-	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
-
-	// TODO: assert all agora data fields when fully implemented
-	require.True(t, proto.Equal(il, item.InvoiceList))
-
-	require.Len(t, env.hClientV2.Calls, 1)
-	txnReq := env.hClientV2.Calls[0].Arguments[0].(horizonclient.TransactionRequest)
-	assert.Equal(t, "", txnReq.Cursor)
-	assert.Equal(t, horizonclient.OrderAsc, txnReq.Order)
+	for _, item := range resp.Items {
+		require.NotNil(t, item.InvoiceList)
+		require.True(t, proto.Equal(il, item.InvoiceList))
+	}
 }
 
 func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
-	appConfig := &app.Config{
-		AppName:          "kin",
-		InvoicingEnabled: false,
-	}
-
-	err := env.appConfigStore.Add(context.Background(), 0, appConfig)
+	signTxURL, err := url.Parse("test.kin.org/sign_tx")
 	require.NoError(t, err)
 
-	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 0)
-	page := horizonprotocolsv2.TransactionsPage{
-		Embedded: struct {
-			Records []horizonprotocolsv2.Transaction
-		}{
-			Records: []horizonprotocolsv2.Transaction{
-				{
-					PT:          "cursor",
-					Hash:        hex.EncodeToString(txHash),
-					ResultXdr:   base64.StdEncoding.EncodeToString([]byte("resultXdr")),
-					EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
-					Successful:  true,
-					Ledger:      1,
-					Memo:        base64.StdEncoding.EncodeToString(marshalMemo(t, envelope.Tx.Memo)),
-				},
-			},
-		},
+	appConfig := &app.Config{
+		AppName:            "kin",
+		SignTransactionURL: signTxURL,
+		InvoicingEnabled:   false,
 	}
-	env.hClientV2.On("Transactions", mock.Anything).Return(page, nil).Once()
+
+	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	require.NoError(t, err)
+
+	ilBytes, err := proto.Marshal(il)
+	require.NoError(t, err)
+	ilHash := sha256.Sum224(ilBytes)
+
+	accounts := testutil.GenerateAccountIDs(t, 21)
+	generated := make([]*model.Entry, 20)
+	hashes := make([][]byte, 20)
+	for i := 0; i < len(generated); i++ {
+		generated[i], hashes[i] = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[i:i+1], ilHash[:])
+		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
+	}
+
+	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
+
+	for _, hash := range hashes {
+		require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))
+	}
 
 	resp, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
 		AccountId: &commonpb.StellarAccountId{
-			Value: strings.Repeat("G", 56),
+			Value: accounts[0].Address(),
 		},
 	})
 	require.NoError(t, err)
+	require.Len(t, resp.Items, len(generated))
 
-	require.Len(t, resp.Items, 1)
-	item := resp.Items[0]
-	assert.Equal(t, page.Embedded.Records[0].Hash, hex.EncodeToString(item.Hash.Value))
-	assert.Equal(t, page.Embedded.Records[0].ResultXdr, base64.StdEncoding.EncodeToString(item.ResultXdr))
-	assert.Equal(t, page.Embedded.Records[0].EnvelopeXdr, base64.StdEncoding.EncodeToString(item.EnvelopeXdr))
-	assert.Nil(t, item.InvoiceList)
-}
-
-func TestGetHistory_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t, false)
-	defer cleanup()
-
-	type testCase struct {
-		hError   horizonclient.Error
-		grpcCode codes.Code
-	}
-
-	testCases := []testCase{
-		{
-			hError: horizonclient.Error{
-				Problem: problem.P{
-					Status: 404,
-				},
-			},
-			grpcCode: codes.NotFound,
-		},
-		{
-			hError: horizonclient.Error{
-				Problem: problem.P{
-					Status: 500,
-				},
-			},
-			grpcCode: codes.Internal,
-		},
-	}
-
-	for _, tc := range testCases {
-		env.hClientV2.On("Transactions", mock.Anything).Return(horizonprotocolsv2.TransactionsPage{}, error(&tc.hError)).Once()
-		_, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
-			AccountId: &commonpb.StellarAccountId{
-				Value: strings.Repeat("G", 56),
-			},
-		})
-		assert.Equal(t, tc.grpcCode, status.Code(err))
+	for _, item := range resp.Items {
+		require.Nil(t, item.InvoiceList)
 	}
 }
 

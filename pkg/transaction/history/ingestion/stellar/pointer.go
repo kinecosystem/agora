@@ -11,7 +11,10 @@ import (
 )
 
 func pointerFromSequence(v model.KinVersion, seq uint32) ingestion.Pointer {
-	return model.OrderKeyFromSequence(v, seq)
+	ptr := make([]byte, 5)
+	ptr[0] = byte(v)
+	binary.BigEndian.PutUint32(ptr[1:], seq)
+	return ptr
 }
 
 func sequenceFromPointer(p ingestion.Pointer) (seq uint32, err error) {

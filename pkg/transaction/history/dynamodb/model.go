@@ -19,11 +19,18 @@ const (
 	orderingSortKey = "ordering_key"
 
 	entryAttr = "entry"
+
+	writeConditionExpression        = "attribute_not_exists(account) and attribute_not_exists(ordering_key)"
+	getAccountTransactionsAscQuery  = "account = :account and ordering_key >= :start"
+	getAccountTransactionsDescQuery = "account = :account and ordering_key <= :start"
 )
 
 var (
-	txTableStr          = aws.String(txTable)
-	txByAccountTableStr = aws.String(txByAccountTable)
+	txTableStr                         = aws.String(txTable)
+	txByAccountTableStr                = aws.String(txByAccountTable)
+	writeConditionExpressionStr        = aws.String(writeConditionExpression)
+	getAccountTransactionsAscQueryStr  = aws.String(getAccountTransactionsAscQuery)
+	getAccountTransactionsDescQueryStr = aws.String(getAccountTransactionsDescQuery)
 )
 
 func getEntry(item map[string]dynamodb.AttributeValue) (*model.Entry, error) {

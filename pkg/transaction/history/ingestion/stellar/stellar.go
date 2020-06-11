@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"strconv"
 	"time"
 
 	"github.com/golang/protobuf/ptypes"
@@ -159,12 +160,17 @@ func (i *ingestor) processLedger(ledger hProtocol.Ledger, w history.Writer) erro
 		if err != nil {
 			return errors.Wrap(err, "failed to parse result xdr")
 		}
+		pagingToken, err := strconv.ParseUint(txn.PagingToken(), 10, 64)
+		if err != nil {
+			return errors.Wrap(err, "failed to parse paging token")
+		}
 
 		entry := &model.Entry{
 			Version: i.version,
 			Kind: &model.Entry_Stellar{
 				Stellar: &model.StellarEntry{
 					Ledger:          uint64(ledger.Sequence),
+					PagingToken:     pagingToken,
 					LedgerCloseTime: closeTime,
 					EnvelopeXdr:     envelopeBytes,
 					ResultXdr:       resultBytes,

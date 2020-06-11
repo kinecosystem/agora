@@ -157,10 +157,23 @@ func (a *app) Init(_ agoraapp.Config) error {
 		&accountserver.Config{CreateAccountGlobalLimit: createAccLimit},
 	)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	a.streamCancelFunc = cancel
+
+	committer := ingestioncommitter.New(dynamoClient)
+	rw := historyrw.New(dynamoClient)
+	ingestor := stellar.New(model.KinVersion_KIN3, clientV2)
+	lock, err := ingestionlock.New(dynamodbv1.New(sess), "kin3_ingestion", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init ingestion lock")
+	}
+
 	a.txnServer, err = transactionserver.New(
 		whitelistAccountKP,
 		appConfigStore,
 		invoiceStore,
+		rw,
+		committer,
 		client,
 		clientV2,
 		webhookClient,
@@ -172,17 +185,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to init transaction server")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.streamCancelFunc = cancel
-
-	committer := ingestioncommitter.New(dynamoClient)
-	rw := historyrw.New(dynamoClient)
-	ingestor := stellar.New(model.KinVersion_KIN3, clientV2)
-	lock, err := ingestionlock.New(dynamodbv1.New(sess), "kin3_ingestion", 10*time.Second)
-	if err != nil {
-		return errors.Wrap(err, "failed to init ingestion lock")
 	}
 
 	go func() {

@@ -2,12 +2,14 @@ package model
 
 import (
 	"crypto/sha256"
+	"strconv"
 	"testing"
 
-	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
 func TestStellar(t *testing.T) {
@@ -37,6 +39,7 @@ func TestStellar(t *testing.T) {
 		Kind: &Entry_Stellar{
 			Stellar: &StellarEntry{
 				Ledger:      10,
+				PagingToken: 1,
 				EnvelopeXdr: envelopeBytes,
 			},
 		},
@@ -70,6 +73,12 @@ func TestStellar(t *testing.T) {
 
 		k, err := e.GetOrderingKey()
 		assert.NoError(t, err)
-		assert.EqualValues(t, OrderKeyFromSequence(v, 10), k)
+
+		pt := e.Kind.(*Entry_Stellar).Stellar.PagingToken
+		cursor := strconv.FormatUint(pt, 10)
+
+		actual, err := OrderingKeyFromCursor(v, cursor)
+		assert.NoError(t, err)
+		assert.EqualValues(t, actual, k)
 	}
 }

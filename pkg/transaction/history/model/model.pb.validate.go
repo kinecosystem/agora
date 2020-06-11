@@ -128,6 +128,8 @@ func (m *StellarEntry) Validate() error {
 
 	// no validation rules for Ledger
 
+	// no validation rules for PagingToken
+
 	if m.GetLedgerCloseTime() == nil {
 		return StellarEntryValidationError{
 			field:  "LedgerCloseTime",

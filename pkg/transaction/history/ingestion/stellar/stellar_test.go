@@ -3,6 +3,7 @@ package stellar
 import (
 	"context"
 	"encoding/base64"
+	"strconv"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 
 type testEnv struct {
 	horizonClient *horizonclient.MockClient
-	writer        *historymemory.Writer
+	writer        *historymemory.RW
 	ingestor      ingestion.Ingestor
 }
 
@@ -193,6 +194,7 @@ func generateLedgers(t *testing.T, num, txnsPerLedger int) []Ledger {
 			txn := hProtocol.Transaction{
 				EnvelopeXdr: base64.StdEncoding.EncodeToString(envelopeBytes),
 				ResultXdr:   base64.StdEncoding.EncodeToString(resultBytes),
+				PT:          strconv.FormatUint(uint64(i)<<32|uint64(j)<<12, 10),
 			}
 			l.txnPage.Embedded.Records = append(l.txnPage.Embedded.Records, txn)
 		}

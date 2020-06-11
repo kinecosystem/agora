@@ -39,6 +39,15 @@ func GenerateAccountID(t *testing.T) (*keypair.Full, xdr.AccountId) {
 	}
 }
 
+func GenerateAccountIDs(t *testing.T, n int) []xdr.AccountId {
+	accounts := make([]xdr.AccountId, n)
+	for i := 0; i < n; i++ {
+		_, accountID := GenerateAccountID(t)
+		accounts[i] = accountID
+	}
+	return accounts
+}
+
 func GenerateTransactionEnvelope(src xdr.AccountId, operations []xdr.Operation) xdr.TransactionEnvelope {
 	return xdr.TransactionEnvelope{
 		Tx: xdr.Transaction{

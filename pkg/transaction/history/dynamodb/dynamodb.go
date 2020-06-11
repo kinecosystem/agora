@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	"github.com/golang/protobuf/proto"
+	dynamodbutil "github.com/kinecosystem/agora-common/aws/dynamodb/util"
 	"github.com/pkg/errors"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -44,31 +45,28 @@ func (db *db) GetTransaction(ctx context.Context, txHash []byte) (*model.Entry, 
 }
 
 // GetAccountTransactions implements history.Reader.GetGetAccountTransactions.
-func (db *db) GetAccountTransactions(ctx context.Context, account string, start []byte, end []byte) ([]*model.Entry, error) {
-	queryExpression := "account = :account"
-	queryValues := map[string]dynamodb.AttributeValue{
-		":account": {S: aws.String(account)},
+func (db *db) GetAccountTransactions(ctx context.Context, account string, opts *history.ReadOptions) ([]*model.Entry, error) {
+	limit := opts.GetLimit()
+	if limit <= 0 {
+		limit = 100
 	}
 
-	hasStart := len(start) != 0
-	hasEnd := len(end) != 0
-
-	if hasStart && !hasEnd {
-		queryExpression += " and ordering_key >= :start"
-		queryValues[":start"] = dynamodb.AttributeValue{B: start}
-	} else if !hasStart && hasEnd {
-		queryExpression += " and ordering_key < :end"
-		queryValues[":end"] = dynamodb.AttributeValue{B: end}
-	} else if hasStart && hasEnd {
-		queryExpression += " and ordering_key < :end"
-		queryValues[":start"] = dynamodb.AttributeValue{B: start}
-		queryValues[":end"] = dynamodb.AttributeValue{B: end}
+	var condition *string
+	if opts.GetDescending() {
+		condition = getAccountTransactionsDescQueryStr
+	} else {
+		condition = getAccountTransactionsAscQueryStr
 	}
 
 	pager := dynamodb.NewQueryPaginator(db.client.QueryRequest(&dynamodb.QueryInput{
-		TableName:                 txByAccountTableStr,
-		KeyConditionExpression:    aws.String(queryExpression),
-		ExpressionAttributeValues: queryValues,
+		TableName:              txByAccountTableStr,
+		KeyConditionExpression: condition,
+		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
+			":account": {S: aws.String(account)},
+			":start":   {B: opts.GetStart()},
+		},
+		Limit:            aws.Int64(int64(limit)),
+		ScanIndexForward: aws.Bool(!opts.GetDescending()),
 	}))
 
 	var entries []*model.Entry
@@ -78,7 +76,14 @@ func (db *db) GetAccountTransactions(ctx context.Context, account string, start 
 			if err != nil {
 				return nil, errors.Wrap(err, "invalid entry")
 			}
+
 			entries = append(entries, e)
+
+			// query limit applies per request; we also need to limit
+			// the total results.
+			if len(entries) >= limit {
+				return entries, nil
+			}
 		}
 	}
 	if pager.Err() != nil {
@@ -115,13 +120,14 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 	}
 
 	_, err = db.client.PutItemRequest(&dynamodb.PutItemInput{
-		TableName: txTableStr,
+		TableName:           txTableStr,
+		ConditionExpression: writeConditionExpressionStr,
 		Item: map[string]dynamodb.AttributeValue{
 			txHashKey: {B: txHash},
 			entryAttr: {B: entryBytes},
 		},
 	}).Send(ctx)
-	if err != nil {
+	if err != nil && !dynamodbutil.IsConditionalCheckFailed(err) {
 		return errors.Wrap(err, "failed to insert tx entry")
 	}
 

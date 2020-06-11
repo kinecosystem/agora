@@ -17,7 +17,7 @@ import (
 )
 
 type testEnv struct {
-	writer    *historymemory.Writer
+	writer    *historymemory.RW
 	ingestor  *testIngestor
 	testLock  *testLock
 	committer ingestion.Committer
