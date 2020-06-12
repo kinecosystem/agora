@@ -16,8 +16,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
-
-	"github.com/kinecosystem/agora/pkg/ratelimiter"
 )
 
 const (
@@ -58,9 +56,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
 	if err != nil {
 		log.WithError(err).Warn("failed to check global rate limit")
-		return nil, status.Error(codes.Internal, "failed to create account")
-	}
-	if !result.Allowed {
+	} else if !result.Allowed {
 		return nil, status.Error(codes.Unavailable, "rate limited")
 	}
 

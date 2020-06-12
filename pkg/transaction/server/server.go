@@ -97,9 +97,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.SubmitTxGlobalLimit))
 	if err != nil {
 		log.WithError(err).Warn("failed to check global rate limit")
-		return nil, status.Error(codes.Internal, "failed to submit transaction")
-	}
-	if !result.Allowed {
+	} else if !result.Allowed {
 		return nil, status.Error(codes.Unavailable, "rate limited")
 	}
 
@@ -119,9 +117,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
 		if err != nil {
 			log.WithError(err).Warn("failed to check per app rate limit")
-			return nil, status.Error(codes.Internal, "failed to submit transaction")
-		}
-		if !result.Allowed {
+		} else if !result.Allowed {
 			return nil, status.Error(codes.Unavailable, "rate limited")
 		}
 
