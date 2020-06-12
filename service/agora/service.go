@@ -132,10 +132,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
-	if err != nil {
-		return errors.Wrap(err, "failed to create rate limiter")
-	}
-
 	createAccountRLStr := os.Getenv(createAccountGlobalRLEnv)
 	createAccLimit, err := strconv.Atoi(createAccountRLStr)
 	if err != nil {
