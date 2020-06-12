@@ -19,6 +19,7 @@ func New() ingestion.Committer {
 	}
 }
 
+// Commit implements ingestion.Committer.Commit.
 func (c *committer) Commit(_ context.Context, name string, parent ingestion.Pointer, block ingestion.Pointer) error {
 	c.Lock()
 	defer c.Unlock()
@@ -36,6 +37,7 @@ func (c *committer) Commit(_ context.Context, name string, parent ingestion.Poin
 	return nil
 }
 
+// Latest implements ingestion.Committer.Latest.
 func (c *committer) Latest(ctx context.Context, name string) (ingestion.Pointer, error) {
 	c.Lock()
 	defer c.Unlock()

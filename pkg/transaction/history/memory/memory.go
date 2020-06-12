@@ -9,16 +9,17 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
-type RW struct {
+type Writer struct {
 	sync.Mutex
 	Writes []*model.Entry
 }
 
-func New() *RW {
-	return new(RW)
+func New() *Writer {
+	return new(Writer)
 }
 
-func (rw *RW) Write(_ context.Context, e *model.Entry) error {
+// Write implements history.Writer.Write.
+func (rw *Writer) Write(_ context.Context, e *model.Entry) error {
 	rw.Lock()
 	defer rw.Unlock()
 
@@ -27,7 +28,8 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 	return nil
 }
 
-func (rw *RW) Reset() {
+// Reeset resets the recored writes.
+func (rw *Writer) Reset() {
 	rw.Lock()
 	defer rw.Unlock()
 

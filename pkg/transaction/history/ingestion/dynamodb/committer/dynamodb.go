@@ -49,7 +49,7 @@ func New(client dynamodbiface.ClientAPI) ingestion.Committer {
 	}
 }
 
-// Commit implements ingesiton.Committer.Commit.
+// Commit implements ingestion.Committer.Commit.
 func (c *committer) Commit(ctx context.Context, name string, parent, block ingestion.Pointer) error {
 	if parent == nil {
 		parent = []byte{0}
@@ -78,7 +78,7 @@ func (c *committer) Commit(ctx context.Context, name string, parent, block inges
 	return nil
 }
 
-// Latest implements ingesiton.Committer.Latest.
+// Latest implements ingestion.Committer.Latest.
 func (c *committer) Latest(ctx context.Context, name string) (ingestion.Pointer, error) {
 	resp, err := c.client.GetItemRequest(&dynamodb.GetItemInput{
 		TableName: tableNameStr,

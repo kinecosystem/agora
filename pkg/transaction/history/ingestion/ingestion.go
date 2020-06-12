@@ -64,9 +64,9 @@ type Ingestor interface {
 }
 
 // DistributedLock is a distributed lock used for coordinating which node should
-// be actively ingesting. While the Commit() invariants ensure that no bad commits
-// can be made, the DistributedLock helps avoid double processing of blocks, and
-// churn from ErrInvalidCommit.
+// be actively ingesting. While the Commit() ensures that no bad commits can be
+// made (by the invariants described on the Committer interface), the DistributedLock
+// helps avoid double processing of blocks, and churn from ErrInvalidCommit.
 type DistributedLock interface {
 	// Lock blocks until the lock is acquired, the context is cancelled, or an
 	// unexpected error occured. In the latter two cases, an error is returned.
@@ -78,23 +78,23 @@ type DistributedLock interface {
 
 // Committer marks processed blocks as committed, with the following assumptions:
 //
-//   1. The block must be successfull written to history via a history.Writer.
+//   1. The block must be successfully written to history via a history.Writer.
 //   2. The block must be committed in the same order as the block chain.
 //
 // Implementations should enforce (2) by ensuring that for each commit C[i], C[i].parent
 // is the same as C[i-1].block (should a previous commit exist), and that C[i].block
 // is greater than C[i].parent (and therefore greater than C[i-1].block).
 type Committer interface {
-	// Commmit commits the specified block as committed, if 'parent' was the
+	// Commit commits the specified block as committed, if 'parent' was the
 	// value of the previously committed block.
 	//
 	// If no previous commit exists, the commit is considered valid.
-	Commit(ctx context.Context, name string, parent, block Pointer) error
+	Commit(ctx context.Context, ingestor string, parent, block Pointer) error
 
 	// Latest returns the latest committed block pointer.
 	//
 	// Nil is returned with a nil error if no previous commit exists.
-	Latest(ctx context.Context, name string) (Pointer, error)
+	Latest(ctx context.Context, ingestor string) (Pointer, error)
 }
 
 // Run runs an ingestion flow in a blocking fashion. Run only returns
@@ -150,7 +150,7 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 						return ctx.Err()
 					case resultCh, ok := <-queue:
 						if !ok {
-							// The queue will only every be closed if there was a block processing err (in which case
+							// The queue will only ever be closed if there was a block processing err (in which case
 							// we would have returned due to result.Err), or the context was cancelled, in which case
 							// we'd want to cease processing.
 							return nil

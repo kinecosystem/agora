@@ -10,6 +10,11 @@ enum KinVersion {
     KIN3     = 3;
 }
 
+// Entry is a generalized history entry that contains a blockchain
+// transaction, as well as the KinVersion the transaction is for.
+//
+// This allows for the generalization of a history store, which allows
+// for a contiguous view of history accross blockchains.
 message Entry {
     KinVersion version = 1;
 

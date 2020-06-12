@@ -36,10 +36,12 @@ func New(version model.KinVersion, client horizonclient.ClientInterface) ingesti
 	}
 }
 
+// Name implements ingestion.Ingestor.Name.
 func (i *ingestor) Name() string {
 	return i.version.String()
 }
 
+// Ingest implements ingestion.Ingestor.Ingest.
 func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestion.Pointer) (ingestion.ResultQueue, error) {
 	_, err := cursorFromPointer(parent)
 	if err != nil {
@@ -49,7 +51,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 	// todo(config): allow for a customizable buffer?
 	queue := make(chan (<-chan ingestion.Result), 8)
 
-	// StreamLedgers synchronosuly calls ledgerHandler in ascending order for each ledger,
+	// StreamLedgers synchronously calls ledgerHandler in ascending order for each ledger,
 	// such that the execution flow is as follows:
 	//
 	//     ledgerHandler(P+1),
@@ -64,7 +66,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 	// is a hash, _not_ a sequence number, which cannot be translated to a pointer without
 	// a lookup.
 	//
-	// However, since ledgerHandler is executed synchronosuly and in order, we can
+	// However, since ledgerHandler is executed synchronously and in order, we can
 	// abuse the 'global' parent pointer, by simply advancing it in local context each time
 	// ledgerHandler is called. We simply capture the (parent, block) state before starting
 	// the async processing of the ledger, and use those values when the processing is complete.

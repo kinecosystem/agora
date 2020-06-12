@@ -21,7 +21,7 @@ import (
 
 type testEnv struct {
 	horizonClient *horizonclient.MockClient
-	writer        *historymemory.RW
+	writer        *historymemory.Writer
 	ingestor      ingestion.Ingestor
 }
 

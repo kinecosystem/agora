@@ -107,6 +107,6 @@ func (m *Entry) GetOrderingKey() ([]byte, error) {
 func OrderKeyFromSequence(v KinVersion, seq uint32) []byte {
 	var b [5]byte
 	b[0] = byte(v)
-	binary.BigEndian.PutUint32(b[1:], uint32(seq))
+	binary.BigEndian.PutUint32(b[1:], seq)
 	return b[:]
 }

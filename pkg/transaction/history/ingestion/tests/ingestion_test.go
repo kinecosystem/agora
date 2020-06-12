@@ -17,14 +17,14 @@ import (
 )
 
 type testEnv struct {
-	rw        *historymemory.RW
+	writer    *historymemory.Writer
 	ingestor  *testIngestor
 	testLock  *testLock
 	committer ingestion.Committer
 }
 
 func setup(t *testing.T) (env testEnv) {
-	env.rw = historymemory.New()
+	env.writer = historymemory.New()
 	env.ingestor = &testIngestor{queue: make(chan (<-chan ingestion.Result), 255)}
 	env.testLock = &testLock{}
 	env.committer = memory.New()
@@ -39,7 +39,7 @@ func TestRun_Cancellation(t *testing.T) {
 
 	doneCh := make(chan struct{})
 	go func() {
-		err := ingestion.Run(ctx, env.testLock, env.committer, env.rw, env.ingestor)
+		err := ingestion.Run(ctx, env.testLock, env.committer, env.writer, env.ingestor)
 		assert.Equal(t, context.Canceled, err)
 		close(doneCh)
 	}()
@@ -71,7 +71,7 @@ func TestRun_SingleRunner(t *testing.T) {
 	}
 
 	runner := func(c ingestion.Committer) {
-		err := ingestion.Run(context.Background(), env.testLock, c, env.rw, env.ingestor)
+		err := ingestion.Run(context.Background(), env.testLock, c, env.writer, env.ingestor)
 		assert.Equal(t, context.Canceled, err)
 	}
 
@@ -123,7 +123,7 @@ func TestRun_IngestionErrors(t *testing.T) {
 		close(doneCh)
 	}()
 	go func() {
-		err := ingestion.Run(context.Background(), env.testLock, env.committer, env.rw, env.ingestor)
+		err := ingestion.Run(context.Background(), env.testLock, env.committer, env.writer, env.ingestor)
 		assert.Equal(t, context.Canceled, err)
 	}()
 
@@ -159,7 +159,7 @@ func TestRun_CommitErrors(t *testing.T) {
 		close(doneCh)
 	}()
 	go func() {
-		err := ingestion.Run(context.Background(), env.testLock, c, env.rw, env.ingestor)
+		err := ingestion.Run(context.Background(), env.testLock, c, env.writer, env.ingestor)
 		assert.Equal(t, context.Canceled, err)
 	}()
 
