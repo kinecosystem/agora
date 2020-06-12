@@ -60,7 +60,7 @@ type Ingestor interface {
 	Name() string
 
 	// Ingest ingests blocks starting at the immediate block after the parent pointer.
-	Ingest(ctx context.Context, w history.Writer, start Pointer) (ResultQueue, error)
+	Ingest(ctx context.Context, w history.Writer, parent Pointer) (ResultQueue, error)
 }
 
 // DistributedLock is a distributed lock used for coordinating which node should

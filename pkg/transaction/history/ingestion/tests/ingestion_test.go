@@ -179,7 +179,7 @@ func (i *testIngestor) Name() string {
 	return "test"
 }
 
-func (i *testIngestor) Ingest(ctx context.Context, w history.Writer, start ingestion.Pointer) (ingestion.ResultQueue, error) {
+func (i *testIngestor) Ingest(ctx context.Context, w history.Writer, parent ingestion.Pointer) (ingestion.ResultQueue, error) {
 	if i.err != nil {
 		err := i.err
 		i.err = nil
