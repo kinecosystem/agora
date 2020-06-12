@@ -11,7 +11,7 @@ require (
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.1
 	github.com/kinecosystem/agora-api v0.14.0
-	github.com/kinecosystem/agora-common v0.34.0
+	github.com/kinecosystem/agora-common v0.35.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/ory/dockertest v3.3.5+incompatible
 	github.com/pkg/errors v0.8.1
@@ -22,5 +22,3 @@ require (
 	golang.org/x/sys v0.0.0-20200413165638-669c56c373c4 // indirect
 	google.golang.org/grpc v1.28.1
 )
-
-replace github.com/kinecosystem/agora-common => ../agora-common-internal
