@@ -26,7 +26,6 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
-	"github.com/kinecosystem/agora/pkg/ratelimiter"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
@@ -95,12 +94,12 @@ func New(
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
 
-	canProceed, err := ratelimiter.CanProceed(s.limiter, globalRateLimitKey, s.config.SubmitTxGlobalLimit)
+	result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.SubmitTxGlobalLimit))
 	if err != nil {
 		log.WithError(err).Warn("failed to check global rate limit")
 		return nil, status.Error(codes.Internal, "failed to submit transaction")
 	}
-	if !canProceed {
+	if !result.Allowed {
 		return nil, status.Error(codes.Unavailable, "rate limited")
 	}
 
@@ -117,12 +116,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
 		memo := kin.Memo(*e.Tx.Memo.Hash)
 
-		canProceed, err := ratelimiter.CanProceed(s.limiter, fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), s.config.SubmitTxAppLimit)
+		result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
 		if err != nil {
 			log.WithError(err).Warn("failed to check per app rate limit")
 			return nil, status.Error(codes.Internal, "failed to submit transaction")
 		}
-		if !canProceed {
+		if !result.Allowed {
 			return nil, status.Error(codes.Unavailable, "rate limited")
 		}
 

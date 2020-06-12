@@ -55,12 +55,12 @@ func New(rootAccountKP *keypair.Full, horizonClient horizon.ClientInterface, acc
 func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
 	log := s.log.WithField("method", "CreateAccount")
 
-	canProceed, err := ratelimiter.CanProceed(s.limiter, globalRateLimitKey, s.config.CreateAccountGlobalLimit)
+	result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
 	if err != nil {
 		log.WithError(err).Warn("failed to check global rate limit")
 		return nil, status.Error(codes.Internal, "failed to create account")
 	}
-	if !canProceed {
+	if !result.Allowed {
 		return nil, status.Error(codes.Unavailable, "rate limited")
 	}
 
