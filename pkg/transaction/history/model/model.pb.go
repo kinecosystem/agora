@@ -53,6 +53,11 @@ func (KinVersion) EnumDescriptor() ([]byte, []int) {
 	return fileDescriptor_4c16552f9fdb66d8, []int{0}
 }
 
+// Entry is a generalized history entry that contains a blockchain
+// transaction, as well as the KinVersion the transaction is for.
+//
+// This allows for the generalization of a history store, which allows
+// for a contiguous view of history accross blockchains.
 type Entry struct {
 	Version KinVersion `protobuf:"varint,1,opt,name=version,proto3,enum=KinVersion" json:"version,omitempty"`
 	// Types that are valid to be assigned to Kind:

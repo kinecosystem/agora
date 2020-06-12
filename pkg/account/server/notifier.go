@@ -3,6 +3,7 @@ package server
 import (
 	"sync"
 
+	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
@@ -29,7 +30,11 @@ func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
 func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
 	log := a.log.WithField("method", "OnTransaction")
 
-	accountIDs := a.getUniqueAccounts(e)
+	accountIDs, err := model.GetAccountsFromEnvelope(e)
+	if err != nil {
+		log.WithError(err).Warn("Failed to get accounts from envelope, dropping notification")
+		return
+	}
 
 	for accountID := range accountIDs {
 		a.streamsMu.Lock()
@@ -77,49 +82,4 @@ func (a *AccountNotifier) RemoveStream(accountID string, stream *eventStream) {
 	}
 
 	a.streams[accountID] = append(a.streams[accountID][:streamIdx], a.streams[accountID][streamIdx+1:]...)
-}
-
-func (a *AccountNotifier) getUniqueAccounts(e xdr.TransactionEnvelope) map[string]struct{} {
-	log := a.log.WithField("method", "getUniqueAccounts")
-
-	accountIDs := make(map[string]struct{})
-	txSourceAddr, err := e.Tx.SourceAccount.GetAddress()
-	if err != nil {
-		log.WithError(err).Warn("failed to get transaction source account address")
-	} else {
-		accountIDs[txSourceAddr] = struct{}{}
-	}
-
-	for _, op := range e.Tx.Operations {
-		if op.SourceAccount != nil {
-			addr, err := op.SourceAccount.GetAddress()
-			if err != nil {
-				log.WithError(err).Warn("failed to get operation source account address")
-			}
-			accountIDs[addr] = struct{}{}
-		}
-
-		switch op.Body.Type {
-		case xdr.OperationTypeCreateAccount:
-			addr, err := op.Body.CreateAccountOp.Destination.GetAddress()
-			if err != nil {
-				log.WithError(err).Warn("failed to get create account destination account address")
-			}
-			accountIDs[addr] = struct{}{}
-		case xdr.OperationTypePayment:
-			addr, err := op.Body.PaymentOp.Destination.GetAddress()
-			if err != nil {
-				log.WithError(err).Warn("failed to get payment operation destination account address")
-			}
-			accountIDs[addr] = struct{}{}
-		case xdr.OperationTypeAccountMerge:
-			addr, err := op.Body.Destination.GetAddress()
-			if err != nil {
-				log.WithError(err).Warn("failed to get operation destination account address")
-			}
-			accountIDs[addr] = struct{}{}
-		}
-	}
-
-	return accountIDs
 }
