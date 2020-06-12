@@ -33,7 +33,13 @@ func testLocker_ExclusiveAccess(t *testing.T, lockCtor LockCtor) {
 			require.NoError(t, l.Lock(context.Background()))
 			for i := 0; i < 10; i++ {
 				values = append(values, id)
-				time.Sleep(10 * time.Millisecond)
+
+				// We sleep a little bit in order to encourage striped
+				// writes (which should be guarded against by
+				// the locker). While it doesn't guarentee lock safety,
+				// per se, it helps increase the likely hood of failing
+				// the test if the lock isn't working correctly.
+				time.Sleep(10 * time.Duration(id) * time.Millisecond)
 			}
 			require.NoError(t, l.Unlock())
 			wg.Done()
@@ -69,7 +75,8 @@ func testLocker_MultipleLocks(t *testing.T, lockCtor LockCtor) {
 				mu.Lock()
 				values = append(values, id)
 				mu.Unlock()
-				time.Sleep(10 * time.Millisecond)
+
+				time.Sleep(10 * time.Duration(id) * time.Millisecond)
 			}
 			require.NoError(t, l.Unlock())
 			wg.Done()
