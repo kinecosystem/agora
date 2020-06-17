@@ -23,7 +23,7 @@ type Reader interface {
 	GetTransaction(ctx context.Context, txHash []byte) (*model.Entry, error)
 
 	// GetAccountTransactions returns the model.Entry's for a specified account between
-	// the provided range [inclusive, exclusive).
+	// the provided range [start, end).
 	GetAccountTransactions(ctx context.Context, account string, start, end []byte) ([]*model.Entry, error)
 }
 
