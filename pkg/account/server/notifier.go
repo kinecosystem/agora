@@ -3,10 +3,11 @@ package server
 import (
 	"sync"
 
-	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
+
+	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
 type AccountNotifier struct {
