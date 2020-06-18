@@ -17,6 +17,7 @@ import (
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
@@ -32,6 +33,7 @@ const (
 )
 
 type Client struct {
+	log        *logrus.Entry
 	httpClient *http.Client
 }
 
@@ -48,6 +50,7 @@ func (e *SignTransactionError) Error() string {
 // NewClient returns a client which can be used to submit requests to app webhooks.
 func NewClient(httpClient *http.Client) *Client {
 	return &Client{
+		log:        logrus.StandardLogger().WithField("type", "webhook/client"),
 		httpClient: httpClient,
 	}
 }
@@ -59,23 +62,14 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 		return "", nil, errors.Wrap(err, "failed to marshal sign transaction request body")
 	}
 
-	if len(webhookSecret) < 32 {
-		return "", nil, errors.New("webhook secret must be at least 32 bytes")
-	}
-
-	h := hmac.New(sha256.New, webhookSecret)
-	_, err = h.Write(signTxJSON)
-	if err != nil {
-		return "", nil, errors.Wrap(err, "failed to generate hmac signature")
-	}
-	agoraSig := base64.StdEncoding.EncodeToString(h.Sum(nil))
-
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, signURL.String(), bytes.NewBuffer(signTxJSON))
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to create sign transaction http request")
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set(AgoraHMACHeader, agoraSig)
+	if err := sign(httpReq, webhookSecret, signTxJSON); err != nil {
+		return "", nil, err
+	}
 
 	userID, err := headers.GetASCIIHeaderByName(ctx, AppUserIDCtxHeader)
 	if err != nil {
@@ -143,4 +137,66 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 	}
 
 	return "", nil, &SignTransactionError{Message: "failed to sign transaction", StatusCode: resp.StatusCode}
+}
+
+func (c *Client) Events(ctx context.Context, eventsURL url.URL, webhookSecret, body []byte) error {
+	log := c.log.WithFields(logrus.Fields{
+		"method": "Events",
+		"url":    eventsURL.String(),
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, eventsURL.String(), bytes.NewBuffer(body))
+	if err != nil {
+		return errors.Wrap(err, "failed to create sign transaction http request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := sign(req, webhookSecret, body); err != nil {
+		return err
+	}
+
+	var resp *http.Response
+	_, err = retry.Retry(
+		func() error {
+			resp, err = c.httpClient.Do(req)
+			return err
+		},
+		retry.Limit(5),
+		retry.BackoffWithJitter(backoff.BinaryExponential(100*time.Millisecond), 5*time.Second, 0.1),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to call sign transaction webhook")
+	}
+	defer resp.Body.Close()
+
+	// Anything that's not a 500 is likely a misconfigured webhook.
+	// Since we're not gauranteeing that all transactions will be delivered,
+	// we just mark it as OK so the events processor can make progress for this
+	// endpoint.
+	if resp.StatusCode < 500 {
+		if resp.StatusCode >= 300 {
+			log.WithFields(logrus.Fields{
+				"code":   resp.StatusCode,
+				"status": resp.Status,
+			}).Info("Non-retriable error code, ignoring")
+		}
+
+		return nil
+	}
+
+	return errors.Errorf("webhook error: %d", resp.StatusCode)
+}
+
+func sign(req *http.Request, secret, body []byte) error {
+	if len(secret) < 32 {
+		return errors.New("webhook secret must be at least 32 bytes")
+	}
+
+	h := hmac.New(sha256.New, secret)
+	_, err := h.Write(body)
+	if err != nil {
+		return errors.Wrap(err, "failed to generate hmac signature")
+	}
+
+	req.Header.Set(AgoraHMACHeader, base64.StdEncoding.EncodeToString(h.Sum(nil)))
+	return nil
 }

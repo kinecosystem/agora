@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -22,24 +23,26 @@ import (
 
 type ingestor struct {
 	log     *logrus.Entry
+	name    string
 	version model.KinVersion
 	client  horizonclient.ClientInterface
 }
 
-func New(version model.KinVersion, client horizonclient.ClientInterface) ingestion.Ingestor {
+func New(name string, version model.KinVersion, client horizonclient.ClientInterface) ingestion.Ingestor {
 	return &ingestor{
-		version: version,
 		log: logrus.StandardLogger().WithFields(logrus.Fields{
 			"type":    "transaction/history/ingestion/stellar",
 			"version": version,
 		}),
-		client: client,
+		name:    name,
+		version: version,
+		client:  client,
 	}
 }
 
 // Name implements ingestion.Ingestor.Name.
 func (i *ingestor) Name() string {
-	return i.version.String()
+	return fmt.Sprintf("%s_%s", i.name, i.version.String())
 }
 
 // Ingest implements ingestion.Ingestor.Ingest.

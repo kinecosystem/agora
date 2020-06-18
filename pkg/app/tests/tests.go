@@ -26,9 +26,13 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 		signTxURL, err := url.Parse("test.kin.org/signtx")
 		require.NoError(t, err)
 
+		eventsURL, err := url.Parse("test.kin.org/events")
+		require.NoError(t, err)
+
 		config := &app.Config{
 			AppName:            "kin",
 			SignTransactionURL: signTxURL,
+			EventsURL:          eventsURL,
 			InvoicingEnabled:   true,
 		}
 

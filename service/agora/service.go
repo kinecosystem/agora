@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go/aws/session"
 	dynamodbv1 "github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/go-redis/redis/v7"
@@ -19,7 +20,7 @@ import (
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
-	"github.com/kinecosystem/agora/pkg/webhook"
+	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -29,6 +30,7 @@ import (
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
+	"github.com/kinecosystem/agora/pkg/events"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/transaction"
@@ -39,6 +41,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
+	"github.com/kinecosystem/agora/pkg/webhook"
 
 	// Configurable keystore options:
 	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
@@ -160,19 +163,38 @@ func (a *app) Init(_ agoraapp.Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.streamCancelFunc = cancel
 
-	committer := ingestioncommitter.New(dynamoClient)
-	rw := historyrw.New(dynamoClient)
-	ingestor := stellar.New(model.KinVersion_KIN3, clientV2)
-	lock, err := ingestionlock.New(dynamodbv1.New(sess), "kin3_ingestion", 10*time.Second)
+	eventsProcessor, err := events.NewProcessor(
+		sqstasks.NewProcessorCtor(
+			events.IngestionQueueName,
+			sqs.New(cfg),
+		),
+		invoiceStore,
+		appConfigStore,
+		webhookClient,
+	)
 	if err != nil {
-		return errors.Wrap(err, "failed to init ingestion lock")
+		return errors.Wrap(err, "failed to init events processor")
 	}
+
+	committer := ingestioncommitter.New(dynamoClient)
+	historyIngestor := stellar.New("history", model.KinVersion_KIN3, clientV2)
+	eventsIngestor := stellar.New("events", model.KinVersion_KIN3, clientV2)
+	historyLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin3", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init history ingestion lock")
+	}
+	eventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin3", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init events ingestion lock")
+	}
+
+	historyRW := historyrw.New(dynamoClient)
 
 	a.txnServer, err = transactionserver.New(
 		whitelistAccountKP,
 		appConfigStore,
 		invoiceStore,
-		rw,
+		historyRW,
 		committer,
 		client,
 		clientV2,
@@ -191,11 +213,19 @@ func (a *app) Init(_ agoraapp.Config) error {
 		transaction.StreamTransactions(ctx, clientV2, accountNotifier)
 	}()
 	go func() {
-		err := ingestion.Run(ctx, lock, committer, rw, ingestor)
+		err := ingestion.Run(ctx, historyLock, committer, historyRW, historyIngestor)
 		if err != nil && err != context.Canceled {
-			log.WithError(err).Warn("ingestion loop terminated")
+			log.WithError(err).Warn("history ingestion loop terminated")
 		} else {
-			log.WithError(err).Info("ingestion loop terminated")
+			log.WithError(err).Info("history ingestion loop terminated")
+		}
+	}()
+	go func() {
+		err := ingestion.Run(ctx, eventsLock, committer, eventsProcessor, eventsIngestor)
+		if err != nil && err != context.Canceled {
+			log.WithError(err).Warn("events ingestion loop terminated")
+		} else {
+			log.WithError(err).Info("events ingestion loop terminated")
 		}
 	}()
 

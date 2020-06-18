@@ -48,6 +48,7 @@ var (
 		EnvelopeXDR: "sometx",
 		InvoiceList: "someinvoice",
 	}
+	basicReqBody   []byte
 	appUserID      = "someuserid"
 	appUserPasskey = "somepasskey"
 	ctxWithHeaders = context.WithValue(
@@ -70,6 +71,9 @@ func setup(t *testing.T) (env testEnv) {
 	_, err := rand.Read(env.secretKey)
 	require.NoError(t, err)
 
+	basicReqBody, err = json.Marshal(basicReq)
+	require.NoError(t, err)
+
 	env.client = NewClient(http.DefaultClient)
 
 	return env
@@ -81,7 +85,7 @@ func TestSendSignTransactionRequest_InvalidWebhookSecret(t *testing.T) {
 	signURL, err := url.Parse("www.webhook.com")
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, make([]byte, 0), basicReq)
+	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, []byte{}, basicReq)
 	require.Error(t, err)
 	assert.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
@@ -97,7 +101,7 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 
-	testServer := newTestServerWithJSONResponse(t, env, 200, b, appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 200, b, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -112,7 +116,7 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
 	env := setup(t)
 
-	testServer := newTestServerWithJSONResponse(t, env, 200, make([]byte, 0), appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 200, []byte{}, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -133,7 +137,7 @@ func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 
 	require.NoError(t, err)
 
-	testServer := newTestServerWithJSONResponse(t, env, 400, b, appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 400, b, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -152,7 +156,7 @@ func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 func TestSendSignTransactionRequest_400Invalid(t *testing.T) {
 	env := setup(t)
 
-	testServer := newTestServerWithJSONResponse(t, env, 400, make([]byte, 0), appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 400, []byte{}, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -180,7 +184,7 @@ func TestSendSignTransactionRequest_403Valid(t *testing.T) {
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 
-	testServer := newTestServerWithJSONResponse(t, env, 403, b, appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 403, b, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -200,7 +204,7 @@ func TestSendSignTransactionRequest_403Valid(t *testing.T) {
 func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
 	env := setup(t)
 
-	testServer := newTestServerWithJSONResponse(t, env, 403, make([]byte, 0), appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 403, []byte{}, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -216,7 +220,7 @@ func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
 func TestSendSignTransactionRequest_OtherStatusCode(t *testing.T) {
 	env := setup(t)
 
-	testServer := newTestServerWithJSONResponse(t, env, 500, make([]byte, 0), appUserID, appUserPasskey, *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 500, []byte{}, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -240,7 +244,7 @@ func TestSendSignTransactionRequest_NoAuthHeaders(t *testing.T) {
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 
-	testServer := newTestServerWithJSONResponse(t, env, 200, b, "", "", *basicReq)
+	testServer := newTestServerWithJSONResponse(t, env, 200, b, "", "", basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -299,7 +303,38 @@ func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
 	assert.Nil(t, actualEnvelope)
 }
 
-func newTestServerWithJSONResponse(t *testing.T, env testEnv, statusCode int, b []byte, expectedUserID string, expectedPasskey string, expectedReq signtransaction.RequestBody) *httptest.Server {
+func TestSendEventsRequest_InvalidWebhookSecret(t *testing.T) {
+	env := setup(t)
+
+	eventsURL, err := url.Parse("www.webhook.com")
+	require.NoError(t, err)
+
+	require.Error(t, env.client.Events(ctxWithHeaders, *eventsURL, []byte{}, []byte("{}")))
+}
+
+func TestSendEventsRequest_StatusCodes(t *testing.T) {
+	env := setup(t)
+
+	for _, code := range []int{200, 300, 400} {
+		testServer := newTestServerWithJSONResponse(t, env, code, []byte{}, "", "", []byte("{}"))
+		eventsURL, err := url.Parse(testServer.URL)
+		require.NoError(t, err)
+
+		err = env.client.Events(context.Background(), *eventsURL, env.secretKey, []byte("{}"))
+		testServer.Close()
+
+		assert.NoError(t, err)
+	}
+	testServer := newTestServerWithJSONResponse(t, env, 500, []byte{}, "", "", []byte("{}"))
+	defer testServer.Close()
+
+	eventsURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+
+	assert.Error(t, env.client.Events(context.Background(), *eventsURL, env.secretKey, []byte("{}")))
+}
+
+func newTestServerWithJSONResponse(t *testing.T, env testEnv, statusCode int, respBody []byte, expectedUserID string, expectedPasskey string, expectedReq []byte) *httptest.Server {
 	testServer := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		require.Equal(t, http.MethodPost, req.Method)
 		require.Equal(t, expectedUserID, req.Header.Get(AppUserIDHeader))
@@ -318,14 +353,11 @@ func newTestServerWithJSONResponse(t *testing.T, env testEnv, statusCode int, b 
 		sig := h.Sum(nil)
 		assert.True(t, hmac.Equal(sig, agoraSignature))
 
-		actualReq := &signtransaction.RequestBody{}
-		err = json.Unmarshal(body, actualReq)
-		require.NoError(t, err)
-		require.Equal(t, expectedReq, *actualReq)
+		assert.EqualValues(t, expectedReq, body)
 
 		resp.WriteHeader(statusCode)
 		resp.Header().Set("Content-Type", "application/json")
-		_, err = resp.Write(b)
+		_, err = resp.Write(respBody)
 		require.NoError(t, err)
 	}))
 	return testServer

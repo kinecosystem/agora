@@ -29,7 +29,7 @@ type testEnv struct {
 func setup(t *testing.T) (env testEnv) {
 	env.horizonClient = &horizonclient.MockClient{}
 	env.writer = historymemory.New()
-	env.ingestor = New(model.KinVersion_KIN3, env.horizonClient)
+	env.ingestor = New("test", model.KinVersion_KIN3, env.horizonClient)
 
 	return env
 }

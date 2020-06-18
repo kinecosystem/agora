@@ -12,13 +12,18 @@ import (
 
 func TestModelConversion_Full(t *testing.T) {
 	signTxURLStr := "test.kin.org/signtx"
+	eventsURLStr := "test.kin.org/events"
 
 	signTxURL, err := url.Parse(signTxURLStr)
+	require.NoError(t, err)
+
+	eventsURL, err := url.Parse(eventsURLStr)
 	require.NoError(t, err)
 
 	config := &app.Config{
 		AppName:            "kin",
 		SignTransactionURL: signTxURL,
+		EventsURL:          eventsURL,
 	}
 
 	item, err := toItem(0, config)
@@ -26,6 +31,7 @@ func TestModelConversion_Full(t *testing.T) {
 	require.Equal(t, aws.StringValue(item["app_index"].N), "0")
 	require.Equal(t, aws.StringValue(item["app_name"].S), config.AppName)
 	require.Equal(t, aws.StringValue(item["sign_transaction_url"].S), signTxURLStr)
+	require.Equal(t, aws.StringValue(item["events_url"].S), eventsURLStr)
 
 	convertedConfig, err := fromItem(item)
 	require.NoError(t, err)
@@ -43,6 +49,9 @@ func TestModelConversion_WithEmpty(t *testing.T) {
 	require.Equal(t, aws.StringValue(item["app_name"].S), config.AppName)
 
 	_, ok := item["sign_transaction_url"]
+	require.False(t, ok)
+
+	_, ok = item["events_url"]
 	require.False(t, ok)
 
 	convertedConfig, err := fromItem(item)
