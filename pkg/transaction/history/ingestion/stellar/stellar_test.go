@@ -186,7 +186,7 @@ func generateLedgers(t *testing.T, num, txnsPerLedger int) []Ledger {
 				},
 			}
 
-			envelopeBytes, err := testutil.GenerateTransactionEnvelope(src, []xdr.Operation{op}).MarshalBinary()
+			envelopeBytes, err := testutil.GenerateTransactionEnvelope(src, i+j, []xdr.Operation{op}).MarshalBinary()
 			require.NoError(t, err)
 			resultBytes, err := testutil.GenerateTransactionResult(xdr.TransactionResultCodeTxSuccess, []xdr.OperationResult{opResult}).MarshalBinary()
 			require.NoError(t, err)

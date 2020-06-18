@@ -18,7 +18,7 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 	for _, r := range receivers {
 		ops = append(ops, testutil.GeneratePaymentOperation(&sender, r))
 	}
-	envelope := testutil.GenerateTransactionEnvelope(sender, ops)
+	envelope := testutil.GenerateTransactionEnvelope(sender, int(ledger)+txOrder, ops)
 
 	if invoiceHash != nil {
 		memo, err := kin.NewMemo(1, kin.TransactionTypeSpend, 0, invoiceHash)

@@ -13,14 +13,14 @@ const (
 	txTable          = "tx-by-hash"
 	txByAccountTable = "tx-by-account"
 
-	txHashKey = "hash"
+	txHashKey = "tx_hash"
 
 	accountKey      = "account"
 	orderingSortKey = "ordering_key"
 
 	entryAttr = "entry"
 
-	writeConditionExpression        = "attribute_not_exists(account) and attribute_not_exists(ordering_key)"
+	writeTxConditionExpression      = "attribute_not_exists(tx_hash)"
 	getAccountTransactionsAscQuery  = "account = :account and ordering_key >= :start"
 	getAccountTransactionsDescQuery = "account = :account and ordering_key <= :start"
 )
@@ -28,7 +28,7 @@ const (
 var (
 	txTableStr                         = aws.String(txTable)
 	txByAccountTableStr                = aws.String(txByAccountTable)
-	writeConditionExpressionStr        = aws.String(writeConditionExpression)
+	writeTxConditionExpressionStr      = aws.String(writeTxConditionExpression)
 	getAccountTransactionsAscQueryStr  = aws.String(getAccountTransactionsAscQuery)
 	getAccountTransactionsDescQueryStr = aws.String(getAccountTransactionsDescQuery)
 )

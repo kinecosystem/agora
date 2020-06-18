@@ -3,12 +3,15 @@ package dynamodb
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	"github.com/golang/protobuf/proto"
 	dynamodbutil "github.com/kinecosystem/agora-common/aws/dynamodb/util"
+	"github.com/kinecosystem/agora-common/retry"
+	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/pkg/errors"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -121,13 +124,17 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 
 	_, err = db.client.PutItemRequest(&dynamodb.PutItemInput{
 		TableName:           txTableStr,
-		ConditionExpression: writeConditionExpressionStr,
+		ConditionExpression: writeTxConditionExpressionStr,
 		Item: map[string]dynamodb.AttributeValue{
 			txHashKey: {B: txHash},
 			entryAttr: {B: entryBytes},
 		},
 	}).Send(ctx)
-	if err != nil && !dynamodbutil.IsConditionalCheckFailed(err) {
+	if dynamodbutil.IsConditionalCheckFailed(err) {
+		if err := db.checkDoubleInsertMatch(ctx, txHash, entry); err != nil {
+			return err
+		}
+	} else if err != nil {
 		return errors.Wrap(err, "failed to insert tx entry")
 	}
 
@@ -158,4 +165,60 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 	}
 
 	return nil
+}
+
+func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *model.Entry) error {
+	var item map[string]dynamodb.AttributeValue
+
+	// At this point, we've detected a double insert due to a condition failure.
+	//
+	// However, since we need to read back the existing item to verify that the two
+	// entries are identical in a separate request, there's the possibility that we
+	// won't observe the (first successful) write if the two writes occured close
+	// together in time.
+	//
+	// We use consistent reads to address this. However, consistent reads are more
+	// far more prone to errors. While we expect the outter caller to be retrying,
+	// there's often a lot of overhead getting to this point. Given that this should
+	// resolve fairly quickly, we use a retry here to optimistically save some work.
+	_, err := retry.Retry(
+		func() error {
+			resp, err := db.client.GetItemRequest(&dynamodb.GetItemInput{
+				TableName:      txTableStr,
+				ConsistentRead: aws.Bool(true),
+				Key: map[string]dynamodb.AttributeValue{
+					txHashKey: {B: txHash},
+				},
+			}).Send(ctx)
+			if err != nil {
+				return err
+			}
+
+			item = resp.Item
+			return nil
+		},
+
+		// We use a somewhat aggressive strategy, so we can fall back to the outer
+		// retry logic if this doesn't resolve quickly.
+		retry.Limit(3),
+		retry.Backoff(backoff.Constant(500*time.Millisecond), 500*time.Millisecond),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to check double insert match ")
+	}
+
+	if len(item) == 0 {
+		return errors.New("double insert detected, but existing entry not found")
+	}
+
+	previous, err := getEntry(item)
+	if err != nil {
+		return err
+	}
+
+	if proto.Equal(previous, entry) {
+		return nil
+	}
+
+	return errors.New("double insert with different entries detected")
 }

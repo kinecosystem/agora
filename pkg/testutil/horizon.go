@@ -48,10 +48,11 @@ func GenerateAccountIDs(t *testing.T, n int) []xdr.AccountId {
 	return accounts
 }
 
-func GenerateTransactionEnvelope(src xdr.AccountId, operations []xdr.Operation) xdr.TransactionEnvelope {
+func GenerateTransactionEnvelope(src xdr.AccountId, seqNum int, operations []xdr.Operation) xdr.TransactionEnvelope {
 	return xdr.TransactionEnvelope{
 		Tx: xdr.Transaction{
 			SourceAccount: src,
+			SeqNum:        xdr.SequenceNumber(seqNum),
 			Operations:    operations,
 		},
 	}

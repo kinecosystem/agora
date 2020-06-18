@@ -27,7 +27,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 	accountNotifier.AddStream(kp3.Address(), s3)
 
 	// Payment from 1 -> 2
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -43,7 +43,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 	assertNothingReceived(t, s3)
 
 	// Payment from 2 -> 3, with 1 as a "channel" source
-	e = testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(&acc2, acc3)})
+	e = testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(&acc2, acc3)})
 	m = testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -73,7 +73,7 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 	accountNotifier.AddStream(kp2.Address(), s2)
 
 	// Create from 1 -> 2
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GenerateCreateOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GenerateCreateOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -101,7 +101,7 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 	accountNotifier.AddStream(kp2.Address(), s2)
 
 	// Merge 1 into 2
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GenerateMergeOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GenerateMergeOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{

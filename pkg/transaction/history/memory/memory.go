@@ -53,8 +53,6 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 	rw.Lock()
 	defer rw.Unlock()
 
-	rw.Writes = append(rw.Writes, proto.Clone(e).(*model.Entry))
-
 	hash, err := e.GetTxHash()
 	if err != nil {
 		return err
@@ -65,15 +63,32 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 		return err
 	}
 
-	if _, ok := rw.txns[string(hash)]; !ok {
+	if prev, ok := rw.txns[string(hash)]; ok {
+		if !proto.Equal(prev, e) {
+			return errors.New("double insert mismatch detected")
+		}
+	} else {
 		rw.txns[string(hash)] = proto.Clone(e).(*model.Entry)
 	}
 
 	for _, a := range accounts {
-		accountHistory := append(rw.accountTxns[a], proto.Clone(e).(*model.Entry))
-		sort.Sort(accountHistory)
-		rw.accountTxns[a] = accountHistory
+		accountHistory := rw.accountTxns[a]
+
+		var exists bool
+		for _, existing := range accountHistory {
+			if proto.Equal(existing, e) {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			accountHistory := append(accountHistory, proto.Clone(e).(*model.Entry))
+			sort.Sort(accountHistory)
+			rw.accountTxns[a] = accountHistory
+		}
 	}
+
+	rw.Writes = append(rw.Writes, proto.Clone(e).(*model.Entry))
 
 	return nil
 }

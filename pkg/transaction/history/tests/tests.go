@@ -61,26 +61,44 @@ func testDoubleInsert(t *testing.T, rw history.ReaderWriter) {
 		accounts := testutil.GenerateAccountIDs(t, 10)
 		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil)
 
-		// Assert no previous state
-		require.NoError(t, rw.Write(ctx, entry))
+		// Writes should be idempotent, provided the entry is the same.
+		for i := 0; i < 2; i++ {
+			require.NoError(t, rw.Write(ctx, entry))
 
-		actual, err := rw.GetTransaction(ctx, hash)
-		require.NoError(t, err)
-		assert.True(t, proto.Equal(actual, entry))
+			actual, err := rw.GetTransaction(ctx, hash)
+			require.NoError(t, err)
+			assert.True(t, proto.Equal(actual, entry))
+
+			entries, err := rw.GetAccountTransactions(ctx, accounts[0].Address(), nil)
+			assert.NoError(t, err)
+			require.Len(t, entries, 1)
+			assert.True(t, proto.Equal(entry, entries[0]))
+		}
 
 		// Mutate the entry, then insert under the same "key"
 		mutated := proto.Clone(entry).(*model.Entry)
 		mutated.Kind.(*model.Entry_Stellar).Stellar.Ledger = 100
+		assert.False(t, proto.Equal(entry, mutated))
 
-		// Idempotent writes are permitted to not return errors,
-		// as the assumption is that the data is statically mapped
-		// for all time, allowing impls to do efficient deduping.
-		require.NoError(t, rw.Write(ctx, entry))
+		// If the entry doesn't match what was previously stored,
+		// then there's some critical bug, _or_ the assumption that
+		// entries are deterministically generated from transactions
+		// is incorrect. Therefore, we expect an error from the writer
+		// for safety.
+		require.NotNil(t, rw.Write(ctx, mutated))
 
-		actual, err = rw.GetTransaction(ctx, hash)
+		// Ensure that the write did not go through
+
+		actual, err := rw.GetTransaction(ctx, hash)
 		require.NoError(t, err)
 		assert.True(t, proto.Equal(actual, entry))
 		assert.False(t, proto.Equal(actual, mutated))
+
+		entries, err := rw.GetAccountTransactions(ctx, accounts[0].Address(), nil)
+		assert.NoError(t, err)
+		require.Len(t, entries, 1)
+		assert.True(t, proto.Equal(entry, entries[0]))
+		assert.False(t, proto.Equal(mutated, entries[0]))
 	})
 }
 

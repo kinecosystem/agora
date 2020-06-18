@@ -227,7 +227,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -276,7 +276,7 @@ func TestGetEvents_Batched(t *testing.T) {
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -346,7 +346,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
 
 	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
@@ -391,7 +391,7 @@ func TestGetEvents_LoadAccountFailure(t *testing.T) {
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, make([]xdr.OperationMeta, 0))
 
 	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "10", "1"), nil).Once()
@@ -433,7 +433,7 @@ func TestGetEvents_AccountRemoved(t *testing.T) {
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	_, acc2 := testutil.GenerateAccountID(t)
 
-	e := testutil.GenerateTransactionEnvelope(acc1, []xdr.Operation{testutil.GenerateMergeOperation(nil, acc2)})
+	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GenerateMergeOperation(nil, acc2)})
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{

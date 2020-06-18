@@ -21,6 +21,7 @@ func TestStellar(t *testing.T) {
 	_, src := testutil.GenerateAccountID(t)
 	envelope := testutil.GenerateTransactionEnvelope(
 		src,
+		1,
 		[]xdr.Operation{
 			testutil.GenerateCreateOperation(&accounts[0], accounts[1]),
 			testutil.GeneratePaymentOperation(&accounts[2], accounts[3]),
