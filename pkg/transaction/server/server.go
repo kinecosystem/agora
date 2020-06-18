@@ -279,6 +279,7 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 	if err == history.ErrNotFound {
 		return nil, status.Error(codes.NotFound, "")
 	} else if err != nil {
+		log.WithError(err).Warn("failed to get transaction")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
