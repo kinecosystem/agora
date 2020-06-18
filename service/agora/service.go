@@ -51,9 +51,8 @@ const (
 	whitelistKeypairIDEnv = "WHITELIST_KEYPAIR_ID"
 	keystoreTypeEnv       = "KEYSTORE_TYPE"
 
-	redisConnStringEnv = "REDIS_CONN_STRING"
-
 	// Rate Limit Configs
+	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
@@ -110,12 +109,12 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init v1 aws sdk")
 	}
 
-	redisConnString := os.Getenv(redisConnStringEnv)
-	if redisConnString == "" {
-		return errors.Errorf("%s must be set", redisConnStringEnv)
+	rlRedisConnString := os.Getenv(rlRedisConnStringEnv)
+	if rlRedisConnString == "" {
+		return errors.Errorf("%s must be set", rlRedisConnStringEnv)
 	}
 
-	hosts := strings.Split(redisConnString, ",")
+	hosts := strings.Split(rlRedisConnString, ",")
 	addrs := make(map[string]string)
 	for i, host := range hosts {
 		addrs[fmt.Sprintf("server%d", i)] = host
