@@ -178,7 +178,7 @@ func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *
 	// together in time.
 	//
 	// We use consistent reads to address this. However, consistent reads are more
-	// far more prone to errors. While we expect the outter caller to be retrying,
+	// far more prone to errors. While we expect the outer caller to be retrying,
 	// there's often a lot of overhead getting to this point. Given that this should
 	// resolve fairly quickly, we use a retry here to optimistically save some work.
 	_, err := retry.Retry(
@@ -204,7 +204,7 @@ func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *
 		retry.Backoff(backoff.Constant(500*time.Millisecond), 500*time.Millisecond),
 	)
 	if err != nil {
-		return errors.Wrap(err, "failed to check double insert match ")
+		return errors.Wrap(err, "failed to check double insert match")
 	}
 
 	if len(item) == 0 {
