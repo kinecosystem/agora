@@ -128,7 +128,7 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 
 			// Descending, default limit
 			//
-			// We except no results, since going "backwards" from 0 should return nothing
+			// We expect no results, since going "backwards" from 0 should return nothing
 			entries, err = rw.GetAccountTransactions(ctx, accounts[i].Address(), &history.ReadOptions{Descending: true})
 			assert.NoError(t, err)
 			require.Len(t, entries, 0)

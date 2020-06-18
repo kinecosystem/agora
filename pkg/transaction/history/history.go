@@ -55,7 +55,7 @@ type Reader interface {
 	// GetAccountTransactions returns the model.Entry's with the specified options.
 	//
 	// If no options are specified, the results will be in ascending order starting
-	// from beginning (with an undefined limit).
+	// from the beginning (with an undefined limit).
 	GetAccountTransactions(ctx context.Context, account string, opts *ReadOptions) ([]*model.Entry, error)
 }
 
