@@ -70,9 +70,9 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 	}
 
 	for _, a := range accounts {
-		history := append(rw.accountTxns[a], proto.Clone(e).(*model.Entry))
-		sort.Sort(history)
-		rw.accountTxns[a] = history
+		accountHistory := append(rw.accountTxns[a], proto.Clone(e).(*model.Entry))
+		sort.Sort(accountHistory)
+		rw.accountTxns[a] = accountHistory
 	}
 
 	return nil
@@ -95,13 +95,13 @@ func (rw *RW) GetAccountTransactions(_ context.Context, account string, opts *hi
 	rw.Lock()
 	defer rw.Unlock()
 
-	history := rw.accountTxns[account]
-	if len(history) == 0 {
-		return history, nil
+	accountHistory := rw.accountTxns[account]
+	if len(accountHistory) == 0 {
+		return accountHistory, nil
 	}
 
-	i := sort.Search(len(history), func(i int) bool {
-		orderingKey, err := history[i].GetOrderingKey()
+	i := sort.Search(len(accountHistory), func(i int) bool {
+		orderingKey, err := accountHistory[i].GetOrderingKey()
 		if err != nil {
 			panic(err)
 		}
@@ -117,7 +117,7 @@ func (rw *RW) GetAccountTransactions(_ context.Context, account string, opts *hi
 	var results []*model.Entry
 	if opts.GetDescending() {
 		for ; i >= 0; i-- {
-			orderingKey, err := history[i].GetOrderingKey()
+			orderingKey, err := accountHistory[i].GetOrderingKey()
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to get ordering key")
 			}
@@ -129,14 +129,14 @@ func (rw *RW) GetAccountTransactions(_ context.Context, account string, opts *hi
 				continue
 			}
 
-			results = append(results, proto.Clone(history[i]).(*model.Entry))
+			results = append(results, proto.Clone(accountHistory[i]).(*model.Entry))
 			if len(results) == limit {
 				break
 			}
 		}
 	} else {
-		for ; i < len(history); i++ {
-			results = append(results, proto.Clone(history[i]).(*model.Entry))
+		for ; i < len(accountHistory); i++ {
+			results = append(results, proto.Clone(accountHistory[i]).(*model.Entry))
 			if len(results) == limit {
 				break
 			}
