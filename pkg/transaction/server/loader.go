@@ -40,7 +40,7 @@ type historyLoader struct {
 
 func newLoader(client horizon.ClientInterface, reader history.Reader, committer ingestion.Committer) *historyLoader {
 	return &historyLoader{
-		log:    logrus.StandardLogger().WithField("type", "transaction/historyLoader"),
+		log:    logrus.StandardLogger().WithField("type", "transaction/server/historyLoader"),
 		client: client,
 
 		reader:    reader,
