@@ -30,6 +30,8 @@ import (
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
+	"github.com/kinecosystem/agora/pkg/channel"
+	channelpool "github.com/kinecosystem/agora/pkg/channel/dynamodb"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/transaction"
@@ -55,10 +57,14 @@ const (
 	keystoreTypeEnv       = "KEYSTORE_TYPE"
 
 	// Rate Limit Configs
-	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
+	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
+
+	// Channel Configs
+	maxChannelsEnv = "MAX_CHANNELS"
+	channelSaltEnv = "CHANNEL_SALT"
 )
 
 type app struct {
@@ -111,21 +117,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to init v1 aws sdk")
 	}
-
-	rlRedisConnString := os.Getenv(rlRedisConnStringEnv)
-	if rlRedisConnString == "" {
-		return errors.Errorf("%s must be set", rlRedisConnStringEnv)
-	}
-
-	hosts := strings.Split(rlRedisConnString, ",")
-	addrs := make(map[string]string)
-	for i, host := range hosts {
-		addrs[fmt.Sprintf("server%d", i)] = host
-	}
-
-	limiter := redis_rate.NewLimiter(redis.NewRing(&redis.RingOptions{
-		Addrs: addrs,
-	}))
+	dynamoV1Client := dynamodbv1.New(sess)
 
 	accountNotifier := accountserver.NewAccountNotifier(client)
 
@@ -134,31 +126,81 @@ func (a *app) Init(_ agoraapp.Config) error {
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
-	createAccountRLStr := os.Getenv(createAccountGlobalRLEnv)
-	createAccLimit, err := strconv.Atoi(createAccountRLStr)
+	createAccountRL, err := parseRateLimit(createAccountGlobalRLEnv)
 	if err != nil {
-		return errors.Wrapf(err, "%s must be an integer", createAccountGlobalRLEnv)
+		return err
 	}
 
-	submitTxGlobalRLStr := os.Getenv(submitTxGlobalRLEnv)
-	submitTxGlobalLimit, err := strconv.Atoi(submitTxGlobalRLStr)
+	submitTxGlobalRL, err := parseRateLimit(submitTxGlobalRLEnv)
 	if err != nil {
-		return errors.Wrapf(err, "%s must be an integer", submitTxGlobalRLEnv)
+		return err
 	}
 
-	submitTxAppRLStr := os.Getenv(submitTxAppRLEnv)
-	submitTxAppLimit, err := strconv.Atoi(submitTxAppRLStr)
+	submitTxAppRL, err := parseRateLimit(submitTxAppRLEnv)
 	if err != nil {
-		return errors.Wrapf(err, "%s must be an integer", submitTxAppRLEnv)
+		return err
 	}
 
-	a.accountServer = accountserver.New(
+	var limiter *redis_rate.Limiter
+	if createAccountRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 {
+		rlRedisConnString := os.Getenv(rlRedisConnStringEnv)
+		if rlRedisConnString == "" {
+			return errors.Errorf("%s must be set", rlRedisConnStringEnv)
+		}
+
+		hosts := strings.Split(rlRedisConnString, ",")
+		addrs := make(map[string]string)
+		for i, host := range hosts {
+			addrs[fmt.Sprintf("server%d", i)] = host
+		}
+
+		limiter = redis_rate.NewLimiter(redis.NewRing(&redis.RingOptions{
+			Addrs: parseAddrsFromConnString(rlRedisConnString),
+		}))
+	}
+
+	var channelPool channel.Pool
+	var channelsEnabled bool
+	maxChannelsStr := os.Getenv(maxChannelsEnv)
+	if maxChannelsStr != "" && maxChannelsStr != "0" {
+		maxChannels, err := strconv.Atoi(maxChannelsStr)
+		if err != nil || maxChannels < 0 {
+			return errors.Errorf("%s must be set to an integer >= 0", maxChannelsEnv)
+		}
+
+		channelSalt := os.Getenv(channelSaltEnv)
+		if channelSalt == "" {
+			return errors.Errorf("%s must be set if %s is set", channelSaltEnv, maxChannelsEnv)
+		}
+
+		pool, err := channelpool.New(
+			dynamoV1Client,
+			maxChannels,
+			rootAccountKP,
+			channelSalt,
+		)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize channel pool")
+		}
+
+		channelsEnabled = true
+		channelPool = pool
+	}
+
+	a.accountServer, err = accountserver.New(
 		rootAccountKP,
 		client,
 		accountNotifier,
 		limiter,
-		&accountserver.Config{CreateAccountGlobalLimit: createAccLimit},
+		channelPool,
+		&accountserver.Config{
+			CreateAccountGlobalLimit: createAccountRL,
+			ChannelsEnabled:          channelsEnabled,
+		},
 	)
+	if err != nil {
+		return errors.Wrap(err, "failed to init account server")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.streamCancelFunc = cancel
@@ -206,8 +248,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 		webhookClient,
 		limiter,
 		&transactionserver.Config{
-			SubmitTxGlobalLimit: submitTxGlobalLimit,
-			SubmitTxAppLimit:    submitTxAppLimit,
+			SubmitTxGlobalLimit: submitTxGlobalRL,
+			SubmitTxAppLimit:    submitTxAppRL,
 		},
 	)
 	if err != nil {
@@ -265,4 +307,30 @@ func main() {
 	); err != nil {
 		log.WithError(err).Fatal("error running service")
 	}
+}
+
+func parseAddrsFromConnString(redisConnString string) map[string]string {
+	hosts := strings.Split(redisConnString, ",")
+	addrs := make(map[string]string)
+	for i, host := range hosts {
+		addrs[fmt.Sprintf("server%d", i)] = host
+	}
+	return addrs
+}
+
+func parseRateLimit(env string) (int, error) {
+	rlStr := os.Getenv(env)
+	if rlStr == "" {
+		return -1, nil
+	}
+
+	val, err := strconv.Atoi(rlStr)
+	if err != nil {
+		return -1, errors.Wrapf(err, "if set, %s must be an integer", env)
+	}
+
+	if val <= 0 {
+		return -1, errors.Errorf("if set, %s must be > 0", env)
+	}
+	return val, nil
 }

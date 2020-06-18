@@ -4,6 +4,7 @@ set -e
 echo "" > coverage.txt
 
 golangci-lint run \
+    --exclude horizon.Account \
     --exclude horizon.Problem \
     --exclude horizon.Transaction \
     --exclude proto.MessageName \

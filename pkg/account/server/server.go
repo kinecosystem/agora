@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/retry"
+	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -16,6 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+
+	"github.com/kinecosystem/agora/pkg/channel"
 )
 
 const (
@@ -27,37 +33,62 @@ const (
 type server struct {
 	log             *logrus.Entry
 	rootAccountKP   *keypair.Full
+	network         build.Network
 	horizonClient   horizon.ClientInterface
 	accountNotifier *AccountNotifier
 	limiter         *redis_rate.Limiter
+	channelPool     channel.Pool
 	config          *Config
 }
 
 type Config struct {
+	// CreateAccountGlobalLimit is the number of CreateAccount requests allowed globally per second.
+	//
+	// A value <= 0 indicates that no rate limit is to be applied.
 	CreateAccountGlobalLimit int
+
+	// ChannelsEnabled indicates that the use of channel wallets for transactions is enabled.
+	ChannelsEnabled bool
 }
 
 // New returns a new account server
-func New(rootAccountKP *keypair.Full, horizonClient horizon.ClientInterface, accountNotifier *AccountNotifier, limiter *redis_rate.Limiter, c *Config) accountpb.AccountServer {
+func New(
+	rootAccountKP *keypair.Full,
+	horizonClient horizon.ClientInterface,
+	accountNotifier *AccountNotifier,
+	limiter *redis_rate.Limiter,
+	channelPool channel.Pool,
+	c *Config,
+) (accountpb.AccountServer, error) {
+	network, err := kin.GetNetwork()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get network")
+	}
+
 	return &server{
 		log:             logrus.StandardLogger().WithField("type", "account/server"),
 		rootAccountKP:   rootAccountKP,
+		network:         network,
 		horizonClient:   horizonClient,
 		accountNotifier: accountNotifier,
 		limiter:         limiter,
+		channelPool:     channelPool,
 		config:          c,
-	}
+	}, nil
 }
 
 // CreateAccount implements AccountServer.CreateAccount
 func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
 	log := s.log.WithField("method", "CreateAccount")
 
-	result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
-	if err != nil {
-		log.WithError(err).Warn("failed to check global rate limit")
-	} else if !result.Allowed {
-		return nil, status.Error(codes.Unavailable, "rate limited")
+	if s.config.CreateAccountGlobalLimit > 0 {
+		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
+		if err != nil {
+			fmt.Println(err.Error())
+			log.WithError(err).Warn("failed to check global rate limit")
+		} else if !result.Allowed {
+			return nil, status.Error(codes.Unavailable, "rate limited")
+		}
 	}
 
 	// Check if account exists on the blockchain
@@ -82,44 +113,70 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	rootHorizonAccount, err := s.horizonClient.LoadAccount(s.rootAccountKP.Address())
-	if err != nil {
-		log.WithError(err).Warn("Failed to load root account")
-		return nil, status.Error(codes.Internal, err.Error())
+	var sourceAcc horizon.Account
+	var sourceKP *keypair.Full
+	if s.config.ChannelsEnabled {
+		c, err := s.channelPool.GetChannel()
+		if err != nil {
+			log.WithError(err).Warn("Failed to get channelKP")
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		defer func() {
+			if err := c.Lock.Unlock(); err != nil {
+				log.WithError(err).Warn("failed to unlock channel")
+			}
+		}()
+
+		channelAccount, err := s.horizonClient.LoadAccount(c.KP.Address())
+		if err != nil {
+			horizonError, ok := err.(*horizon.Error)
+			if !ok || horizonError.Problem.Status != 404 {
+				log.WithError(err).Warn("Failed to check if channel account exists")
+				return nil, status.Error(codes.Internal, "failed to create account")
+			}
+
+			rootHorizonAccount, err := s.horizonClient.LoadAccount(s.rootAccountKP.Address())
+			if err != nil {
+				log.WithError(err).Warn("Failed to load root account")
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+
+			_, err = retry.Retry(
+				func() error {
+					return s.createAccount(s.rootAccountKP, rootHorizonAccount, nil, c.KP.Address())
+				},
+				retry.Limit(3),
+				retry.BackoffWithJitter(backoff.BinaryExponential(500*time.Millisecond), 2200*time.Millisecond, 0.1),
+			)
+			if err != nil {
+				log.WithError(err).Warn("Failed to create channel account")
+				return nil, status.Error(codes.Internal, "Failed to create account")
+			}
+
+			channelAccount, err = s.horizonClient.LoadAccount(c.KP.Address())
+			if err != nil {
+				log.WithError(err).Warn("Failed to load created/existing channel account")
+				return nil, status.Error(codes.Internal, "Failed to create account")
+			}
+		}
+
+		sourceAcc = channelAccount
+		sourceKP = c.KP
+	} else {
+		rootHorizonAccount, err := s.horizonClient.LoadAccount(s.rootAccountKP.Address())
+		if err != nil {
+			log.WithError(err).Warn("Failed to load root account")
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		sourceAcc = rootHorizonAccount
+		sourceKP = s.rootAccountKP
 	}
 
-	// sequence number is typically represented with an int64, but the Horizon client sequence number mutator uses a
-	// uint64, so we parse it accordingly here.
-	prevSeq, err := strconv.ParseUint(rootHorizonAccount.Sequence, 10, 64)
+	err = s.createAccount(sourceKP, sourceAcc, s.rootAccountKP, req.AccountId.Value)
 	if err != nil {
-		log.WithError(err).Warn("Failed to parse root account sequence number")
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	network, err := kin.GetNetwork()
-	if err != nil {
-		log.WithError(err).Warn("Failed to get network")
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	encodedTx, err := buildSignEncodeTransaction(s.rootAccountKP,
-		build.SourceAccount{AddressOrSeed: s.rootAccountKP.Address()},
-		build.Sequence{Sequence: prevSeq + 1},
-		network,
-		build.CreateAccount(
-			build.Destination{AddressOrSeed: req.AccountId.Value},
-			build.NativeAmount{Amount: "0"},
-		))
-
-	if err != nil {
-		log.WithError(err).Warn("Failed to create transaction")
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	_, err = s.horizonClient.SubmitTransaction(encodedTx)
-	if err != nil {
-		log.WithError(err).Warn("Failed to submit transaction")
-		return nil, status.Error(codes.Internal, err.Error())
+		log.WithError(err).Warn("Failed to create new account")
+		return nil, status.Error(codes.Internal, "Failed to create account")
 	}
 
 	horizonAccount, err = s.horizonClient.LoadAccount(req.AccountId.Value)
@@ -333,7 +390,8 @@ func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMet
 		}
 
 		accountInfo, err = parseAccountInfo(account)
-		if err != nil {
+		if err
+		!= nil {
 			return nil, false, err
 		}
 	}
@@ -341,23 +399,57 @@ func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMet
 	return accountInfo, accountRemoved, err
 }
 
-// buildSignEncodeTransaction builds a transaction with the provided transaction mutators, signs it with the provided
-// keypair and returns the base 64 XDR representation of the transaction envelope ready for submission to the network.
-func buildSignEncodeTransaction(keypair *keypair.Full, muts ...build.TransactionMutator) (string, error) {
-	tx, err := build.Transaction(muts...)
+func (s *server) createAccount(sourceKP *keypair.Full, sourceAccount horizon.Account, whitelistingKP *keypair.Full, newAccountID string) (err error) {
+	// sequence number is typically represented with an int64, but the Horizon client sequence number mutator uses a
+	// uint64, so we parse it accordingly here.
+	prevSeq, err := strconv.ParseUint(sourceAccount.Sequence, 10, 64)
 	if err != nil {
-		return "", errors.Wrap(err, "Failed to build transaction")
+		return errors.Wrap(err, "failed to parse root account sequence number")
 	}
 
-	signedTx, err := tx.Sign(keypair.Seed())
+	tx, err := build.Transaction(build.SourceAccount{AddressOrSeed: sourceKP.Address()},
+		build.Sequence{Sequence: prevSeq + 1},
+		s.network,
+		build.CreateAccount(
+			build.Destination{AddressOrSeed: newAccountID},
+			build.NativeAmount{Amount: "0"},
+		),
+	)
 	if err != nil {
-		return "", errors.Wrap(err, "Failed to sign transaction")
+		return errors.Wrap(err, "failed to build transaction")
+	}
+
+	signers := []string{sourceKP.Seed()}
+	if whitelistingKP != nil {
+		signers = append(signers, whitelistingKP.Seed())
+	}
+
+	signedTx, err := tx.Sign(signers...)
+	if err != nil {
+		return errors.Wrap(err, "failed to sign transaction")
 	}
 
 	encodedTx, err := signedTx.Base64()
 	if err != nil {
-		return "", errors.Wrap(err, "Failed to encode transaction")
+		return errors.Wrap(err, "failed to encode transaction")
 	}
 
-	return encodedTx, nil
+	_, err = s.horizonClient.SubmitTransaction(encodedTx)
+	if err != nil {
+		hErr, ok := err.(*horizon.Error)
+		if !ok {
+			return errors.Wrap(err, "failed to submit create account transaction")
+		}
+
+		rc, err := hErr.ResultCodes()
+		if err != nil {
+			return errors.Wrap(hErr, "failed to get result codes from horizon error")
+		}
+
+		if len(rc.OperationCodes) == 0 || rc.OperationCodes[0] != "op_already_exists" {
+			return errors.Wrap(hErr, "failed to submit create account transaction")
+		}
+	}
+
+	return nil
 }

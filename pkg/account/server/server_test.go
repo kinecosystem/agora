@@ -28,8 +28,14 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
+	"github.com/kinecosystem/agora/pkg/channel"
+	channelpool "github.com/kinecosystem/agora/pkg/channel/memory"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction"
+)
+
+const (
+	channelSalt = "somesalt"
 )
 
 var (
@@ -41,6 +47,7 @@ type testEnv struct {
 	horizonClient   *horizon.MockClient
 	rootAccountKP   *keypair.Full
 	accountNotifier *AccountNotifier
+	channels        []*keypair.Full
 }
 
 func TestMain(m *testing.M) {
@@ -64,7 +71,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func setup(t *testing.T) (env testEnv, cleanup func()) {
+func setup(t *testing.T, createAccGlobalRL int, maxChannels int) (env testEnv, cleanup func()) {
 	err := os.Setenv("AGORA_ENVIRONMENT", "test")
 	require.NoError(t, err)
 
@@ -78,6 +85,21 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	require.NoError(t, err)
 	env.rootAccountKP = kp
 
+	var channelsEnabled bool
+	var channelPool channel.Pool
+	if maxChannels > 0 {
+		channelsEnabled = true
+		env.channels = make([]*keypair.Full, maxChannels)
+		for i := 0; i < maxChannels; i++ {
+			kp, err := channel.GenerateChannelKeypair(env.rootAccountKP, i, channelSalt)
+			require.NoError(t, err)
+			env.channels[i] = kp
+		}
+
+		channelPool, err = channelpool.New(maxChannels, env.rootAccountKP, channelSalt)
+		require.NoError(t, err)
+	}
+
 	env.accountNotifier = NewAccountNotifier(env.horizonClient)
 
 	ring := redis.NewRing(&redis.RingOptions{
@@ -89,7 +111,19 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	// reset the global rate limit (the key format is hardcoded inside redis_rate/rate.go)
 	ring.Del(fmt.Sprintf("rate:%s", globalRateLimitKey))
 
-	s := New(env.rootAccountKP, env.horizonClient, env.accountNotifier, limiter, &Config{CreateAccountGlobalLimit: 5})
+	s, err := New(
+		env.rootAccountKP,
+		env.horizonClient,
+		env.accountNotifier,
+		limiter,
+		channelPool,
+		&Config{
+			CreateAccountGlobalLimit: createAccGlobalRL,
+			ChannelsEnabled:          channelsEnabled,
+		},
+	)
+	require.NoError(t, err)
+
 	serv.RegisterService(func(server *grpc.Server) {
 		accountpb.RegisterAccountServer(server, s)
 	})
@@ -100,16 +134,88 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	return env, cleanup
 }
 
-func TestCreateAccount(t *testing.T) {
-	env, cleanup := setup(t)
+func TestCreateAccount_NoChannels(t *testing.T) {
+	env, cleanup := setup(t, 5, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
+	// There are no channels, so the root account should get used
+	env.horizonClient.On("LoadAccount", env.rootAccountKP.Address()).Return(*testutil.GenerateHorizonAccount(env.rootAccountKP.Address(), "100", "1"), nil).Once()
+
+	// The account initially does not exist, then after a transaction is submitted it should.
 	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
 	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
-	env.horizonClient.On("LoadAccount", env.rootAccountKP.Address()).Return(hProtocol.Account{Sequence: "1"}, nil).Once()
+	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+
+	req := accountpb.CreateAccountRequest{
+		AccountId: &commonpb.StellarAccountId{Value: kp.Address()},
+	}
+	resp, err := env.client.CreateAccount(context.Background(), &req)
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.GetResult())
+	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
+
+	env.horizonClient.AssertExpectations(t)
+}
+
+func TestCreateAccount_WithChannel(t *testing.T) {
+	env, cleanup := setup(t, 5, 1)
+	defer cleanup()
+
+	kp, err := keypair.Random()
+	require.NoError(t, err)
+
+	// Channels are enabled with a max of 1, so we expect the channel keypair to get used
+	channelKP := env.channels[0]
+	env.horizonClient.On("LoadAccount", channelKP.Address()).Return(*testutil.GenerateHorizonAccount(channelKP.Address(), "100", "1"), nil).Once()
+
+	// The account initially does not exist, then after a transaction is submitted it should.
+	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
+	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+
+	req := accountpb.CreateAccountRequest{
+		AccountId: &commonpb.StellarAccountId{Value: kp.Address()},
+	}
+	resp, err := env.client.CreateAccount(context.Background(), &req)
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.GetResult())
+	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
+
+	env.horizonClient.AssertExpectations(t)
+}
+
+func TestCreateAccount_NewChannel(t *testing.T) {
+	env, cleanup := setup(t, 5, 1)
+	defer cleanup()
+
+	// Channels are enabled with a max of 1, so we expect the channel keypair to get used
+	channelKP := env.channels[0]
+	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
+	env.horizonClient.On("LoadAccount", channelKP.Address()).Return(hProtocol.Account{}, horizonErr).Once()
+
+	// The channel doesn't exist initially, so the root account will get loaded to create it
+	env.horizonClient.On("LoadAccount", env.rootAccountKP.Address()).Return(*testutil.GenerateHorizonAccount(env.rootAccountKP.Address(), "100", "1"), nil).Once()
+
+	// After the transaction is submitted, the channel should exist.
+	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
+	env.horizonClient.On("LoadAccount", channelKP.Address()).Return(*testutil.GenerateHorizonAccount(channelKP.Address(), "100", "1"), nil).Once()
+
+	kp, err := keypair.Random()
+	require.NoError(t, err)
+
+	// The account initially does not exist, then after a transaction is submitted it should.
+	env.horizonClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
 	env.horizonClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
 	env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
@@ -128,7 +234,7 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestCreateAccount_Exists(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, 5, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()
@@ -150,7 +256,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 }
 
 func TestCreateAccount_RateLimited(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, 5, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()
@@ -181,8 +287,25 @@ func TestCreateAccount_RateLimited(t *testing.T) {
 	env.horizonClient.AssertExpectations(t)
 }
 
+func TestCreateAccount_NoRateLimit(t *testing.T) {
+	env, cleanup := setup(t, -1, 0)
+	defer cleanup()
+
+	kp, err := keypair.Random()
+	require.NoError(t, err)
+
+	req := accountpb.CreateAccountRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
+	for i := 0; i < 10; i++ {
+		env.horizonClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+		_, err = env.client.CreateAccount(context.Background(), &req)
+		require.NoError(t, err)
+	}
+
+	env.horizonClient.AssertExpectations(t)
+}
+
 func TestGetAccountInfo(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()
@@ -203,7 +326,7 @@ func TestGetAccountInfo(t *testing.T) {
 }
 
 func TestGetAccountInfoNotFound(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()
@@ -222,7 +345,7 @@ func TestGetAccountInfoNotFound(t *testing.T) {
 }
 
 func TestGetEvents_HappyPath(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
@@ -272,7 +395,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 }
 
 func TestGetEvents_Batched(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
@@ -343,7 +466,7 @@ func TestGetEvents_Batched(t *testing.T) {
 }
 
 func TestGetEvents_LoadAccount(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
@@ -389,7 +512,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 }
 
 func TestGetEvents_LoadAccountFailure(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
@@ -432,7 +555,7 @@ func TestGetEvents_LoadAccountFailure(t *testing.T) {
 }
 
 func TestGetEvents_AccountRemoved(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
@@ -482,7 +605,7 @@ func TestGetEvents_AccountRemoved(t *testing.T) {
 }
 
 func TestGetEvents_NotFound(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, -1, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()

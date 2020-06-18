@@ -56,8 +56,15 @@ type server struct {
 }
 
 type Config struct {
+	// SubmitTxGlobalLimit is the number of SubmitTransaction requests allowed globally per second.
+	//
+	// A value <= 0 indicates that no rate limit is to be applied.
 	SubmitTxGlobalLimit int
-	SubmitTxAppLimit    int
+
+	// SubmitTxAppLimit is the number of SubmitTransaction requests allowed per app per second.
+	//
+	// A value <= 0 indicates that no rate limit is to be applied.
+	SubmitTxAppLimit int
 }
 
 // New returns a new transactionpb.TransactionServer.
@@ -100,11 +107,13 @@ func New(
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
 
-	result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.SubmitTxGlobalLimit))
-	if err != nil {
-		log.WithError(err).Warn("failed to check global rate limit")
-	} else if !result.Allowed {
-		return nil, status.Error(codes.Unavailable, "rate limited")
+	if s.config.SubmitTxGlobalLimit > 0 {
+		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.SubmitTxGlobalLimit))
+		if err != nil {
+			log.WithError(err).Warn("failed to check global rate limit")
+		} else if !result.Allowed {
+			return nil, status.Error(codes.Unavailable, "rate limited")
+		}
 	}
 
 	e := &xdr.TransactionEnvelope{}
@@ -120,11 +129,13 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
 		memo := kin.Memo(*e.Tx.Memo.Hash)
 
-		result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
-		if err != nil {
-			log.WithError(err).Warn("failed to check per app rate limit")
-		} else if !result.Allowed {
-			return nil, status.Error(codes.Unavailable, "rate limited")
+		if s.config.SubmitTxAppLimit > 0 {
+			result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
+			if err != nil {
+				log.WithError(err).Warn("failed to check per app rate limit")
+			} else if !result.Allowed {
+				return nil, status.Error(codes.Unavailable, "rate limited")
+			}
 		}
 
 		if req.InvoiceList != nil {

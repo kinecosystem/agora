@@ -113,7 +113,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
+func setup(t *testing.T, enableWhitelist bool, submitTxGlobalRL, submitTxAppRL int) (env testEnv, cleanup func()) {
 	os.Setenv("AGORA_ENVIRONMENT", string(agoraenv.AgoraEnvironmentDev))
 
 	if enableWhitelist {
@@ -162,8 +162,8 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 		webhook.NewClient(http.DefaultClient),
 		limiter,
 		&Config{
-			SubmitTxGlobalLimit: 5,
-			SubmitTxAppLimit:    3,
+			SubmitTxGlobalLimit: submitTxGlobalRL,
+			SubmitTxAppLimit:    submitTxAppRL,
 		},
 	)
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func setup(t *testing.T, enableWhitelist bool) (env testEnv, cleanup func()) {
 }
 
 func TestSubmit_NoKinMemo(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, txHash := generateEnvelope(t, nil, 0)
@@ -207,7 +207,7 @@ func TestSubmit_NoKinMemo(t *testing.T) {
 }
 
 func TestSubmitTransaction_TestAppWhitelist_Enabled(t *testing.T) {
-	env, cleanup := setup(t, true)
+	env, cleanup := setup(t, true, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, txHash := generateEnvelope(t, il, 0)
@@ -245,7 +245,7 @@ func TestSubmitTransaction_TestAppWhitelist_Enabled(t *testing.T) {
 }
 
 func TestSubmitTransaction_NonTestAppWhitelist_Enabled(t *testing.T) {
-	env, cleanup := setup(t, true)
+	env, cleanup := setup(t, true, -1, -1)
 	defer cleanup()
 
 	err := env.appConfigStore.Add(context.Background(), 1, &app.Config{
@@ -280,7 +280,7 @@ func TestSubmitTransaction_NonTestAppWhitelist_Enabled(t *testing.T) {
 
 func TestSubmitTransaction_TestAppWhitelist_Disabled(t *testing.T) {
 	os.Setenv("AGORA_ENVIRONMENT", string(agoraenv.AgoraEnvironmentProd))
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	err := env.appConfigStore.Add(context.Background(), 0, &app.Config{
@@ -314,7 +314,7 @@ func TestSubmitTransaction_TestAppWhitelist_Disabled(t *testing.T) {
 }
 
 func TestSubmitTransaction_AppNotFound(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, _ := generateEnvelope(t, il, 0)
@@ -328,7 +328,7 @@ func TestSubmitTransaction_AppNotFound(t *testing.T) {
 }
 
 func TestSubmitTransaction_AppSignTxURLNotSet(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	err := env.appConfigStore.Add(context.Background(), 0, &app.Config{
@@ -358,7 +358,7 @@ func TestSubmitTransaction_AppSignTxURLNotSet(t *testing.T) {
 }
 
 func TestSubmitTransaction_SignTransaction400(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	// Set up test server with 400 response
@@ -388,7 +388,7 @@ func TestSubmitTransaction_SignTransaction400(t *testing.T) {
 }
 
 func TestSubmitTransaction_SignTransaction403_Rejected(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	// Set up test server with 403 response
@@ -464,7 +464,7 @@ func TestSubmitTransaction_SignTransaction403_Rejected(t *testing.T) {
 }
 
 func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	// Set up test server with 403 response
@@ -574,7 +574,7 @@ func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
 }
 
 func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
@@ -616,7 +616,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 }
 
 func TestSubmitTransaction_SignTransaction200InvalidResponse(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
@@ -647,7 +647,7 @@ func TestSubmitTransaction_SignTransaction200InvalidResponse(t *testing.T) {
 }
 
 func TestSubmitTransaction_SignTransactionError(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
@@ -679,7 +679,7 @@ func TestSubmitTransaction_SignTransactionError(t *testing.T) {
 }
 
 func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	// mismatch counts
@@ -731,7 +731,7 @@ func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
 }
 
 func TestSubmitTransaction_WithInvoiceInvalidMemo(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	envelope, _, _ := generateEnvelope(t, nil, 0)
@@ -761,7 +761,7 @@ func TestSubmitTransaction_WithInvoiceInvalidMemo(t *testing.T) {
 }
 
 func TestSubmitTransaction_Invalid(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	invalidRequests := []*transactionpb.SubmitTransactionRequest{
@@ -793,7 +793,7 @@ func TestSubmitTransaction_Invalid(t *testing.T) {
 }
 
 func TestSubmit_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, envelopeBytes, _ := generateEnvelope(t, nil, 0)
@@ -830,7 +830,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 }
 
 func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, 5, -1)
 	defer cleanup()
 
 	var err error
@@ -888,7 +888,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 }
 
 func TestSubmitTransaction_AppRateLimited(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, 3)
 	defer cleanup()
 
 	envelope, _, _ := generateEnvelope(t, nil, 1)
@@ -964,7 +964,7 @@ func TestSubmitTransaction_AppRateLimited(t *testing.T) {
 }
 
 func TestGetTransaction_Loader(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	accounts := testutil.GenerateAccountIDs(t, 2)
@@ -988,7 +988,7 @@ func TestGetTransaction_Loader(t *testing.T) {
 }
 
 func TestGetTransaction_HorizonFallback(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	_, txnEnvelopeBytes, txHash := generateEnvelope(t, nil, 0)
@@ -1018,7 +1018,7 @@ func TestGetTransaction_HorizonFallback(t *testing.T) {
 }
 
 func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
@@ -1064,7 +1064,7 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 }
 
 func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	appConfig := &app.Config{
@@ -1116,7 +1116,7 @@ func TestGetTransaction_WithInvoicingDisabled(t *testing.T) {
 }
 
 func TestGetTransaction_HorizonErrors(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	type testCase struct {
@@ -1155,7 +1155,7 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 }
 
 func TestGetHistory_Query(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	accounts := testutil.GenerateAccountIDs(t, 10)
@@ -1259,7 +1259,7 @@ func TestGetHistory_Query(t *testing.T) {
 }
 
 func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
@@ -1307,7 +1307,7 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 }
 
 func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
-	env, cleanup := setup(t, false)
+	env, cleanup := setup(t, false, -1, -1)
 	defer cleanup()
 
 	signTxURL, err := url.Parse("test.kin.org/sign_tx")
