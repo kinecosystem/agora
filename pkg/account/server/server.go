@@ -229,10 +229,17 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				break
 			}
 
+			resultBytes, err := eventData.r.MarshalBinary()
+			if err != nil {
+				log.WithError(err).Warn("failed to marshal transaction result, dropping transaction")
+				break
+			}
+
 			events = append(events, &accountpb.Event{
 				Type: &accountpb.Event_TransactionEvent{
 					TransactionEvent: &accountpb.TransactionEvent{
 						EnvelopeXdr: envBytes,
+						ResultXdr:   resultBytes,
 					},
 				},
 			})

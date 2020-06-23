@@ -28,7 +28,7 @@ func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
 }
 
 // OnTransaction implements transaction.Notifier.OnTransaction
-func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
+func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta) {
 	log := a.log.WithField("method", "OnTransaction")
 
 	accountIDs, err := model.GetAccountsFromEnvelope(e)
@@ -48,7 +48,7 @@ func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.Transac
 
 		for _, s := range streams {
 			if s != nil {
-				err := s.notify(e, m)
+				err := s.notify(e, r, m)
 				if err != nil {
 					log.WithError(err).Warn("failed to notify stream")
 				}

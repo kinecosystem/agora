@@ -10,6 +10,7 @@ import (
 
 type eventData struct {
 	e xdr.TransactionEnvelope
+	r xdr.TransactionResult
 	m xdr.TransactionMeta
 }
 
@@ -29,7 +30,7 @@ func newEventStream(bufferSize int) *eventStream {
 	}
 }
 
-func (s *eventStream) notify(e xdr.TransactionEnvelope, m xdr.TransactionMeta) error {
+func (s *eventStream) notify(e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta) error {
 	s.Lock()
 
 	if s.closed {
@@ -38,7 +39,7 @@ func (s *eventStream) notify(e xdr.TransactionEnvelope, m xdr.TransactionMeta) e
 	}
 
 	select {
-	case s.streamCh <- eventData{e: e, m: m}:
+	case s.streamCh <- eventData{e: e, r: r, m: m}:
 	default:
 		s.Unlock()
 		s.close()

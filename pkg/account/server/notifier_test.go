@@ -28,6 +28,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 
 	// Payment from 1 -> 2
 	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(nil, acc2)})
+	r := testutil.GenerateTransactionResult(xdr.TransactionResultCodeTxSuccess, make([]xdr.OperationResult, 0))
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -36,14 +37,15 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, m)
+	accountNotifier.OnTransaction(e, r, m)
 
-	assertReceived(t, e, m, s1)
-	assertReceived(t, e, m, s2)
+	assertReceived(t, e, r, m, s1)
+	assertReceived(t, e, r, m, s2)
 	assertNothingReceived(t, s3)
 
 	// Payment from 2 -> 3, with 1 as a "channel" source
 	e = testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GeneratePaymentOperation(&acc2, acc3)})
+	r = testutil.GenerateTransactionResult(xdr.TransactionResultCodeTxFailed, make([]xdr.OperationResult, 0))
 	m = testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -53,11 +55,11 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, m)
+	accountNotifier.OnTransaction(e, r, m)
 
-	assertReceived(t, e, m, s1)
-	assertReceived(t, e, m, s2)
-	assertReceived(t, e, m, s3)
+	assertReceived(t, e, r, m, s1)
+	assertReceived(t, e, r, m, s2)
+	assertReceived(t, e, r, m, s3)
 }
 
 func TestAccountNotifier_CreateOperation(t *testing.T) {
@@ -74,6 +76,7 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 
 	// Create from 1 -> 2
 	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GenerateCreateOperation(nil, acc2)})
+	r := testutil.GenerateTransactionResult(xdr.TransactionResultCodeTxSuccess, make([]xdr.OperationResult, 0))
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -82,10 +85,10 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, m)
+	accountNotifier.OnTransaction(e, r, m)
 
-	assertReceived(t, e, m, s1)
-	assertReceived(t, e, m, s2)
+	assertReceived(t, e, r, m, s1)
+	assertReceived(t, e, r, m, s2)
 }
 
 func TestAccountNotifier_MergeOperation(t *testing.T) {
@@ -102,6 +105,7 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 
 	// Merge 1 into 2
 	e := testutil.GenerateTransactionEnvelope(acc1, 1, []xdr.Operation{testutil.GenerateMergeOperation(nil, acc2)})
+	r := testutil.GenerateTransactionResult(xdr.TransactionResultCodeTxSuccess, make([]xdr.OperationResult, 0))
 	m := testutil.GenerateTransactionMeta(0, []xdr.OperationMeta{
 		{
 			Changes: []xdr.LedgerEntryChange{
@@ -110,17 +114,18 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, m)
+	accountNotifier.OnTransaction(e, r, m)
 
-	assertReceived(t, e, m, s1)
-	assertReceived(t, e, m, s2)
+	assertReceived(t, e, r, m, s1)
+	assertReceived(t, e, r, m, s2)
 }
 
-func assertReceived(t *testing.T, e xdr.TransactionEnvelope, m xdr.TransactionMeta, s *eventStream) {
+func assertReceived(t *testing.T, e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta, s *eventStream) {
 	select {
 	case actualData, ok := <-s.streamCh:
 		assert.True(t, ok)
 		assert.Equal(t, e, actualData.e)
+		assert.Equal(t, r, actualData.r)
 		assert.Equal(t, m, actualData.m)
 	default:
 		t.Fatalf("should have received a value")

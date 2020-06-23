@@ -25,7 +25,7 @@ func TestOpenTransactionStream(t *testing.T) {
 	}
 	hmock.On(
 		"GET",
-		"https://localhost/transactions?cursor=now&order=asc",
+		"https://localhost/transactions?cursor=now&include_failed=true&order=asc",
 	).ReturnString(200, txStreamResponse)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -49,6 +49,10 @@ func TestOpenTransactionStream(t *testing.T) {
 		require.Equal(t, 100, int(data.e.Tx.Fee))
 		require.Equal(t, 4660039930473, int(data.e.Tx.SeqNum))
 
+		require.Equal(t, xdr.Int64(100), data.r.FeeCharged)
+		require.Equal(t, xdr.TransactionResultCodeTxSuccess, data.r.Result.Code)
+		require.Equal(t, 1, len(*data.r.Result.Results))
+
 		require.Equal(t, int32(1), data.m.V)
 		require.Equal(t, 2, len(data.m.V1.TxChanges))
 		require.Equal(t, 1, len(data.m.OperationsMeta()))
@@ -57,6 +61,7 @@ func TestOpenTransactionStream(t *testing.T) {
 
 type transactionData struct {
 	e xdr.TransactionEnvelope
+	r xdr.TransactionResult
 	m xdr.TransactionMeta
 }
 
@@ -75,10 +80,11 @@ func newTestNotifier(count int, cancel context.CancelFunc) *testNotifier {
 	}
 }
 
-func (n *testNotifier) OnTransaction(e xdr.TransactionEnvelope, m xdr.TransactionMeta) {
+func (n *testNotifier) OnTransaction(e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta) {
 	n.Lock()
 	n.receivedTxns = append(n.receivedTxns, transactionData{
 		e: e,
+		r: r,
 		m: m,
 	})
 	if len(n.receivedTxns) == n.count {
