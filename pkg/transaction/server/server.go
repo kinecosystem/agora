@@ -242,9 +242,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
+			return &transactionpb.SubmitTransactionResponse{
+				Result:    transactionpb.SubmitTransactionResponse_INTERNAL_ERROR,
+				ResultXdr: hErr.Problem.Extras["result_xdr"],
+			}, nil
 		}
 
-		// todo: proper inspection and error handling
 		log.WithError(err).Warn("Failed to submit txn")
 		return nil, status.Error(codes.Internal, "failed to submit transaction")
 	}

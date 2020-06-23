@@ -723,26 +723,32 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 
 	type testCase struct {
 		hError   horizon.Error
-		grpcCode codes.Code
 	}
+
+	resultBytes, err := xdr.TransactionResult{Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxBadSeq}}.MarshalBinary()
+	require.NoError(t, err)
 
 	testCases := []testCase{
 		{
 			hError: horizon.Error{
 				Problem: horizon.Problem{
 					Status: 500,
+					Extras: map[string]json.RawMessage{
+						"result_xdr": resultBytes,
+					},
 				},
 			},
-			grpcCode: codes.Internal,
 		},
 	}
 
 	for _, tc := range testCases {
 		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonprotocols.TransactionSuccess{}, error(&tc.hError)).Once()
-		_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 			EnvelopeXdr: envelopeBytes,
 		})
-		assert.Equal(t, tc.grpcCode, status.Code(err))
+		require.NoError(t, err)
+		require.Equal(t, transactionpb.SubmitTransactionResponse_INTERNAL_ERROR, resp.Result)
+		require.Equal(t, resultBytes, resp.ResultXdr)
 	}
 }
 
