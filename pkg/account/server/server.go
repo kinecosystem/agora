@@ -218,18 +218,18 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 	events := make([]*accountpb.Event, 0)
 	for {
 		select {
-		case eventData, ok := <-as.streamCh:
+		case xdrData, ok := <-as.streamCh:
 			if !ok {
 				return status.Error(codes.Aborted, "")
 			}
 
-			envBytes, err := eventData.e.MarshalBinary()
+			envBytes, err := xdrData.Envelope.MarshalBinary()
 			if err != nil {
 				log.WithError(err).Warn("failed to marshal transaction envelope, dropping transaction")
 				break
 			}
 
-			resultBytes, err := eventData.r.MarshalBinary()
+			resultBytes, err := xdrData.Result.MarshalBinary()
 			if err != nil {
 				log.WithError(err).Warn("failed to marshal transaction result, dropping transaction")
 				break
@@ -244,7 +244,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				},
 			})
 
-			accountInfo, accountRemoved, err := s.getMetaAccountInfoOrLoad(req.AccountId.Value, eventData.m)
+			accountInfo, accountRemoved, err := s.getMetaAccountInfoOrLoad(req.AccountId.Value, xdrData.Meta)
 			if err != nil {
 				log.WithError(err).Warn("failed to get account info, excluding account event")
 			} else if accountInfo != nil {
@@ -257,7 +257,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				})
 			}
 
-			// The max # of events that can be sent is 128 and each eventData received from streamCh results in up to 2
+			// The max # of events that can be sent is 128 and each xdrData received from streamCh results in up to 2
 			// events, so we should flush at a length >= 127.
 			if len(events) >= 127 || accountRemoved || len(as.streamCh) == 0 {
 				err = stream.Send(&accountpb.Events{

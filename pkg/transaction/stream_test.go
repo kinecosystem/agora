@@ -42,33 +42,27 @@ func TestOpenTransactionStream(t *testing.T) {
 
 	assert.Equal(t, 3, len(notifier.receivedTxns))
 	for _, data := range notifier.receivedTxns {
-		actualAcc, err := data.e.Tx.SourceAccount.GetAddress()
+		actualAcc, err := data.Envelope.Tx.SourceAccount.GetAddress()
 		require.NoError(t, err)
 
 		require.Equal(t, "GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR", actualAcc)
-		require.Equal(t, 100, int(data.e.Tx.Fee))
-		require.Equal(t, 4660039930473, int(data.e.Tx.SeqNum))
+		require.Equal(t, 100, int(data.Envelope.Tx.Fee))
+		require.Equal(t, 4660039930473, int(data.Envelope.Tx.SeqNum))
 
-		require.Equal(t, xdr.Int64(100), data.r.FeeCharged)
-		require.Equal(t, xdr.TransactionResultCodeTxSuccess, data.r.Result.Code)
-		require.Equal(t, 1, len(*data.r.Result.Results))
+		require.Equal(t, xdr.Int64(100), data.Result.FeeCharged)
+		require.Equal(t, xdr.TransactionResultCodeTxSuccess, data.Result.Result.Code)
+		require.Equal(t, 1, len(*data.Result.Result.Results))
 
-		require.Equal(t, int32(1), data.m.V)
-		require.Equal(t, 2, len(data.m.V1.TxChanges))
-		require.Equal(t, 1, len(data.m.OperationsMeta()))
+		require.Equal(t, int32(1), data.Meta.V)
+		require.Equal(t, 2, len(data.Meta.V1.TxChanges))
+		require.Equal(t, 1, len(data.Meta.OperationsMeta()))
 	}
-}
-
-type transactionData struct {
-	e xdr.TransactionEnvelope
-	r xdr.TransactionResult
-	m xdr.TransactionMeta
 }
 
 // testNotifier will call the provided CancelFunc after receiving the specified number of transactions.
 type testNotifier struct {
 	sync.Mutex
-	receivedTxns []transactionData
+	receivedTxns []XDRData
 	count        int
 	cancel       context.CancelFunc
 }
@@ -80,13 +74,9 @@ func newTestNotifier(count int, cancel context.CancelFunc) *testNotifier {
 	}
 }
 
-func (n *testNotifier) OnTransaction(e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta) {
+func (n *testNotifier) OnTransaction(data XDRData) {
 	n.Lock()
-	n.receivedTxns = append(n.receivedTxns, transactionData{
-		e: e,
-		r: r,
-		m: m,
-	})
+	n.receivedTxns = append(n.receivedTxns, data)
 	if len(n.receivedTxns) == n.count {
 		n.cancel()
 	}

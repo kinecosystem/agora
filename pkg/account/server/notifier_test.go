@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
+	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 func TestAccountNotifier_PaymentOperation(t *testing.T) {
@@ -37,10 +38,15 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, r, m)
+	xdrData := transaction.XDRData{
+		Envelope: e,
+		Result:   r,
+		Meta:     m,
+	}
+	accountNotifier.OnTransaction(xdrData)
 
-	assertReceived(t, e, r, m, s1)
-	assertReceived(t, e, r, m, s2)
+	assertReceived(t, xdrData, s1)
+	assertReceived(t, xdrData, s2)
 	assertNothingReceived(t, s3)
 
 	// Payment from 2 -> 3, with 1 as a "channel" source
@@ -55,11 +61,16 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, r, m)
+	xdrData = transaction.XDRData{
+		Envelope: e,
+		Result:   r,
+		Meta:     m,
+	}
+	accountNotifier.OnTransaction(xdrData)
 
-	assertReceived(t, e, r, m, s1)
-	assertReceived(t, e, r, m, s2)
-	assertReceived(t, e, r, m, s3)
+	assertReceived(t, xdrData, s1)
+	assertReceived(t, xdrData, s2)
+	assertReceived(t, xdrData, s3)
 }
 
 func TestAccountNotifier_CreateOperation(t *testing.T) {
@@ -85,10 +96,15 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, r, m)
+	xdrData := transaction.XDRData{
+		Envelope: e,
+		Result:   r,
+		Meta:     m,
+	}
+	accountNotifier.OnTransaction(xdrData)
 
-	assertReceived(t, e, r, m, s1)
-	assertReceived(t, e, r, m, s2)
+	assertReceived(t, xdrData, s1)
+	assertReceived(t, xdrData, s2)
 }
 
 func TestAccountNotifier_MergeOperation(t *testing.T) {
@@ -114,19 +130,24 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 			},
 		},
 	})
-	accountNotifier.OnTransaction(e, r, m)
+	xdrData := transaction.XDRData{
+		Envelope: e,
+		Result:   r,
+		Meta:     m,
+	}
+	accountNotifier.OnTransaction(xdrData)
 
-	assertReceived(t, e, r, m, s1)
-	assertReceived(t, e, r, m, s2)
+	assertReceived(t, xdrData, s1)
+	assertReceived(t, xdrData, s2)
 }
 
-func assertReceived(t *testing.T, e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta, s *eventStream) {
+func assertReceived(t *testing.T, data transaction.XDRData, s *eventStream) {
 	select {
 	case actualData, ok := <-s.streamCh:
 		assert.True(t, ok)
-		assert.Equal(t, e, actualData.e)
-		assert.Equal(t, r, actualData.r)
-		assert.Equal(t, m, actualData.m)
+		assert.Equal(t, data, actualData)
+		assert.Equal(t, data, actualData)
+		assert.Equal(t, data, actualData)
 	default:
 		t.Fatalf("should have received a value")
 	}

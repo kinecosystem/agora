@@ -29,6 +29,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
+	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 var (
@@ -253,7 +254,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
-	env.accountNotifier.OnTransaction(e, r, m)
+	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -305,7 +306,7 @@ func TestGetEvents_Batched(t *testing.T) {
 
 	// Two events gets sent for each transaction
 	for i := 0; i < 64; i++ {
-		env.accountNotifier.OnTransaction(e, r, m)
+		env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 	}
 
 	resp, err = stream.Recv()
@@ -324,7 +325,7 @@ func TestGetEvents_Batched(t *testing.T) {
 		assert.Equal(t, int64(2), resp.Events[i+1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 	}
 
-	env.accountNotifier.OnTransaction(e, r, m)
+	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -370,7 +371,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	// Successfully obtain account info; both the transaction and account events should get sent
 	env.horizonClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "9", "2"), nil).Once()
 
-	env.accountNotifier.OnTransaction(e, r, m)
+	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -417,7 +418,7 @@ func TestGetEvents_LoadAccountFailure(t *testing.T) {
 	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 500}}
 	env.horizonClient.On("LoadAccount", kp1.Address()).Return(hProtocol.Account{}, horizonErr).Once()
 
-	env.accountNotifier.OnTransaction(e, r, m)
+	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -463,7 +464,7 @@ func TestGetEvents_AccountRemoved(t *testing.T) {
 	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
-	env.accountNotifier.OnTransaction(e, r, m)
+	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)

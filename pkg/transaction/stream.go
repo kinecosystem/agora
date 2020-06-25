@@ -14,9 +14,15 @@ import (
 	"github.com/stellar/go/xdr"
 )
 
+type XDRData struct {
+	Envelope xdr.TransactionEnvelope
+	Result   xdr.TransactionResult
+	Meta     xdr.TransactionMeta
+}
+
 // Notifier notifies that a new transaction has been confirmed on the blockchain.
 type Notifier interface {
-	OnTransaction(xdr.TransactionEnvelope, xdr.TransactionResult, xdr.TransactionMeta)
+	OnTransaction(XDRData)
 }
 
 // StreamTransactions streams transactions from horizon, notifying the provided notifiers with received transactions.
@@ -26,20 +32,21 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 		"method": "StreamTransactions",
 	})
 	req := horizonclient.TransactionRequest{
-		Order:  horizonclient.OrderAsc,
-		Cursor: "now",
+		Order:         horizonclient.OrderAsc,
+		Cursor:        "now",
 		IncludeFailed: true,
 	}
 
 	handler := func(t hProtocol.Transaction) {
+		xdrData := XDRData{}
+
 		envelopeBytes, err := base64.StdEncoding.DecodeString(t.EnvelopeXdr)
 		if err != nil {
 			log.WithError(err).Warn("failed to parse envelope XDR, dropping")
 			return
 		}
 
-		var e xdr.TransactionEnvelope
-		if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), &e); err != nil {
+		if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), &xdrData.Envelope); err != nil {
 			log.WithError(err).Warn("failed to unmarshal transaction envelope, dropping")
 			return
 		}
@@ -50,8 +57,7 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 			return
 		}
 
-		var r xdr.TransactionResult
-		if _, err := xdr.Unmarshal(bytes.NewBuffer(resultBytes), &r); err != nil {
+		if _, err := xdr.Unmarshal(bytes.NewBuffer(resultBytes), &xdrData.Result); err != nil {
 			log.WithError(err).Warn("failed to unmarshal transaction result, dropping")
 			return
 		}
@@ -62,14 +68,13 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 			return
 		}
 
-		var m xdr.TransactionMeta
-		if _, err := xdr.Unmarshal(bytes.NewBuffer(metaBytes), &m); err != nil {
+		if _, err := xdr.Unmarshal(bytes.NewBuffer(metaBytes), &xdrData.Meta); err != nil {
 			log.WithError(err).Warn("failed to unmarshal transaction meta, dropping")
 			return
 		}
 
 		for _, n := range notifiers {
-			n.OnTransaction(e, r, m)
+			n.OnTransaction(xdrData)
 		}
 	}
 

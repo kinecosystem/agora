@@ -5,8 +5,8 @@ import (
 
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/sirupsen/logrus"
-	"github.com/stellar/go/xdr"
 
+	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
@@ -28,10 +28,10 @@ func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
 }
 
 // OnTransaction implements transaction.Notifier.OnTransaction
-func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta) {
+func (a *AccountNotifier) OnTransaction(xdrData transaction.XDRData) {
 	log := a.log.WithField("method", "OnTransaction")
 
-	accountIDs, err := model.GetAccountsFromEnvelope(e)
+	accountIDs, err := model.GetAccountsFromEnvelope(xdrData.Envelope)
 	if err != nil {
 		log.WithError(err).Warn("Failed to get accounts from envelope, dropping notification")
 		return
@@ -48,7 +48,7 @@ func (a *AccountNotifier) OnTransaction(e xdr.TransactionEnvelope, r xdr.Transac
 
 		for _, s := range streams {
 			if s != nil {
-				err := s.notify(e, r, m)
+				err := s.notify(xdrData)
 				if err != nil {
 					log.WithError(err).Warn("failed to notify stream")
 				}

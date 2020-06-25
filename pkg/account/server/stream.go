@@ -5,14 +5,9 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
-	"github.com/stellar/go/xdr"
-)
 
-type eventData struct {
-	e xdr.TransactionEnvelope
-	r xdr.TransactionResult
-	m xdr.TransactionMeta
-}
+	"github.com/kinecosystem/agora/pkg/transaction"
+)
 
 type eventStream struct {
 	sync.Mutex
@@ -20,17 +15,17 @@ type eventStream struct {
 	log *logrus.Entry
 
 	closed   bool
-	streamCh chan eventData
+	streamCh chan transaction.XDRData
 }
 
 func newEventStream(bufferSize int) *eventStream {
 	return &eventStream{
 		log:      logrus.StandardLogger().WithField("type", "account/server/stream"),
-		streamCh: make(chan eventData, bufferSize),
+		streamCh: make(chan transaction.XDRData, bufferSize),
 	}
 }
 
-func (s *eventStream) notify(e xdr.TransactionEnvelope, r xdr.TransactionResult, m xdr.TransactionMeta) error {
+func (s *eventStream) notify(xdrData transaction.XDRData) error {
 	s.Lock()
 
 	if s.closed {
@@ -39,7 +34,7 @@ func (s *eventStream) notify(e xdr.TransactionEnvelope, r xdr.TransactionResult,
 	}
 
 	select {
-	case s.streamCh <- eventData{e: e, r: r, m: m}:
+	case s.streamCh <- xdrData:
 	default:
 		s.Unlock()
 		s.close()
