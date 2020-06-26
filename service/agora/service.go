@@ -30,7 +30,7 @@ import (
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
-	"github.com/kinecosystem/agora/pkg/events"
+	"github.com/kinecosystem/agora/pkg/webhook/events"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/transaction"
