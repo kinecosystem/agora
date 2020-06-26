@@ -80,12 +80,19 @@ func (h *historyLoader) getTransaction(ctx context.Context, hash []byte) (txn tx
 }
 
 func (h *historyLoader) getTransactions(ctx context.Context, account string, cursor *transactionpb.Cursor, order transactionpb.GetHistoryRequest_Direction) ([]txData, error) {
+	log := h.log.WithField("method", "getTransactions")
+
 	opts := &history.ReadOptions{
 		Limit:      100,
 		Descending: order == transactionpb.GetHistoryRequest_DESC,
 	}
 	if cursor != nil {
-		opts.Start = cursor.Value
+		start, err := startFromCursor(cursor)
+		if err != nil {
+			log.WithError(err).Warn("failed to get start from cursor, ignoring")
+		} else {
+			opts.Start = start
+		}
 	}
 
 	entries, err := h.reader.GetAccountTransactions(ctx, account, opts)
@@ -182,7 +189,7 @@ func txDataFromHorizon(tx horizon.Transaction) (data txData, err error) {
 		return data, errors.Wrap(err, "failed to decode result xdr")
 	}
 
-	// todo(kin2): need context as to which blockchain we loaded from.
+	// todo(kin2,kin4): need context as to which blockchain we loaded from.
 	orderKey, err := model.OrderingKeyFromCursor(model.KinVersion_KIN3, tx.PT)
 	if err != nil {
 		return data, errors.Wrap(err, "failed to get order key from cursor")
@@ -197,4 +204,29 @@ func txDataFromHorizon(tx horizon.Transaction) (data txData, err error) {
 	}
 
 	return data, nil
+}
+
+func startFromCursor(c *transactionpb.Cursor) ([]byte, error) {
+	if c == nil || len(c.Value) == 0 {
+		return nil, nil
+	}
+
+	// Horizon cursors are all strings representing an int64.
+	// Agora cursors, on the other hand, are a (version, ordering_key) pair.
+	// We can therefore differentiate the two by checking the first byte.
+	//
+	// If it's in the 0-9 ascii range (48 -> 57), then we assume it's a horizon
+	// cursor. Otherwise, we can assume it's an agora cursor. We use a slightly
+	// more aggressive range check to be sure.
+	if c.Value[0] < 10 {
+		return c.Value, nil
+	}
+
+	// todo(kin2,kin4): need context as to which blockchain we loaded from.
+	orderKey, err := model.OrderingKeyFromCursor(model.KinVersion_KIN3, string(c.Value))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get ordering key from transactionpb.Cursor")
+	}
+
+	return orderKey, nil
 }
