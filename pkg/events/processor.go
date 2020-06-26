@@ -103,7 +103,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 
 	il, err := p.invoiceStore.Get(ctx, txHash)
 	if err != nil && err != invoice.ErrNotFound {
-		log.WithError(err).Warn("Failed to get get invoice")
+		log.WithError(err).Warn("Failed to get invoice list")
 		return errors.Wrapf(err, "failed to get invoice for tx: %x", txHash)
 	}
 
