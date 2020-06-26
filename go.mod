@@ -13,6 +13,7 @@ require (
 	github.com/kinecosystem/agora-api v0.19.0
 	github.com/kinecosystem/agora-common v0.35.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
+	github.com/mr-tron/base58 v1.2.0
 	github.com/ory/dockertest v3.3.5+incompatible
 	github.com/pkg/errors v0.8.1
 	github.com/sirupsen/logrus v1.4.2
@@ -21,4 +22,5 @@ require (
 	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e // indirect
 	golang.org/x/sys v0.0.0-20200413165638-669c56c373c4 // indirect
 	google.golang.org/grpc v1.28.1
+	mfycheng.dev/retry v1.1.0
 )

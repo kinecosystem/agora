@@ -468,7 +468,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: base64.StdEncoding.EncodeToString(envelopeBytes)}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)
@@ -561,7 +561,7 @@ func TestSubmitTransaction_SignTransaction200InvalidResponse(t *testing.T) {
 	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: "invalidxdr"}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: []byte("invalidxdr")}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)
@@ -592,7 +592,7 @@ func TestSubmitTransaction_SignTransactionError(t *testing.T) {
 	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: "invalidxdr"}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: []byte("invalidxdr")}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)
@@ -833,7 +833,7 @@ func TestSubmitTransaction_AppRateLimited(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: base64.StdEncoding.EncodeToString(envelopeBytes)}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)

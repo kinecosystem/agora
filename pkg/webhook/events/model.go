@@ -6,7 +6,7 @@ import (
 
 // Event is a top level event container for blockchain events.
 type Event struct {
-	TransactionEvent TransactionEvent `json:"transaction_event"`
+	TransactionEvent *TransactionEvent `json:"transaction_event"`
 }
 
 // TransactionEvent is an event containing transaction details.

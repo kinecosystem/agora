@@ -109,7 +109,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 
 	appIndex := -1
 	event := Event{
-		TransactionEvent: TransactionEvent{
+		TransactionEvent: &TransactionEvent{
 			KinVersion:  int(entry.Version),
 			TxHash:      txHash,
 			InvoiceList: il,

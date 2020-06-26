@@ -1,7 +1,6 @@
 package signtransaction
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -62,13 +61,10 @@ func TestRequest(t *testing.T) {
 
 	actual, err := RequestBodyFromProto(req)
 	require.NoError(t, err)
-	assert.Equal(t, base64.StdEncoding.EncodeToString(envelopeXDR), actual.EnvelopeXDR)
-
-	decodedIL, err := base64.StdEncoding.DecodeString(actual.InvoiceList)
-	require.NoError(t, err)
+	assert.Equal(t, envelopeXDR, actual.EnvelopeXDR)
 
 	actualProtoIL := &commonpb.InvoiceList{}
-	err = proto.Unmarshal(decodedIL, actualProtoIL)
+	err = proto.Unmarshal(actual.InvoiceList, actualProtoIL)
 	require.NoError(t, err)
 	require.True(t, proto.Equal(req.InvoiceList, actualProtoIL))
 }

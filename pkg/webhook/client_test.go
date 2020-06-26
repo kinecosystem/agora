@@ -45,8 +45,8 @@ var (
 		},
 	}
 	basicReq = &signtransaction.RequestBody{
-		EnvelopeXDR: "sometx",
-		InvoiceList: "someinvoice",
+		EnvelopeXDR: []byte{1},
+		InvoiceList: []byte{2},
 	}
 	basicReqBody   []byte
 	appUserID      = "someuserid"
@@ -86,9 +86,8 @@ func TestSendSignTransactionRequest_InvalidWebhookSecret(t *testing.T) {
 	signURL, err := url.Parse("www.webhook.com")
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, "", basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, "", basicReq)
 	require.Error(t, err)
-	assert.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -97,8 +96,7 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 
 	envelopeBytes, err := emptyEnvelope.MarshalBinary()
 	require.NoError(t, err)
-	expectedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: expectedXDR}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 
@@ -108,10 +106,9 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 	require.NoError(t, err)
-	assert.Equal(t, expectedXDR, actualXDR)
-	assert.NotNil(t, actualEnvelope)
+	assert.EqualValues(t, emptyEnvelope, *actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
@@ -123,10 +120,9 @@ func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 
 	require.Error(t, err)
-	require.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -144,13 +140,12 @@ func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 400, signTxErr.StatusCode)
 	assert.Equal(t, webhookResp.Message, signTxErr.Message)
-	require.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -163,10 +158,9 @@ func TestSendSignTransactionRequest_400Invalid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 
 	require.Error(t, err)
-	require.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -191,14 +185,13 @@ func TestSendSignTransactionRequest_403Valid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 403, signTxErr.StatusCode)
 	assert.Equal(t, webhookResp.Message, signTxErr.Message)
 	assert.Equal(t, webhookResp.InvoiceErrors, signTxErr.OperationErrors)
-	require.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -211,10 +204,9 @@ func TestSendSignTransactionRequest_403Invalid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 
 	require.Error(t, err)
-	require.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -227,11 +219,10 @@ func TestSendSignTransactionRequest_OtherStatusCode(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 500, signTxErr.StatusCode)
-	require.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 
@@ -240,8 +231,7 @@ func TestSendSignTransactionRequest_NoAuthHeaders(t *testing.T) {
 
 	envelopeBytes, err := emptyEnvelope.MarshalBinary()
 	require.NoError(t, err)
-	expectedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: expectedXDR}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 
@@ -257,10 +247,9 @@ func TestSendSignTransactionRequest_NoAuthHeaders(t *testing.T) {
 		headers.Headers{},
 	)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithEmptyHeaders, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(ctxWithEmptyHeaders, *signURL, env.secretKey, basicReq)
 	require.NoError(t, err)
-	assert.Equal(t, expectedXDR, actualXDR)
-	assert.NotNil(t, actualEnvelope)
+	assert.Equal(t, emptyEnvelope, *actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
@@ -270,9 +259,8 @@ func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
 	require.NoError(t, err)
 
 	// Context missing Agora headers
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(context.Background(), *signURL, env.secretKey, basicReq)
+	actualEnvelope, err := env.client.SignTransaction(context.Background(), *signURL, env.secretKey, basicReq)
 	require.Error(t, err)
-	assert.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 
 	// Context with missing userID
@@ -284,9 +272,8 @@ func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
 		},
 	)
 
-	actualXDR, actualEnvelope, err = env.client.SignTransaction(ctx, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err = env.client.SignTransaction(ctx, *signURL, env.secretKey, basicReq)
 	require.Error(t, err)
-	assert.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 
 	// Context with missing passkey
@@ -298,9 +285,8 @@ func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
 		},
 	)
 
-	actualXDR, actualEnvelope, err = env.client.SignTransaction(ctx, *signURL, env.secretKey, basicReq)
+	actualEnvelope, err = env.client.SignTransaction(ctx, *signURL, env.secretKey, basicReq)
 	require.Error(t, err)
-	assert.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
 }
 

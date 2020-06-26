@@ -81,8 +81,11 @@ func GeneratePaymentOperation(src *xdr.AccountId, dest xdr.AccountId) xdr.Operat
 	return xdr.Operation{
 		SourceAccount: src,
 		Body: xdr.OperationBody{
-			Type:      xdr.OperationTypePayment,
-			PaymentOp: &xdr.PaymentOp{Destination: dest},
+			Type: xdr.OperationTypePayment,
+			PaymentOp: &xdr.PaymentOp{
+				Destination: dest,
+				Amount:      10,
+			},
 		},
 	}
 }

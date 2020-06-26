@@ -2,7 +2,6 @@ package signtransaction
 
 import (
 	"bytes"
-	"encoding/base64"
 
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
@@ -17,7 +16,7 @@ const (
 // SuccessResponse represents a 200 OK response to a sign transaction request.
 type SuccessResponse struct {
 	// EnvelopeXDR is a base64-encoded transaction envelope XDR
-	EnvelopeXDR string `json:"envelope_xdr"`
+	EnvelopeXDR []byte `json:"envelope_xdr"`
 }
 
 // BadRequestResponse represents a 400 Bad Request response to a sign transaction request.
@@ -45,13 +44,8 @@ func (r *SuccessResponse) GetEnvelopeXDR() (*xdr.TransactionEnvelope, error) {
 		return nil, errors.New("envelope_xdr cannot have length of 0")
 	}
 
-	envelopeBytes, err := base64.StdEncoding.DecodeString(r.EnvelopeXDR)
-	if err != nil {
-		return nil, errors.New("envelope_xdr was not base64-encoded")
-	}
-
 	e := &xdr.TransactionEnvelope{}
-	if _, err := xdr.Unmarshal(bytes.NewBuffer(envelopeBytes), e); err != nil {
+	if _, err := xdr.Unmarshal(bytes.NewBuffer(r.EnvelopeXDR), e); err != nil {
 		return nil, errors.New("envelope_xdr was not a valid transaction envelope")
 	}
 

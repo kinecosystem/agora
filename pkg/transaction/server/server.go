@@ -186,7 +186,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 
 		if config.SignTransactionURL != nil {
-			encodedXDR, e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
+			e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
 			if err != nil {
 				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
 					switch signTxErr.StatusCode {
