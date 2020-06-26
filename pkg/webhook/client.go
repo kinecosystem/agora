@@ -169,7 +169,7 @@ func (c *Client) Events(ctx context.Context, eventsURL url.URL, webhookSecret, b
 	defer resp.Body.Close()
 
 	// Anything that's not a 500 is likely a misconfigured webhook.
-	// Since we're not gauranteeing that all transactions will be delivered,
+	// Since we're not guaranteeing that all transactions will be delivered,
 	// we just mark it as OK so the events processor can make progress for this
 	// endpoint.
 	if resp.StatusCode < 500 {
