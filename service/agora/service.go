@@ -160,7 +160,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 
 	var channelPool channel.Pool
-	var channelsEnabled bool
 	maxChannelsStr := os.Getenv(maxChannelsEnv)
 	if maxChannelsStr != "" && maxChannelsStr != "0" {
 		maxChannels, err := strconv.Atoi(maxChannelsStr)
@@ -183,7 +182,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Wrap(err, "failed to initialize channel pool")
 		}
 
-		channelsEnabled = true
 		channelPool = pool
 	}
 
@@ -195,7 +193,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		channelPool,
 		&accountserver.Config{
 			CreateAccountGlobalLimit: createAccountRL,
-			ChannelsEnabled:          channelsEnabled,
 		},
 	)
 	if err != nil {

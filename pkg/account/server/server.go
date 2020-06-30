@@ -46,9 +46,6 @@ type Config struct {
 	//
 	// A value <= 0 indicates that no rate limit is to be applied.
 	CreateAccountGlobalLimit int
-
-	// ChannelsEnabled indicates that the use of channel wallets for transactions is enabled.
-	ChannelsEnabled bool
 }
 
 // New returns a new account server
@@ -115,7 +112,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 	var sourceAcc horizon.Account
 	var sourceKP *keypair.Full
-	if s.config.ChannelsEnabled {
+	if s.channelPool != nil {
 		c, err := s.channelPool.GetChannel()
 		if err != nil {
 			log.WithError(err).Warn("Failed to get channelKP")

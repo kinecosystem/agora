@@ -85,10 +85,8 @@ func setup(t *testing.T, createAccGlobalRL int, maxChannels int) (env testEnv, c
 	require.NoError(t, err)
 	env.rootAccountKP = kp
 
-	var channelsEnabled bool
 	var channelPool channel.Pool
 	if maxChannels > 0 {
-		channelsEnabled = true
 		env.channels = make([]*keypair.Full, maxChannels)
 		for i := 0; i < maxChannels; i++ {
 			kp, err := channel.GenerateChannelKeypair(env.rootAccountKP, i, channelSalt)
@@ -119,7 +117,6 @@ func setup(t *testing.T, createAccGlobalRL int, maxChannels int) (env testEnv, c
 		channelPool,
 		&Config{
 			CreateAccountGlobalLimit: createAccGlobalRL,
-			ChannelsEnabled:          channelsEnabled,
 		},
 	)
 	require.NoError(t, err)
