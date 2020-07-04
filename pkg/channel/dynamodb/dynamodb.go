@@ -17,7 +17,7 @@ import (
 
 const (
 	maxAttempts = 100
-	expiry      = 2 * time.Minute
+	heartbeat   = 10 * time.Second
 )
 
 var (
@@ -35,7 +35,8 @@ func New(db dynamodbiface.DynamoDBAPI, maxChannels int, rootAccountKP *keypair.F
 	client, err := dynamolock.New(
 		db,
 		tableName,
-		dynamolock.WithLeaseDuration(expiry),
+		dynamolock.WithHeartbeatPeriod(heartbeat),
+		dynamolock.WithLeaseDuration(3*heartbeat),
 	)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create dynamo lock client")
