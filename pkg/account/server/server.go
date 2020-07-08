@@ -387,8 +387,7 @@ func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMet
 		}
 
 		accountInfo, err = parseAccountInfo(account)
-		if err
-		!= nil {
+		if err != nil {
 			return nil, false, err
 		}
 	}
