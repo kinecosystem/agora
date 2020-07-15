@@ -10,7 +10,7 @@ require (
 	github.com/go-redis/redis/v7 v7.0.0
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.1
-	github.com/kinecosystem/agora-api v0.15.0
+	github.com/kinecosystem/agora-api v0.17.0
 	github.com/kinecosystem/agora-common v0.35.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/ory/dockertest v3.3.5+incompatible

@@ -386,7 +386,83 @@ func TestSubmitTransaction_SignTransaction400(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestSubmitTransaction_SignTransaction403(t *testing.T) {
+func TestSubmitTransaction_SignTransaction403_Rejected(t *testing.T) {
+	env, cleanup := setup(t, false)
+	defer cleanup()
+
+	// Set up test server with 403 response
+	webhookResp := &signtransaction.ForbiddenResponse{
+		Message: "some message",
+	}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 403, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   false,
+		WebhookSecret:      generateWebhookKey(t),
+	})
+	require.NoError(t, err)
+
+	invoiceList := &commonpb.InvoiceList{
+		Invoices: []*commonpb.Invoice{
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "1",
+						Description: "desc1",
+						Amount:      5,
+					},
+				},
+			},
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "2",
+						Description: "desc1",
+						Amount:      10,
+					},
+				},
+			},
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "3",
+						Description: "desc1",
+						Amount:      15,
+					},
+				},
+			},
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:       "4",
+						Description: "desc1",
+						Amount:      20,
+					},
+				},
+			},
+		},
+	}
+
+	_, envelopeBytes, _ := generateEnvelope(t, invoiceList, 1)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: invoiceList,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_REJECTED, resp.Result)
+	assert.Equal(t, len(webhookResp.InvoiceErrors), len(resp.InvoiceErrors))
+}
+
+func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
 	env, cleanup := setup(t, false)
 	defer cleanup()
 
@@ -722,7 +798,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 	_, envelopeBytes, _ := generateEnvelope(t, nil, 0)
 
 	type testCase struct {
-		hError   horizon.Error
+		hError horizon.Error
 	}
 
 	resultBytes, err := xdr.TransactionResult{Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxBadSeq}}.MarshalBinary()
@@ -747,7 +823,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 			EnvelopeXdr: envelopeBytes,
 		})
 		require.NoError(t, err)
-		require.Equal(t, transactionpb.SubmitTransactionResponse_INTERNAL_ERROR, resp.Result)
+		require.Equal(t, transactionpb.SubmitTransactionResponse_FAILED, resp.Result)
 		require.Equal(t, resultBytes, resp.ResultXdr)
 	}
 }

@@ -185,6 +185,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							log.WithError(signTxErr).Warn("Received 400 from app server")
 							return nil, status.Error(codes.Internal, "failed to submit transaction")
 						case 403:
+							if len(signTxErr.OperationErrors) == 0 {
+								return &transactionpb.SubmitTransactionResponse{
+									Result: transactionpb.SubmitTransactionResponse_REJECTED,
+								}, nil
+							}
+
 							invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
 							for i, opErr := range signTxErr.OperationErrors {
 								var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
@@ -243,7 +249,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
 			return &transactionpb.SubmitTransactionResponse{
-				Result:    transactionpb.SubmitTransactionResponse_INTERNAL_ERROR,
+				Result:    transactionpb.SubmitTransactionResponse_FAILED,
 				ResultXdr: hErr.Problem.Extras["result_xdr"],
 			}, nil
 		}
