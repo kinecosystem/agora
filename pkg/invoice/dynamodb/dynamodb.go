@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	tableName       = "tx_invoices"
+	tableName       = "tx-invoices"
 	putCondition    = "attribute_not_exists(tx_hash)"
 	hashKey         = "tx_hash"
 	invoiceListAttr = "invoice_list"
