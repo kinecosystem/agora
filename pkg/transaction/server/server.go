@@ -236,7 +236,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			txHash := sha256.Sum256(txBytes)
 			err = s.invoiceStore.Put(ctx, txHash[:], req.InvoiceList)
 			if err != nil && err != invoice.ErrExists {
-			} else if err != nil {
 				log.WithError(err).Warn("failed to store invoice")
 				return nil, status.Error(codes.Internal, "failed to store invoice")
 			}
