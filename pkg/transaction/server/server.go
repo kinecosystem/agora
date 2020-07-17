@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-redis/redis_rate/v8"
@@ -246,9 +247,22 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
+
+			var encodedResultXDR string
+			if err := json.Unmarshal(hErr.Problem.Extras["result_xdr"], &encodedResultXDR); err != nil {
+				log.WithError(err).WithField("result_xdr", hErr.Problem.Extras["result_xdr"]).Warn("failed to unmarshal result XDR")
+				return nil, status.Error(codes.Internal, "invalid json result encoding from horizon")
+			}
+
+			resultXDR, err := base64.StdEncoding.DecodeString(encodedResultXDR)
+			if err != nil {
+				log.WithError(err).WithField("result_xdr", encodedResultXDR).Warn("failed to decode result XDR")
+				return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
+			}
+
 			return &transactionpb.SubmitTransactionResponse{
 				Result:    transactionpb.SubmitTransactionResponse_FAILED,
-				ResultXdr: hErr.Problem.Extras["result_xdr"],
+				ResultXdr: resultXDR,
 			}, nil
 		}
 

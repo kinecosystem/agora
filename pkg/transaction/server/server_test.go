@@ -811,7 +811,7 @@ func TestSubmit_HorizonErrors(t *testing.T) {
 				Problem: horizon.Problem{
 					Status: 500,
 					Extras: map[string]json.RawMessage{
-						"result_xdr": resultBytes,
+						"result_xdr": json.RawMessage(fmt.Sprintf("\"%s\"", base64.StdEncoding.EncodeToString(resultBytes))),
 					},
 				},
 			},
