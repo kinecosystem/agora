@@ -68,10 +68,12 @@ func PrivateKeyFromString(seed string) (PrivateKey, error) {
 		if len(raw) != ed25519.PrivateKeySize {
 			return nil, errors.Errorf("invalid private key size: %d", len(raw))
 		}
+
+		return PrivateKey(raw), nil
 	}
 
 	if string(seed[0]) != "S" {
-		return nil, errors.New("address is not a private key")
+		return nil, errors.New("seed must start with S")
 	}
 
 	rawSeed, err := strkey.Decode(strkey.VersionByteSeed, seed)
