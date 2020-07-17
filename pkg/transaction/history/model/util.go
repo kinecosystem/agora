@@ -2,12 +2,12 @@ package model
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
 	"strconv"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/stellar/go/network"
 	"github.com/stellar/go/xdr"
 )
 
@@ -19,13 +19,8 @@ func (m *Entry) GetTxHash() ([]byte, error) {
 			return nil, errors.Wrap(err, "failed to parse envelope xdr")
 		}
 
-		txBytes, err := env.Tx.MarshalBinary()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal tx")
-		}
-
-		hash := sha256.Sum256(txBytes)
-		return hash[:], nil
+		hash, err := network.HashTransaction(&env.Tx, v.Stellar.NetworkPassphrase)
+		return hash[:], err
 	default:
 		return nil, errors.Errorf("unsupported entry version: %d", m.Version)
 	}

@@ -137,6 +137,13 @@ func (m *StellarEntry) Validate() error {
 		}
 	}
 
+	if utf8.RuneCountInString(m.GetNetworkPassphrase()) < 1 {
+		return StellarEntryValidationError{
+			field:  "NetworkPassphrase",
+			reason: "value length must be at least 1 runes",
+		}
+	}
+
 	if l := len(m.GetEnvelopeXdr()); l < 1 || l > 10240 {
 		return StellarEntryValidationError{
 			field:  "EnvelopeXdr",

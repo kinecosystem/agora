@@ -28,6 +28,7 @@ import (
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
+	"github.com/kinecosystem/go/network"
 	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/kinecosystem/go/xdr"
@@ -1410,13 +1411,12 @@ func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex 
 		}
 	}
 
-	txBytes, err := txnEnvelope.Tx.MarshalBinary()
+	n, err := kin.GetNetwork()
 	require.NoError(t, err)
-	hash := sha256.Sum256(txBytes)
+	signedEnvelope, err := transaction.SignEnvelope(&txnEnvelope, n, sender.Seed())
+	require.NoError(t, err)
 
-	network, err := kin.GetNetwork()
-	require.NoError(t, err)
-	signedEnvelope, err := transaction.SignEnvelope(&txnEnvelope, network, sender.Seed())
+	hash, err := network.HashTransaction(&txnEnvelope.Tx, n.Passphrase)
 	require.NoError(t, err)
 
 	envelopeBytes, err = signedEnvelope.MarshalBinary()

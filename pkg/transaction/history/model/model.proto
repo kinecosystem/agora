@@ -32,12 +32,16 @@ message StellarEntry {
         required: true,
     }];
 
-    bytes envelope_xdr = 4 [(validate.rules).bytes = {
+    string network_passphrase = 4 [(validate.rules).string = {
+        min_len: 1
+    }];
+
+    bytes envelope_xdr = 5 [(validate.rules).bytes = {
         min_len: 1
         max_len: 10240
     }];
 
-    bytes result_xdr = 5 [(validate.rules).bytes = {
+    bytes result_xdr = 6 [(validate.rules).bytes = {
         min_len: 1
         max_len: 10240
     }];

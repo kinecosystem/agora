@@ -1,10 +1,10 @@
 package model
 
 import (
-	"crypto/sha256"
 	"strconv"
 	"testing"
 
+	"github.com/stellar/go/network"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,17 +31,19 @@ func TestStellar(t *testing.T) {
 
 	envelopeBytes, err := envelope.MarshalBinary()
 	require.NoError(t, err)
-	txBytes, err := envelope.Tx.MarshalBinary()
+
+	networkPassphrase := "network phassphrase"
+	expected, err := network.HashTransaction(&envelope.Tx, networkPassphrase)
 	require.NoError(t, err)
-	expected := sha256.Sum256(txBytes)
 
 	e := Entry{
 		Version: KinVersion_KIN3,
 		Kind: &Entry_Stellar{
 			Stellar: &StellarEntry{
-				Ledger:      10,
-				PagingToken: 1,
-				EnvelopeXdr: envelopeBytes,
+				Ledger:            10,
+				PagingToken:       1,
+				NetworkPassphrase: networkPassphrase,
+				EnvelopeXdr:       envelopeBytes,
 			},
 		},
 	}

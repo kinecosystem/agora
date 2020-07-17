@@ -1,11 +1,11 @@
 package testutil
 
 import (
-	"crypto/sha256"
 	"testing"
 
 	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/stellar/go/network"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/require"
 
@@ -31,8 +31,6 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 		copy(envelope.Tx.Memo.Hash[:], memo[:])
 	}
 
-	txnBytes, err := envelope.Tx.MarshalBinary()
-	require.NoError(t, err)
 	envelopeBytes, err := envelope.MarshalBinary()
 	require.NoError(t, err)
 
@@ -50,7 +48,8 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 	resultBytes, err := testutil.GenerateTransactionResult(xdr.TransactionResultCodeTxSuccess, opResults).MarshalBinary()
 	require.NoError(t, err)
 
-	hash := sha256.Sum256(txnBytes)
+	hash, err := network.HashTransaction(&envelope.Tx, "network passphrase")
+	require.NoError(t, err)
 
 	// taken from: https://github.com/kinecosystem/go/blob/master/services/horizon/internal/toid/main.go
 	//
@@ -61,11 +60,12 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 		Version: model.KinVersion_KIN3,
 		Kind: &model.Entry_Stellar{
 			Stellar: &model.StellarEntry{
-				Ledger:          ledger,
-				PagingToken:     pagingToken,
-				LedgerCloseTime: ptypes.TimestampNow(),
-				EnvelopeXdr:     envelopeBytes,
-				ResultXdr:       resultBytes,
+				Ledger:            ledger,
+				PagingToken:       pagingToken,
+				LedgerCloseTime:   ptypes.TimestampNow(),
+				NetworkPassphrase: "network passphrase",
+				EnvelopeXdr:       envelopeBytes,
+				ResultXdr:         resultBytes,
 			},
 		},
 	}, hash[:]

@@ -22,21 +22,23 @@ import (
 )
 
 type ingestor struct {
-	log     *logrus.Entry
-	name    string
-	version model.KinVersion
-	client  horizonclient.ClientInterface
+	log               *logrus.Entry
+	name              string
+	version           model.KinVersion
+	client            horizonclient.ClientInterface
+	networkPassphrase string
 }
 
-func New(name string, version model.KinVersion, client horizonclient.ClientInterface) ingestion.Ingestor {
+func New(name string, version model.KinVersion, client horizonclient.ClientInterface, networkPassphrase string) ingestion.Ingestor {
 	return &ingestor{
 		log: logrus.StandardLogger().WithFields(logrus.Fields{
 			"type":    "transaction/history/ingestion/stellar",
 			"version": version,
 		}),
-		name:    name,
-		version: version,
-		client:  client,
+		name:              name,
+		version:           version,
+		client:            client,
+		networkPassphrase: networkPassphrase,
 	}
 }
 
@@ -172,11 +174,12 @@ func (i *ingestor) processLedger(ledger hProtocol.Ledger, w history.Writer) erro
 			Version: i.version,
 			Kind: &model.Entry_Stellar{
 				Stellar: &model.StellarEntry{
-					Ledger:          uint64(ledger.Sequence),
-					PagingToken:     pagingToken,
-					LedgerCloseTime: closeTime,
-					EnvelopeXdr:     envelopeBytes,
-					ResultXdr:       resultBytes,
+					Ledger:            uint64(ledger.Sequence),
+					PagingToken:       pagingToken,
+					LedgerCloseTime:   closeTime,
+					NetworkPassphrase: i.networkPassphrase,
+					EnvelopeXdr:       envelopeBytes,
+					ResultXdr:         resultBytes,
 				},
 			},
 		}

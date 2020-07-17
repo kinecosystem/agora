@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
+	"github.com/kinecosystem/go/network"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -228,12 +228,11 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 
 		if req.InvoiceList != nil {
-			txBytes, err := e.MarshalBinary()
+			txHash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
 			if err != nil {
-				return nil, status.Error(codes.Internal, "failed to marshal transaction")
+				return nil, status.Error(codes.Internal, "failed to hash transaction")
 			}
 
-			txHash := sha256.Sum256(txBytes)
 			err = s.invoiceStore.Put(ctx, txHash[:], req.InvoiceList)
 			if err != nil && err != invoice.ErrExists {
 				log.WithError(err).Warn("failed to store invoice")

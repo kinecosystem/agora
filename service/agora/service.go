@@ -30,7 +30,6 @@ import (
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
-	"github.com/kinecosystem/agora/pkg/webhook/events"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/transaction"
@@ -42,6 +41,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
 	"github.com/kinecosystem/agora/pkg/webhook"
+	"github.com/kinecosystem/agora/pkg/webhook/events"
 
 	// Configurable keystore options:
 	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
@@ -176,9 +176,14 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init events processor")
 	}
 
+	network, err := kin.GetNetwork()
+	if err != nil {
+		return errors.Wrap(err, "failed to get kin network")
+	}
+
 	committer := ingestioncommitter.New(dynamoClient)
-	historyIngestor := stellar.New("history", model.KinVersion_KIN3, clientV2)
-	eventsIngestor := stellar.New("events", model.KinVersion_KIN3, clientV2)
+	historyIngestor := stellar.New("history", model.KinVersion_KIN3, clientV2, network.Passphrase)
+	eventsIngestor := stellar.New("events", model.KinVersion_KIN3, clientV2, network.Passphrase)
 	historyLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin3", 10*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "failed to init history ingestion lock")
