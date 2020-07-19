@@ -186,7 +186,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							log.WithError(signTxErr).Warn("Received 400 from app server")
 							return nil, status.Error(codes.Internal, "failed to submit transaction")
 						case 403:
-							if len(signTxErr.OperationErrors) == 0 {
+							if len(signTxErr.OperationErrors) == 0 || len(req.InvoiceList.GetInvoices()) == 0 {
 								return &transactionpb.SubmitTransactionResponse{
 									Result: transactionpb.SubmitTransactionResponse_REJECTED,
 								}, nil
@@ -204,6 +204,14 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 									reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
 								default:
 									reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
+								}
+
+								if int(opErr.OperationIndex) >= len(req.InvoiceList.GetInvoices()) {
+									log.WithFields(logrus.Fields{
+										"index":  opErr.OperationIndex,
+										"reason": reason,
+									}).Info("out of range index error, ignoring")
+									continue
 								}
 
 								invoiceErrs[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
