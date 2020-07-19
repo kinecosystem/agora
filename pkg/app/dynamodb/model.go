@@ -29,7 +29,7 @@ type configItem struct {
 	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
 	EventsURL          string `dynamodbav:"events_url,omitempty"`
 	InvoicingEnabled   bool   `dynamodbav:"invoicing_enabled,omitempty"`
-	WebhookSecret      []byte `dynamodbav:"webhook_secret,omitempty"`
+	WebhookSecret      string `dynamodbav:"webhook_secret,omitempty"`
 }
 
 func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeValue, error) {

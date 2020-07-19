@@ -143,7 +143,7 @@ func TestRoundTrip(t *testing.T) {
 	appConfig := &app.Config{
 		AppName:       "kin",
 		EventsURL:     eventsURL,
-		WebhookSecret: make([]byte, 32),
+		WebhookSecret: "secret",
 	}
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestWebhook_None(t *testing.T) {
 
 	appConfig := &app.Config{
 		AppName:       "kin",
-		WebhookSecret: make([]byte, 32),
+		WebhookSecret: "secret",
 	}
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestWebhook_NonRetriableError(t *testing.T) {
 	appConfig := &app.Config{
 		AppName:       "kin",
 		EventsURL:     eventsURL,
-		WebhookSecret: make([]byte, 32),
+		WebhookSecret: "secret",
 	}
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestWebhook_RetriableError(t *testing.T) {
 	appConfig := &app.Config{
 		AppName:       "kin",
 		EventsURL:     eventsURL,
-		WebhookSecret: make([]byte, 32),
+		WebhookSecret: "secret",
 	}
 	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
 	require.NoError(t, err)

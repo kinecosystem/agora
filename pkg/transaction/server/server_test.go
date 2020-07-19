@@ -608,8 +608,8 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 		EnvelopeXdr: envelopeBytes,
 		InvoiceList: il,
 	})
+	require.NoError(t, err)
 
-	assert.NoError(t, err)
 	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
 	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
 	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
@@ -1441,9 +1441,9 @@ func newTestServerWithJSONResponse(t *testing.T, statusCode int, b []byte) *http
 	return testServer
 }
 
-func generateWebhookKey(t *testing.T) []byte {
-	b := make([]byte, 32)
+func generateWebhookKey(t *testing.T) string {
+	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	require.NoError(t, err)
-	return b
+	return string(b)
 }

@@ -63,13 +63,14 @@ var (
 
 type testEnv struct {
 	client    *Client
-	secretKey []byte
+	secretKey string
 }
 
 func setup(t *testing.T) (env testEnv) {
-	env.secretKey = make([]byte, 32)
-	_, err := rand.Read(env.secretKey)
+	secretKey := make([]byte, 16)
+	_, err := rand.Read(secretKey)
 	require.NoError(t, err)
+	env.secretKey = string(secretKey)
 
 	basicReqBody, err = json.Marshal(basicReq)
 	require.NoError(t, err)
@@ -85,7 +86,7 @@ func TestSendSignTransactionRequest_InvalidWebhookSecret(t *testing.T) {
 	signURL, err := url.Parse("www.webhook.com")
 	require.NoError(t, err)
 
-	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, []byte{}, basicReq)
+	actualXDR, actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, "", basicReq)
 	require.Error(t, err)
 	assert.Empty(t, actualXDR)
 	assert.Nil(t, actualEnvelope)
@@ -309,7 +310,7 @@ func TestSendEventsRequest_InvalidWebhookSecret(t *testing.T) {
 	eventsURL, err := url.Parse("www.webhook.com")
 	require.NoError(t, err)
 
-	require.Error(t, env.client.Events(ctxWithHeaders, *eventsURL, []byte{}, []byte("{}")))
+	require.Error(t, env.client.Events(ctxWithHeaders, *eventsURL, "", []byte("{}")))
 }
 
 func TestSendEventsRequest_StatusCodes(t *testing.T) {
@@ -346,7 +347,7 @@ func newTestServerWithJSONResponse(t *testing.T, env testEnv, statusCode int, re
 		agoraSignature, err := base64.StdEncoding.DecodeString(req.Header.Get(AgoraHMACHeader))
 		require.NoError(t, err)
 
-		h := hmac.New(sha256.New, env.secretKey)
+		h := hmac.New(sha256.New, []byte(env.secretKey))
 		_, err = h.Write(body)
 		require.NoError(t, err)
 

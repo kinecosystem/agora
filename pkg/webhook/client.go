@@ -56,7 +56,7 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 // SignTransaction submits a sign transaction request to an app webhook
-func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret []byte, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
+func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret string, req *signtransaction.RequestBody) (encodedXDR string, envelopeXDR *xdr.TransactionEnvelope, err error) {
 	signTxJSON, err := json.Marshal(req)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to marshal sign transaction request body")
@@ -97,10 +97,10 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 		retry.BackoffWithJitter(backoff.BinaryExponential(100*time.Millisecond), 440*time.Millisecond, 0.1),
 		retry.NonRetriableErrors(app.ErrURLNotSet),
 	)
-	defer resp.Body.Close()
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to call sign transaction webhook")
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
 		decodedResp := &signtransaction.SuccessResponse{}
@@ -139,7 +139,7 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 	return "", nil, &SignTransactionError{Message: "failed to sign transaction", StatusCode: resp.StatusCode}
 }
 
-func (c *Client) Events(ctx context.Context, eventsURL url.URL, webhookSecret, body []byte) error {
+func (c *Client) Events(ctx context.Context, eventsURL url.URL, webhookSecret string, body []byte) error {
 	log := c.log.WithFields(logrus.Fields{
 		"method": "Events",
 		"url":    eventsURL.String(),
@@ -186,12 +186,12 @@ func (c *Client) Events(ctx context.Context, eventsURL url.URL, webhookSecret, b
 	return errors.Errorf("webhook error: %d", resp.StatusCode)
 }
 
-func sign(req *http.Request, secret, body []byte) error {
-	if len(secret) < 32 {
-		return errors.New("webhook secret must be at least 32 bytes")
+func sign(req *http.Request, secret string, body []byte) error {
+	if len(secret) == 1 {
+		return errors.New("webhook secret must be at least 1 bytes")
 	}
 
-	h := hmac.New(sha256.New, secret)
+	h := hmac.New(sha256.New, []byte(secret))
 	_, err := h.Write(body)
 	if err != nil {
 		return errors.Wrap(err, "failed to generate hmac signature")
