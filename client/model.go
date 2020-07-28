@@ -86,6 +86,9 @@ func parsePaymentsFromEnvelope(envelope xdr.TransactionEnvelope, txType kin.Tran
 			// the amount of operations in a transaction matches the amount
 			// of invoices submitted, such that there is a direct mapping
 			// between the transaction Operations and the InvoiceList.
+			//
+			// Additionally, we check they're the same above as an extra
+			// safety measure.
 			p.Invoice = invoiceList.Invoices[i]
 		} else if envelope.Tx.Memo.Text != nil {
 			p.Memo = *envelope.Tx.Memo.Text
