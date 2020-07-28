@@ -224,7 +224,7 @@ func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFun
 		}
 		req.Payments, err = parsePaymentsFromEnvelope(envelope, kin.TransactionTypeSpend, invoiceList)
 		if err != nil {
-			http.Error(w, "mixed operation types in envelope", http.StatusBadRequest)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
