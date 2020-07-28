@@ -18,7 +18,7 @@ import (
 // Agora directly. The API is _not_ stable and is not intend for general use.
 //
 // It is exposed in case there needs to be low level access to Agora (beyond
-// the gRPC client directly). However, there is no stability guarentees between
+// the gRPC client directly). However, there are no stability guarantees between
 // releases, or during a migration event.
 type InternalClient struct {
 	retrier retry.Retrier

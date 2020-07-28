@@ -84,8 +84,8 @@ type clientOpts struct {
 // ClientOption configures a Client.
 type ClientOption func(*clientOpts)
 
-// WithAppIndex specifices the app index to use when
-// submiting transactions with Invoices, _or_ to use
+// WithAppIndex specifies the app index to use when
+// submitting transactions with Invoices, _or_ to use
 // the non-text based memo format.
 func WithAppIndex(index uint16) ClientOption {
 	return func(o *clientOpts) {
@@ -102,7 +102,7 @@ func WithGRPC(cc *grpc.ClientConn) ClientOption {
 	}
 }
 
-// WithEndpoint specifies an endpoint to user.
+// WithEndpoint specifies an endpoint to use.
 //
 // It cannot be used alongside WithGRPC.
 func WithEndpoint(endpoint string) ClientOption {
@@ -131,7 +131,7 @@ func WithMaxRetries(maxRetries uint) ClientOption {
 // the client will attempt to regenerate a nonce and retry
 // a transaction.
 //
-// This is independant from WithMaxRetries.
+// This is independent from WithMaxRetries.
 func WithMaxNonceRetries(maxSequenceRetries uint) ClientOption {
 	return func(o *clientOpts) {
 		o.maxSequenceRetries = maxSequenceRetries
@@ -552,7 +552,7 @@ func (c *client) sendEarnBatch(ctx context.Context, batch EarnBatch) (result Sub
 	}
 
 	if len(result.InvoiceErrors) > 0 {
-		// Invoice errors shuold not be triggered on earns.
+		// Invoice errors should not be triggered on earns.
 		//
 		// This indicates there is something wrong with the service.
 		return result, errors.New("unexpected invoice errors present")

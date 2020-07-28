@@ -180,7 +180,7 @@ func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFun
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			// todoo(consistency): double check error code response
+			// todo(consistency): double check error code response
 			http.Error(w, "", http.StatusMethodNotAllowed)
 			return
 		}
@@ -193,7 +193,7 @@ func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFun
 		defer r.Body.Close()
 
 		if err := verifySignature(r.Header, body, secret); err != nil {
-			// todoo(consistency): double check error code response
+			// todo(consistency): double check error code response
 			http.Error(w, "", http.StatusForbidden)
 			return
 		}

@@ -111,7 +111,7 @@ func TestInternal_GetTransaction(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	// Test valid combinations of transcations.
+	// Test valid combinations of transactions.
 	//
 	// Any transaction not using the invoice structure may have
 	// non-payment types. Therefore, generatePayments() inserts
@@ -238,7 +238,7 @@ func TestInternal_SubmitStellarTransaction(t *testing.T) {
 			},
 		}
 	}
-	// Test invoice errors propgation
+	// Test invoice errors propagation
 	env.server.mu.Lock()
 	env.server.submitResponses = []*transactionpb.SubmitTransactionResponse{
 		{

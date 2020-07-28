@@ -17,7 +17,7 @@ func (k PublicKey) StellarAddress() string {
 	return strkey.MustEncode(strkey.VersionByteAccountID, k)
 }
 
-// PublicKey is an ed25519.PrivatPrivateKey.
+// PublicKey is an ed25519.PrivateKey.
 type PrivateKey ed25519.PrivateKey
 
 // Public returns the corresponding PublicKey.
