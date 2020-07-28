@@ -212,7 +212,7 @@ func New(env Environment, opts ...ClientOption) (Client, error) {
 // CreateAccount creates a kin account.
 func (c *client) CreateAccount(ctx context.Context, key PrivateKey) error {
 	switch c.kinVersion {
-	case 2, 3:
+	case 3:
 		return c.internal.CreateStellarAccount(ctx, key)
 	default:
 		return errors.Errorf("unsupported kin version: %d", c.kinVersion)
@@ -224,7 +224,7 @@ func (c *client) CreateAccount(ctx context.Context, key PrivateKey) error {
 // ErrAccountDoesNotExist is returned if no account exists.
 func (c *client) GetBalance(ctx context.Context, account PublicKey) (int64, error) {
 	switch c.kinVersion {
-	case 2, 3:
+	case 3:
 		accountInfo, err := c.internal.GetStellarAccountInfo(ctx, account)
 		if err != nil {
 			return 0, err
