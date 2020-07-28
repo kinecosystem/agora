@@ -26,7 +26,11 @@ var (
 	ErrSKUNotFound      = errors.New("sku not found")
 
 	errUnexpectedResult = errors.New("unexpected result from agora")
-	nonRetriableErrors  = []error{
+
+	// nonRetriableErrors contains the set of errors that
+	// should not be retried without modifications to the
+	// transaction.
+	nonRetriableErrors = []error{
 		ErrAccountExists,
 		ErrAccountDoesNotExist,
 		ErrBadNonce,

@@ -592,13 +592,19 @@ func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, env
 				return errors.Wrap(err, "failed to marshal transaction envelope")
 			}
 
-			result, err = c.internal.SubmitStellarTransaction(ctx, envelopeBytes, invoiceList)
-			return err
+			if result, err = c.internal.SubmitStellarTransaction(ctx, envelopeBytes, invoiceList); err != nil {
+				return err
+			}
+			if result.Errors.TxError == ErrBadNonce {
+				return ErrBadNonce
+			}
+
+			return nil
 		},
 		retry.Limit(c.opts.maxSequenceRetries),
 		retry.RetriableErrors(ErrBadNonce),
 	)
-	if err != nil {
+	if err != nil && err != ErrBadNonce {
 		return result, err
 	}
 
