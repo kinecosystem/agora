@@ -150,7 +150,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	handler = EventsHandler([]byte("secret"), f)
 	handler.ServeHTTP(rr, req)
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 
 	// No sig
 	req, err = http.NewRequest(http.MethodPost, "/events", b)
@@ -160,7 +160,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	handler = EventsHandler([]byte("secret"), f)
 	handler.ServeHTTP(rr, req)
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
 func TestSignTransactionHandler(t *testing.T) {
@@ -387,7 +387,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
 	handler.ServeHTTP(rr, req)
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 
 	// No sig
 	req, err = http.NewRequest(http.MethodPost, "/sign_transaction", b)
@@ -397,7 +397,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
 	handler.ServeHTTP(rr, req)
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 
 	makeReq := func(r signtransaction.RequestBody) *http.Request {
 		body, err := json.Marshal(&r)

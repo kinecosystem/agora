@@ -35,7 +35,6 @@ type EventsFunc func([]events.Event) error
 func EventsHandler(secret []byte, f EventsFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			// todoo(consistency): double check error code response
 			http.Error(w, "", http.StatusMethodNotAllowed)
 			return
 		}
@@ -48,8 +47,7 @@ func EventsHandler(secret []byte, f EventsFunc) http.HandlerFunc {
 		defer r.Body.Close()
 
 		if err := verifySignature(r.Header, body, secret); err != nil {
-			// todoo(consistency): double check error code response
-			http.Error(w, "", http.StatusForbidden)
+			http.Error(w, "", http.StatusUnauthorized)
 			return
 		}
 
@@ -193,8 +191,7 @@ func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFun
 		defer r.Body.Close()
 
 		if err := verifySignature(r.Header, body, secret); err != nil {
-			// todo(consistency): double check error code response
-			http.Error(w, "", http.StatusForbidden)
+			http.Error(w, "", http.StatusUnauthorized)
 			return
 		}
 
