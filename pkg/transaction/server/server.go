@@ -117,6 +117,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 
 	e := &xdr.TransactionEnvelope{}
 	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.EnvelopeXdr), e); err != nil {
+		log.WithError(err).Debug("invalid xdr, dropping")
 		return nil, status.Error(codes.InvalidArgument, "invalid xdr")
 	}
 
@@ -279,7 +280,16 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
 			}
 
+			hash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
+			if err != nil {
+				log.WithError(err).Warn("failed to compute hash of submitted transaction")
+				return nil, status.Error(codes.Internal, "failed to compute tx hash")
+			}
+
 			return &transactionpb.SubmitTransactionResponse{
+				Hash: &commonpb.TransactionHash{
+					Value: hash[:],
+				},
 				Result:    transactionpb.SubmitTransactionResponse_FAILED,
 				ResultXdr: resultXDR,
 			}, nil
