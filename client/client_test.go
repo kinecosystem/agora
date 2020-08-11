@@ -44,7 +44,7 @@ func TestClient_AccountManagement(t *testing.T) {
 }
 
 func TestClient_GetTransaction(t *testing.T) {
-	// currently this proxyies directly to internal, which has tests.
+	// currently this proxies directly to internal, which has tests.
 	// if this changes, we should add more tests here.
 }
 
