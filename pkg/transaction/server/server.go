@@ -38,11 +38,11 @@ const (
 )
 
 type server struct {
-	log              *logrus.Entry
-	network          build.Network
+	log     *logrus.Entry
+	network build.Network
 
 	appConfigStore app.ConfigStore
-	appMapper app.Mapper
+	appMapper      app.Mapper
 	invoiceStore   invoice.Store
 	loader         *historyLoader
 
@@ -85,11 +85,11 @@ func New(
 	}
 
 	return &server{
-		log:              logrus.StandardLogger().WithField("type", "transaction/server"),
-		network:          network,
+		log:     logrus.StandardLogger().WithField("type", "transaction/server"),
+		network: network,
 
 		appConfigStore: appConfigStore,
-		appMapper: appMapper,
+		appMapper:      appMapper,
 		invoiceStore:   invoiceStore,
 		loader:         newLoader(client, reader, committer),
 
@@ -157,8 +157,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			}
 		}
 	} else if e.Tx.Memo.Text != nil {
-		appID := parseAppID(*e.Tx.Memo.Text)
-		if len(appID) != 0 {
+		if appID, ok := appIDFromTextMemo(*e.Tx.Memo.Text); ok {
 			appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
 			if err != nil && err != app.ErrMappingNotFound {
 				log.WithError(err).Warn("failed to get app id mapping")
@@ -333,18 +332,10 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		},
 	}
 
-	var appIndex uint16
-	if tx.memo != nil {
-		appIndex = tx.memo.AppIndex()
-	} else if len(tx.textMemo) > 0 {
-		appID := parseAppID(tx.textMemo)
-		if len(appID) != 0 {
-			appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
-			if err != nil && err != app.ErrMappingNotFound {
-				log.WithError(err).Warn("failed to get app id mapping")
-				return nil, status.Error(codes.Internal, "failed to get app id mapping")
-			}
-		}
+	appIndex, err := s.appIndexFromTxData(ctx, tx)
+	if err != nil && err != app.ErrMappingNotFound {
+		log.WithError(err).Warn("failed to get app index")
+		return nil, status.Error(codes.Internal, "failed to get app index")
 	}
 
 	if appIndex == 0 {
@@ -406,22 +397,10 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		// Note: this only works because we're appending pointers.
 		resp.Items = append(resp.Items, item)
 
-		var appIndex uint16
-		if tx.memo != nil {
-			appIndex = tx.memo.AppIndex()
-		} else if len(tx.textMemo) > 0 {
-			appID := parseAppID(tx.textMemo)
-			if len(appID) != 0 {
-				appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
-				if err != nil && err != app.ErrMappingNotFound {
-					log.WithError(err).Warn("failed to get app id mapping")
-					return nil, status.Error(codes.Internal, "failed to get app id mapping")
-				}
-			}
-		}
-
-		if appIndex == 0 {
-			continue
+		appIndex, err := s.appIndexFromTxData(ctx, tx)
+		if err != nil && err != app.ErrMappingNotFound {
+			log.WithError(err).Warn("failed to get app index")
+			return nil, status.Error(codes.Internal, "failed to get app index")
 		}
 
 		if appIndex > 0 {
@@ -460,21 +439,33 @@ func (s *server) getInvoiceList(ctx context.Context, appConfig *app.Config, txHa
 	return il, err
 }
 
-func parseAppID(memo string) (appID string) {
+func (s *server) appIndexFromTxData(ctx context.Context, tx txData) (appIndex uint16, err error) {
+	if tx.memo != nil {
+		return tx.memo.AppIndex(), nil
+	}
+
+	if appID, ok := appIDFromTextMemo(tx.textMemo); ok {
+		return s.appMapper.GetAppIndex(ctx, appID)
+	}
+
+	return 0, nil
+}
+
+func appIDFromTextMemo(memo string) (appID string, ok bool) {
 	parts := strings.Split(memo, "-")
 	if len(parts) < 2 {
-		return ""
+		return "", false
 	}
 
 	// Only one supported version of text memos exist
 	if parts[0] != "1" {
-		return ""
+		return "", false
 	}
 
 	// App IDs are expected to be 3 or 4 characters
 	if !app.IsValidAppID(parts[1]) {
-		return ""
+		return "", false
 	}
 
-	return parts[1]
+	return parts[1], true
 }

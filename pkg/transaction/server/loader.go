@@ -26,8 +26,8 @@ type txData struct {
 	envelopeXDR []byte
 	resultXDR   []byte
 
-	cursor *transactionpb.Cursor
-	memo   *kin.Memo
+	cursor   *transactionpb.Cursor
+	memo     *kin.Memo
 	textMemo string
 }
 
@@ -213,16 +213,22 @@ func txDataFromHorizon(tx horizon.Transaction) (data txData, err error) {
 		Value: orderKey,
 	}
 
-	b, err := base64.StdEncoding.DecodeString(tx.Memo)
-	if err == nil {
+	if len(tx.Memo) > 0 {
+		b, err := base64.StdEncoding.DecodeString(tx.Memo)
+		if err != nil {
+			return data, errors.Wrap(err, "failed to decode transaction memo")
+		}
+
 		var xm xdr.Memo
-		if err := xm.UnmarshalBinary(b); err == nil {
-			// todo: configurable encoding strictness?
-			if memo, ok := kin.MemoFromXDR(xm, true); ok {
-				data.memo = &memo
-			} else if xm.Text != nil {
-				data.textMemo = *xm.Text
-			}
+		err = xm.UnmarshalBinary(b)
+		if err != nil {
+			return data, errors.Wrap(err, "failed to unmarshal binary memo")
+		}
+
+		if memo, ok := kin.MemoFromXDR(xm, true); ok {
+			data.memo = &memo
+		} else if xm.Text != nil {
+			data.textMemo = *xm.Text
 		}
 	}
 
