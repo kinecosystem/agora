@@ -53,8 +53,8 @@ import (
 )
 
 const (
-	rootKeypairIDEnv      = "ROOT_KEYPAIR_ID"
-	keystoreTypeEnv       = "KEYSTORE_TYPE"
+	rootKeypairIDEnv = "ROOT_KEYPAIR_ID"
+	keystoreTypeEnv  = "KEYSTORE_TYPE"
 
 	// Rate Limit Configs
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"

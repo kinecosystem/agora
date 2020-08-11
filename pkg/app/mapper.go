@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	ErrMappingExists = errors.New("app ID mapping already exists")
+	ErrMappingExists   = errors.New("app ID mapping already exists")
 	ErrMappingNotFound = errors.New("app ID mapping not found")
 )
 

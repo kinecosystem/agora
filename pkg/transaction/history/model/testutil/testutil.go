@@ -32,8 +32,8 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 		copy(envelope.Tx.Memo.Hash[:], memo[:])
 	} else if textMemo != nil {
 		envelope.Tx.Memo = xdr.Memo{
-			Type:    xdr.MemoTypeMemoText,
-			Text:    textMemo,
+			Type: xdr.MemoTypeMemoText,
+			Text: textMemo,
 		}
 	}
 
