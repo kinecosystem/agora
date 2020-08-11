@@ -604,9 +604,6 @@ func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, env
 		retry.Limit(c.opts.maxSequenceRetries),
 		retry.RetriableErrors(ErrBadNonce),
 	)
-	if err != nil && err != ErrBadNonce {
-		return result, err
-	}
 
 	return result, err
 }
