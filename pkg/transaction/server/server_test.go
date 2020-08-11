@@ -1193,6 +1193,7 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 
 	type testCase struct {
 		hError   horizon.Error
+		resp     *transactionpb.GetTransactionResponse
 		grpcCode codes.Code
 	}
 
@@ -1203,7 +1204,8 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 					Status: 404,
 				},
 			},
-			grpcCode: codes.NotFound,
+			resp:     &transactionpb.GetTransactionResponse{State: transactionpb.GetTransactionResponse_UNKNOWN},
+			grpcCode: codes.OK,
 		},
 		{
 			hError: horizon.Error{
@@ -1211,18 +1213,20 @@ func TestGetTransaction_HorizonErrors(t *testing.T) {
 					Status: 500,
 				},
 			},
+			resp:     nil,
 			grpcCode: codes.Internal,
 		},
 	}
 
 	for _, tc := range testCases {
 		env.hClient.On("LoadTransaction", mock.AnythingOfType("string")).Return(horizonprotocols.Transaction{}, error(&tc.hError)).Once()
-		_, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
+		resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
 			TransactionHash: &commonpb.TransactionHash{
 				Value: make([]byte, 32),
 			},
 		})
 		assert.Equal(t, tc.grpcCode, status.Code(err))
+		assert.True(t, proto.Equal(tc.resp, resp))
 	}
 }
 

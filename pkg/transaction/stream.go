@@ -34,7 +34,6 @@ func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterfa
 	req := horizonclient.TransactionRequest{
 		Order:         horizonclient.OrderAsc,
 		Cursor:        "now",
-		IncludeFailed: true,
 	}
 
 	handler := func(t hProtocol.Transaction) {

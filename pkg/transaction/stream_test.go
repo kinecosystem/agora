@@ -25,7 +25,7 @@ func TestOpenTransactionStream(t *testing.T) {
 	}
 	hmock.On(
 		"GET",
-		"https://localhost/transactions?cursor=now&include_failed=true&order=asc",
+		"https://localhost/transactions?cursor=now&order=asc",
 	).ReturnString(200, txStreamResponse)
 
 	ctx, cancel := context.WithCancel(context.Background())

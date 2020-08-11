@@ -314,7 +314,7 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 
 	tx, err := s.loader.getTransaction(ctx, req.TransactionHash.Value)
 	if err == history.ErrNotFound {
-		return nil, status.Error(codes.NotFound, "")
+		return &transactionpb.GetTransactionResponse{State: transactionpb.GetTransactionResponse_UNKNOWN}, nil
 	} else if err != nil {
 		log.WithError(err).Warn("failed to get transaction")
 		return nil, status.Error(codes.Internal, err.Error())
