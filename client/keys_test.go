@@ -14,7 +14,7 @@ func TestKeys_Stellar(t *testing.T) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
-	priv, err := PrivateKeyFromString(kp.Seed())
+	priv, _ := PrivateKeyFromString(kp.Seed())
 	assert.Equal(t, kp.Seed(), priv.stellarSeed())
 	assert.Equal(t, kp.Address(), priv.Public().StellarAddress())
 

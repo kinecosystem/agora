@@ -27,7 +27,7 @@ type Environment string
 
 const (
 	EnvironmentTest Environment = "test"
-	EnvironmentProd             = "prod"
+	EnvironmentProd Environment = "prod"
 )
 
 var (
@@ -64,7 +64,6 @@ type client struct {
 
 	kinVersion int
 	network    build.Network
-	appIndex   uint16
 }
 
 type clientOpts struct {
@@ -72,8 +71,6 @@ type clientOpts struct {
 	maxSequenceRetries uint
 	minDelay           time.Duration
 	maxDelay           time.Duration
-
-	strategy retry.Strategy
 
 	cc           *grpc.ClientConn
 	endpoint     string
@@ -374,7 +371,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 				err = errors.New("cannot submit earn batch with invoices without an app index")
 				break
 			}
-			if (batch.Receivers[i].Invoice == nil) != (batch.Receivers[i].Invoice == nil) {
+			if (batch.Receivers[i].Invoice == nil) != (batch.Receivers[i+1].Invoice == nil) {
 				err = errors.New("either all or none of the receivers should have an invoice set")
 				break
 			}
@@ -410,8 +407,11 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
-			break
 		default:
+		}
+
+		if err != nil {
+			break
 		}
 
 		var submitResult SubmitStellarTransactionResult

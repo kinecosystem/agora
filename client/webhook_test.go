@@ -65,7 +65,7 @@ func TestEventsHandler(t *testing.T) {
 	secret := []byte("secret")
 	b := bytes.NewBuffer(body)
 	h := hmac.New(sha256.New, secret)
-	_, err = h.Write(b.Bytes())
+	_, _ = h.Write(b.Bytes())
 	sig := h.Sum(nil)
 
 	req, err := http.NewRequest(http.MethodPost, "/events", b)
@@ -127,7 +127,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	secret := []byte("secret")
 	b := bytes.NewBuffer([]byte("{"))
 	h := hmac.New(sha256.New, secret)
-	_, err := h.Write(b.Bytes())
+	_, _ = h.Write(b.Bytes())
 	sig := h.Sum(nil)
 
 	// Generic bad request
@@ -215,7 +215,7 @@ func TestSignTransactionHandler(t *testing.T) {
 		secret := []byte("secret")
 		b := bytes.NewBuffer(body)
 		h := hmac.New(sha256.New, secret)
-		_, err = h.Write(b.Bytes())
+		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
 		req, err := http.NewRequest(http.MethodPost, "/sign_transaction", b)
@@ -259,7 +259,7 @@ func TestSignTransactionHandler_Rejected(t *testing.T) {
 		secret := []byte("secret")
 		b := bytes.NewBuffer(body)
 		h := hmac.New(sha256.New, secret)
-		_, err = h.Write(b.Bytes())
+		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
 		req, err := http.NewRequest(http.MethodPost, "/sign_transaction", b)
@@ -305,7 +305,7 @@ func TestSignTransactionHandler_InvoiceErrors(t *testing.T) {
 		secret := []byte("secret")
 		b := bytes.NewBuffer(body)
 		h := hmac.New(sha256.New, secret)
-		_, err = h.Write(b.Bytes())
+		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
 		req, err := http.NewRequest(http.MethodPost, "/sign_transaction", b)
@@ -364,7 +364,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	secret := []byte("secret")
 	b := bytes.NewBuffer([]byte("{"))
 	h := hmac.New(sha256.New, secret)
-	_, err := h.Write(b.Bytes())
+	_, _ = h.Write(b.Bytes())
 	sig := h.Sum(nil)
 
 	// Generic bad request
@@ -405,7 +405,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 
 		b := bytes.NewBuffer(body)
 		h := hmac.New(sha256.New, secret)
-		_, err = h.Write(b.Bytes())
+		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
 		req, err = http.NewRequest(http.MethodPost, "/sign_transaction", b)
