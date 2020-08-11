@@ -95,12 +95,14 @@ func errorFromXDRBytes(resultXDR []byte) (txErrors TransactionErrors, err error)
 			txErrors.OpErrors[i] = ErrSenderDoesNotExist
 			continue
 		default:
-			return txErrors, errors.Errorf("unknown operation result code: %d", opResult.Code)
+			txErrors.OpErrors[i] = errors.Errorf("unknown operation result code: %d", opResult.Code)
+			continue
 		}
 
 		switch opResult.Tr.Type {
 		case xdr.OperationTypeCreateAccount:
 			switch opResult.Tr.CreateAccountResult.Code {
+			case xdr.CreateAccountResultCodeCreateAccountSuccess:
 			case xdr.CreateAccountResultCodeCreateAccountMalformed:
 				txErrors.OpErrors[i] = ErrMalformed
 			case xdr.CreateAccountResultCodeCreateAccountAlreadyExist:
@@ -108,7 +110,7 @@ func errorFromXDRBytes(resultXDR []byte) (txErrors TransactionErrors, err error)
 			case xdr.CreateAccountResultCodeCreateAccountUnderfunded:
 				txErrors.OpErrors[i] = ErrInsufficientBalance
 			default:
-				return txErrors, errors.Errorf("create account operation failed with code: %d", opResult.Tr.CreateAccountResult.Code)
+				txErrors.OpErrors[i] = errors.Errorf("create account operation failed with code: %d", opResult.Tr.CreateAccountResult.Code)
 			}
 		case xdr.OperationTypePayment:
 			switch opResult.Tr.PaymentResult.Code {
@@ -126,10 +128,10 @@ func errorFromXDRBytes(resultXDR []byte) (txErrors TransactionErrors, err error)
 			case xdr.PaymentResultCodePaymentNoDestination:
 				txErrors.OpErrors[i] = ErrDestinationDoesNotExist
 			default:
-				return txErrors, errors.Errorf("payment operation failed with code: %d", opResult.Tr.PaymentResult.Code)
+				txErrors.OpErrors[i] = errors.Errorf("payment operation failed with code: %d", opResult.Tr.PaymentResult.Code)
 			}
 		default:
-			return txErrors, errors.Errorf("operation[%d] failed", i)
+			txErrors.OpErrors[i] = errors.Errorf("operation[%d] failed", i)
 		}
 	}
 

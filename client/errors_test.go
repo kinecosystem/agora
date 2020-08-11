@@ -73,8 +73,10 @@ func TestErrors_BadParseOperations(t *testing.T) {
 		resultBytes, err := result.MarshalBinary()
 		require.NoError(t, err)
 
-		_, err = errorFromXDRBytes(resultBytes)
-		assert.Error(t, err, c.Tr)
+		errors, err := errorFromXDRBytes(resultBytes)
+		assert.NoError(t, err)
+
+		assert.Error(t, errors.OpErrors[0])
 	}
 
 	// Test combined case
@@ -86,8 +88,11 @@ func TestErrors_BadParseOperations(t *testing.T) {
 	}
 	resultBytes, err := result.MarshalBinary()
 	require.NoError(t, err)
-	_, err = errorFromXDRBytes(resultBytes)
-	assert.Error(t, err)
+	errors, err := errorFromXDRBytes(resultBytes)
+	assert.NoError(t, err)
+	for _, err := range errors.OpErrors {
+		assert.Error(t, err)
+	}
 }
 
 func TestErrors_TxError(t *testing.T) {
