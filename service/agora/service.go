@@ -221,8 +221,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 
 	committer := ingestioncommitter.New(dynamoClient)
-	historyIngestor := stellar.New("history", model.KinVersion_KIN3, clientV2, network.Passphrase)
-	eventsIngestor := stellar.New("events", model.KinVersion_KIN3, clientV2, network.Passphrase)
+	historyIngestor := stellar.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
+	eventsIngestor := stellar.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
 	historyLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin3", 10*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "failed to init history ingestion lock")

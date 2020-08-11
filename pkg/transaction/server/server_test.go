@@ -971,7 +971,7 @@ func TestGetTransaction_Loader(t *testing.T) {
 	generated, hash := historytestutil.GenerateEntry(t, 1, 2, accounts[0], accounts[1:], nil)
 	require.NoError(t, env.rw.Write(context.Background(), generated))
 
-	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated)))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated)))
 
 	resp, err := env.client.GetTransaction(context.Background(), &transactionpb.GetTransactionRequest{
 		TransactionHash: &commonpb.TransactionHash{
@@ -1175,7 +1175,7 @@ func TestGetHistory_Query(t *testing.T) {
 	require.Empty(t, resp.Items)
 
 	// Advance to the 5th entry
-	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[4])))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated[4])))
 	resp, err = env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
 		AccountId: &commonpb.StellarAccountId{
 			Value: accounts[0].Address(),
@@ -1195,7 +1195,7 @@ func TestGetHistory_Query(t *testing.T) {
 	// Mark all as committed
 	previous := historytestutil.GetOrderingKey(t, generated[4])
 	latest := historytestutil.GetOrderingKey(t, generated[len(generated)-1])
-	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), previous, latest))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), previous, latest))
 
 	testCases := []struct {
 		direction transactionpb.GetHistoryRequest_Direction
@@ -1286,7 +1286,7 @@ func TestGetHistory_WithInvoicingEnabled(t *testing.T) {
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
-	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
 
 	for _, hash := range hashes {
 		require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))
@@ -1334,7 +1334,7 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
-	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
 
 	for _, hash := range hashes {
 		require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))

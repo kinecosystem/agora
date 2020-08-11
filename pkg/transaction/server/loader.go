@@ -104,7 +104,7 @@ func (h *historyLoader) getTransactions(ctx context.Context, account string, cur
 	}
 
 	latestVersion := entries[len(entries)-1].Version
-	latestCommit, err := h.committer.Latest(ctx, latestVersion.String())
+	latestCommit, err := h.committer.Latest(ctx, ingestion.GetHistoryIngestorName(latestVersion))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get latest pointer for %s", latestVersion.String())
 	}

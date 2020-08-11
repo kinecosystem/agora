@@ -3,6 +3,7 @@ package ingestion
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/kinecosystem/agora-common/retry"
@@ -11,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
+	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
 var (
@@ -95,6 +97,18 @@ type Committer interface {
 	//
 	// Nil is returned with a nil error if no previous commit exists.
 	Latest(ctx context.Context, ingestor string) (Pointer, error)
+}
+
+// GetHistoryIngestorName returns the history ingestor name for the
+// specified version.
+func GetHistoryIngestorName(version model.KinVersion) string {
+	return fmt.Sprintf("history_%s", version.String())
+}
+
+// GetEventsIngestorName returns the events ingestor name for the
+// specified version.
+func GetEventsIngestorName(version model.KinVersion) string {
+	return fmt.Sprintf("events_%s", version.String())
 }
 
 // Run runs an ingestion flow in a blocking fashion. Run only returns

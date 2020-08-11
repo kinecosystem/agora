@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -44,7 +43,7 @@ func New(name string, version model.KinVersion, client horizonclient.ClientInter
 
 // Name implements ingestion.Ingestor.Name.
 func (i *ingestor) Name() string {
-	return fmt.Sprintf("%s_%s", i.name, i.version.String())
+	return i.name
 }
 
 // Ingest implements ingestion.Ingestor.Ingest.
