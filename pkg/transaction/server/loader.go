@@ -28,6 +28,7 @@ type txData struct {
 
 	cursor *transactionpb.Cursor
 	memo   *kin.Memo
+	textMemo string
 }
 
 type historyLoader struct {
@@ -175,12 +176,13 @@ func txDataFromEntry(entry *model.Entry) (data txData, err error) {
 		return data, errors.Wrap(err, "failed to unmarshal envelope bytes")
 	}
 
-	if envelope.Tx.Memo.Hash == nil {
-		return data, nil
-	}
-	memo := kin.Memo(*envelope.Tx.Memo.Hash)
-	if kin.IsValidMemoStrict(memo) {
-		data.memo = &memo
+	if envelope.Tx.Memo.Hash != nil {
+		memo := kin.Memo(*envelope.Tx.Memo.Hash)
+		if kin.IsValidMemoStrict(memo) {
+			data.memo = &memo
+		}
+	} else if envelope.Tx.Memo.Text != nil {
+		data.textMemo = *envelope.Tx.Memo.Text
 	}
 
 	return data, nil
@@ -211,9 +213,17 @@ func txDataFromHorizon(tx horizon.Transaction) (data txData, err error) {
 		Value: orderKey,
 	}
 
-	// todo: configurable encoding strictness?
-	if memo, err := kin.MemoFromXDRString(tx.Memo, true); err == nil {
-		data.memo = &memo
+	b, err := base64.StdEncoding.DecodeString(tx.Memo)
+	if err == nil {
+		var xm xdr.Memo
+		if err := xm.UnmarshalBinary(b); err == nil {
+			// todo: configurable encoding strictness?
+			if memo, ok := kin.MemoFromXDR(xm, true); ok {
+				data.memo = &memo
+			} else if xm.Text != nil {
+				data.textMemo = *xm.Text
+			}
+		}
 	}
 
 	return data, nil

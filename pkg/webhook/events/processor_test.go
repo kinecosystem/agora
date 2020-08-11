@@ -109,7 +109,7 @@ func TestRoundTrip(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:])
+	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
@@ -145,7 +145,7 @@ func TestRoundTrip(t *testing.T) {
 		EventsURL:     eventsURL,
 		WebhookSecret: "secret",
 	}
-	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
 
 	require.NoError(t, env.processor.Write(context.Background(), entry))
@@ -165,14 +165,14 @@ func TestWebhook_None(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:])
+	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
 	appConfig := &app.Config{
 		AppName:       "kin",
 		WebhookSecret: "secret",
 	}
-	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
 
 	b, err := proto.Marshal(entry)
@@ -193,7 +193,7 @@ func TestWebhook_NonRetriableError(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:])
+	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
@@ -210,7 +210,7 @@ func TestWebhook_NonRetriableError(t *testing.T) {
 		EventsURL:     eventsURL,
 		WebhookSecret: "secret",
 	}
-	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
 
 	b, err := proto.Marshal(entry)
@@ -231,7 +231,7 @@ func TestWebhook_RetriableError(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:])
+	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
@@ -249,7 +249,7 @@ func TestWebhook_RetriableError(t *testing.T) {
 		EventsURL:     eventsURL,
 		WebhookSecret: "secret",
 	}
-	err = env.appConfigStore.Add(context.Background(), 0, appConfig)
+	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
 
 	b, err := proto.Marshal(entry)

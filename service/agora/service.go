@@ -30,6 +30,7 @@ import (
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
+	appmapper "github.com/kinecosystem/agora/pkg/app/dynamodb/mapper"
 	"github.com/kinecosystem/agora/pkg/channel"
 	channelpool "github.com/kinecosystem/agora/pkg/channel/dynamodb"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
@@ -53,7 +54,6 @@ import (
 
 const (
 	rootKeypairIDEnv      = "ROOT_KEYPAIR_ID"
-	whitelistKeypairIDEnv = "WHITELIST_KEYPAIR_ID"
 	keystoreTypeEnv       = "KEYSTORE_TYPE"
 
 	// Rate Limit Configs
@@ -92,11 +92,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to determine root keypair")
 	}
 
-	whitelistAccountKP, err := keystore.Get(context.Background(), os.Getenv(whitelistKeypairIDEnv))
-	if err != nil {
-		return errors.Wrap(err, "failed to load whitelist keypair")
-	}
-
 	client, err := kin.GetClient()
 	if err != nil {
 		return errors.Wrap(err, "failed to get kin client")
@@ -123,6 +118,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
+	appMapper := appmapper.New(dynamoClient)
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
@@ -235,8 +231,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 	historyRW := historyrw.New(dynamoClient)
 
 	a.txnServer, err = transactionserver.New(
-		whitelistAccountKP,
 		appConfigStore,
+		appMapper,
 		invoiceStore,
 		historyRW,
 		committer,

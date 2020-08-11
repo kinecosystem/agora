@@ -29,7 +29,7 @@ func testRoundTrip_Stellar(t *testing.T, rw history.ReaderWriter) {
 	t.Run("TestRoundTrip_Stellar", func(t *testing.T) {
 		ctx := context.Background()
 		accounts := testutil.GenerateAccountIDs(t, 10)
-		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil)
+		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil, nil)
 
 		// Assert no previous state
 		_, err := rw.GetTransaction(ctx, hash)
@@ -59,7 +59,7 @@ func testDoubleInsert(t *testing.T, rw history.ReaderWriter) {
 	t.Run("TestDoubleInsert", func(t *testing.T) {
 		ctx := context.Background()
 		accounts := testutil.GenerateAccountIDs(t, 10)
-		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil)
+		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil, nil)
 
 		// Writes should be idempotent, provided the entry is the same.
 		for i := 0; i < 2; i++ {
@@ -112,7 +112,7 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 
 		generated := make([]*model.Entry, 100)
 		for i := 0; i < 100; i++ {
-			generated[i], _ = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil)
+			generated[i], _ = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil, nil)
 			require.NoError(t, rw.Write(ctx, generated[i]))
 		}
 

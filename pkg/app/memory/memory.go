@@ -29,6 +29,10 @@ func (s *store) reset() {
 
 // Add implements app.ConfigStore.Add
 func (s *store) Add(ctx context.Context, appIndex uint16, config *app.Config) error {
+	if appIndex == 0 {
+		return errors.New("cannot add config for app index 0")
+	}
+
 	if config == nil {
 		return errors.New("config is nil")
 	}

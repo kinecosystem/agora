@@ -33,6 +33,10 @@ type configItem struct {
 }
 
 func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeValue, error) {
+	if appIndex == 0 {
+		return nil, errors.New("cannot add config for app index 0")
+	}
+
 	if config == nil {
 		return nil, errors.New("config is nil")
 	}

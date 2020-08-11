@@ -13,7 +13,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
-func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountId, receivers []xdr.AccountId, invoiceHash []byte) (*model.Entry, []byte) {
+// todo: options may be better for longer term testing
+func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountId, receivers []xdr.AccountId, invoiceHash []byte, textMemo *string) (*model.Entry, []byte) {
 	var ops []xdr.Operation
 	for _, r := range receivers {
 		ops = append(ops, testutil.GeneratePaymentOperation(&sender, r))
@@ -21,7 +22,7 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 	envelope := testutil.GenerateTransactionEnvelope(sender, int(ledger)+txOrder, ops)
 
 	if invoiceHash != nil {
-		memo, err := kin.NewMemo(1, kin.TransactionTypeSpend, 0, invoiceHash)
+		memo, err := kin.NewMemo(1, kin.TransactionTypeSpend, 1, invoiceHash)
 		require.NoError(t, err)
 
 		envelope.Tx.Memo = xdr.Memo{
@@ -29,6 +30,11 @@ func GenerateEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.AccountI
 			Hash: &xdr.Hash{},
 		}
 		copy(envelope.Tx.Memo.Hash[:], memo[:])
+	} else if textMemo != nil {
+		envelope.Tx.Memo = xdr.Memo{
+			Type:    xdr.MemoTypeMemoText,
+			Text:    textMemo,
+		}
 	}
 
 	envelopeBytes, err := envelope.MarshalBinary()

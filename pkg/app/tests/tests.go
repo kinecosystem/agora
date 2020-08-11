@@ -19,7 +19,7 @@ func RunTests(t *testing.T, store app.ConfigStore, teardown func()) {
 
 func testRoundTrip(t *testing.T, store app.ConfigStore) {
 	t.Run("testRoundTrip", func(t *testing.T) {
-		actualConfig, err := store.Get(context.Background(), 0)
+		actualConfig, err := store.Get(context.Background(), 1)
 		require.Equal(t, app.ErrNotFound, err)
 		require.Nil(t, actualConfig)
 
@@ -36,13 +36,13 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 			InvoicingEnabled:   true,
 		}
 
-		err = store.Add(context.Background(), 0, config)
+		err = store.Add(context.Background(), 1, config)
 		require.NoError(t, err)
 
-		err = store.Add(context.Background(), 0, config)
+		err = store.Add(context.Background(), 1, config)
 		require.Error(t, err, app.ErrExists)
 
-		actualConfig, err = store.Get(context.Background(), 0)
+		actualConfig, err = store.Get(context.Background(), 1)
 		require.NoError(t, err)
 		require.Equal(t, config, actualConfig)
 	})
@@ -50,10 +50,13 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 
 func testInvalidParameters(t *testing.T, store app.ConfigStore) {
 	t.Run("testInvalidParameters", func(t *testing.T) {
-		err := store.Add(context.Background(), 0, nil)
+		err := store.Add(context.Background(), 0, &app.Config{AppName: "kin"})
 		require.Error(t, err)
 
-		err = store.Add(context.Background(), 0, &app.Config{})
+		err = store.Add(context.Background(), 1, nil)
+		require.Error(t, err)
+
+		err = store.Add(context.Background(), 1, &app.Config{})
 		require.Error(t, err)
 	})
 }

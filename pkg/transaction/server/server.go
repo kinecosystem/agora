@@ -7,12 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
-	"github.com/kinecosystem/go/keypair"
 	"github.com/kinecosystem/go/network"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
@@ -26,7 +26,6 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
-	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/webhook"
@@ -40,10 +39,10 @@ const (
 
 type server struct {
 	log              *logrus.Entry
-	whitelistAccount *keypair.Full
 	network          build.Network
 
 	appConfigStore app.ConfigStore
+	appMapper app.Mapper
 	invoiceStore   invoice.Store
 	loader         *historyLoader
 
@@ -69,8 +68,8 @@ type Config struct {
 
 // New returns a new transactionpb.TransactionServer.
 func New(
-	whitelistAccount *keypair.Full,
 	appConfigStore app.ConfigStore,
+	appMapper app.Mapper,
 	invoiceStore invoice.Store,
 	reader history.Reader,
 	committer ingestion.Committer,
@@ -87,10 +86,10 @@ func New(
 
 	return &server{
 		log:              logrus.StandardLogger().WithField("type", "transaction/server"),
-		whitelistAccount: whitelistAccount,
 		network:          network,
 
 		appConfigStore: appConfigStore,
+		appMapper: appMapper,
 		invoiceStore:   invoiceStore,
 		loader:         newLoader(client, reader, committer),
 
@@ -125,9 +124,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.InvalidArgument, "missing transaction signature")
 	}
 
-	encodedXDR := base64.StdEncoding.EncodeToString(req.EnvelopeXdr)
+	var err error
+	var appIndex uint16
+	var memo kin.Memo
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
-		memo := kin.Memo(*e.Tx.Memo.Hash)
+		memo = kin.Memo(*e.Tx.Memo.Hash)
+		appIndex = memo.AppIndex()
 
 		if s.config.SubmitTxAppLimit > 0 {
 			result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
@@ -154,100 +156,95 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
 			}
 		}
+	} else if e.Tx.Memo.Text != nil {
+		appID := parseAppID(*e.Tx.Memo.Text)
+		if len(appID) != 0 {
+			appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
+			if err != nil && err != app.ErrMappingNotFound {
+				log.WithError(err).Warn("failed to get app id mapping")
+				return nil, status.Error(codes.Internal, "failed to get app id mapping")
+			}
+		}
+	}
 
-		// todo(testing): it's likely better to setup a 'test' webhook that
-		//                will perform the whitelisting, rather than hack it in
-		//                here.
-		if memo.AppIndex() == 0 && s.whitelistAccount != nil {
-			whitelisted, err := transaction.SignEnvelope(e, s.network, s.whitelistAccount.Seed())
+	encodedXDR := base64.StdEncoding.EncodeToString(req.EnvelopeXdr)
+	if appIndex > 0 {
+		config, err := s.appConfigStore.Get(ctx, appIndex)
+		if err == app.ErrNotFound {
+			return nil, status.Error(codes.InvalidArgument, "app index not found")
+		}
+		if err != nil {
+			log.WithError(err).Warn("failed to get app config")
+			return nil, status.Error(codes.Internal, "failed to get app config")
+		}
+
+		log.WithField("appIndex", appIndex)
+
+		reqBody, err := signtransaction.RequestBodyFromProto(req)
+		if err != nil {
+			log.WithError(err).Warn("failed to convert request for signing")
+			return nil, status.Error(codes.Internal, "failed to submit transaction")
+		}
+
+		if config.SignTransactionURL != nil {
+			encodedXDR, e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
 			if err != nil {
-				return nil, status.Error(codes.Internal, "failed to whitelist txn")
-			}
-			e = whitelisted
-
-			envelopeBytes, err := e.MarshalBinary()
-			if err != nil {
-				return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
-			}
-			encodedXDR = base64.StdEncoding.EncodeToString(envelopeBytes)
-		} else {
-			config, err := s.appConfigStore.Get(ctx, memo.AppIndex())
-			if err == app.ErrNotFound {
-				return nil, status.Error(codes.InvalidArgument, "app index not found")
-			}
-			if err != nil {
-				log.WithError(err).Warn("failed to get app config")
-				return nil, status.Error(codes.Internal, "failed to get app config")
-			}
-
-			log.WithField("appIndex", memo.AppIndex())
-
-			reqBody, err := signtransaction.RequestBodyFromProto(req)
-			if err != nil {
-				log.WithError(err).Warn("failed to convert request for signing")
-				return nil, status.Error(codes.Internal, "failed to submit transaction")
-			}
-
-			if config.SignTransactionURL != nil {
-				encodedXDR, e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
-				if err != nil {
-					if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
-						switch signTxErr.StatusCode {
-						case 400:
-							log.WithError(signTxErr).Warn("Received 400 from app server")
-							return nil, status.Error(codes.Internal, "failed to submit transaction")
-						case 403:
-							if len(signTxErr.OperationErrors) == 0 || len(req.InvoiceList.GetInvoices()) == 0 {
-								return &transactionpb.SubmitTransactionResponse{
-									Result: transactionpb.SubmitTransactionResponse_REJECTED,
-								}, nil
-							}
-
-							invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
-							for i, opErr := range signTxErr.OperationErrors {
-								var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
-								switch opErr.Reason {
-								case signtransaction.AlreadyPaid:
-									reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
-								case signtransaction.WrongDestination:
-									reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
-								case signtransaction.SKUNotFound:
-									reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
-								default:
-									reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
-								}
-
-								if int(opErr.OperationIndex) >= len(req.InvoiceList.GetInvoices()) {
-									log.WithFields(logrus.Fields{
-										"index":  opErr.OperationIndex,
-										"reason": reason,
-									}).Info("out of range index error, ignoring")
-									continue
-								}
-
-								invoiceErrs[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
-									OpIndex: opErr.OperationIndex,
-									Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
-									Reason:  reason,
-								}
-							}
+				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
+					switch signTxErr.StatusCode {
+					case 400:
+						log.WithError(signTxErr).Warn("Received 400 from app server")
+						return nil, status.Error(codes.Internal, "failed to submit transaction")
+					case 403:
+						if len(signTxErr.OperationErrors) == 0 || len(req.InvoiceList.GetInvoices()) == 0 {
 							return &transactionpb.SubmitTransactionResponse{
-								Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
-								InvoiceErrors: invoiceErrs,
+								Result: transactionpb.SubmitTransactionResponse_REJECTED,
 							}, nil
-						default:
-							log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
-							return nil, status.Error(codes.Internal, "failed to submit transaction")
 						}
-					}
 
-					log.WithError(err).Warn("failed to call sign transaction webhook")
-					return nil, status.Error(codes.Internal, "failed to whitelist transaction")
+						invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
+						for i, opErr := range signTxErr.OperationErrors {
+							var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
+							switch opErr.Reason {
+							case signtransaction.AlreadyPaid:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
+							case signtransaction.WrongDestination:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
+							case signtransaction.SKUNotFound:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
+							default:
+								reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
+							}
+
+							if int(opErr.OperationIndex) >= len(req.InvoiceList.GetInvoices()) {
+								log.WithFields(logrus.Fields{
+									"index":  opErr.OperationIndex,
+									"reason": reason,
+								}).Info("out of range index error, ignoring")
+								continue
+							}
+
+							invoiceErrs[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+								OpIndex: opErr.OperationIndex,
+								Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
+								Reason:  reason,
+							}
+						}
+						return &transactionpb.SubmitTransactionResponse{
+							Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
+							InvoiceErrors: invoiceErrs,
+						}, nil
+					default:
+						log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
+						return nil, status.Error(codes.Internal, "failed to submit transaction")
+					}
 				}
+
+				log.WithError(err).Warn("failed to call sign transaction webhook")
+				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
 			}
 		}
 
-		if req.InvoiceList != nil {
+		if config.InvoicingEnabled && req.InvoiceList != nil {
 			txHash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
 			if err != nil {
 				return nil, status.Error(codes.Internal, "failed to hash transaction")
@@ -335,12 +332,27 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 			Cursor:      tx.cursor,
 		},
 	}
-	if tx.memo == nil {
+
+	var appIndex uint16
+	if tx.memo != nil {
+		appIndex = tx.memo.AppIndex()
+	} else if len(tx.textMemo) > 0 {
+		appID := parseAppID(tx.textMemo)
+		if len(appID) != 0 {
+			appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
+			if err != nil && err != app.ErrMappingNotFound {
+				log.WithError(err).Warn("failed to get app id mapping")
+				return nil, status.Error(codes.Internal, "failed to get app id mapping")
+			}
+		}
+	}
+
+	if appIndex == 0 {
 		return resp, nil
 	}
 
 	// todo(caching): cache config
-	appConfig, err := s.appConfigStore.Get(ctx, tx.memo.AppIndex())
+	appConfig, err := s.appConfigStore.Get(ctx, appIndex)
 	if err != nil {
 		if err == app.ErrNotFound {
 			return resp, nil
@@ -393,25 +405,42 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		//
 		// Note: this only works because we're appending pointers.
 		resp.Items = append(resp.Items, item)
-		if tx.memo == nil {
+
+		var appIndex uint16
+		if tx.memo != nil {
+			appIndex = tx.memo.AppIndex()
+		} else if len(tx.textMemo) > 0 {
+			appID := parseAppID(tx.textMemo)
+			if len(appID) != 0 {
+				appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
+				if err != nil && err != app.ErrMappingNotFound {
+					log.WithError(err).Warn("failed to get app id mapping")
+					return nil, status.Error(codes.Internal, "failed to get app id mapping")
+				}
+			}
+		}
+
+		if appIndex == 0 {
 			continue
 		}
 
-		// todo(caching): cache config
-		appConfig, err := s.appConfigStore.Get(ctx, tx.memo.AppIndex())
-		if err != nil {
-			if err == app.ErrNotFound {
-				return resp, nil
+		if appIndex > 0 {
+			// todo(caching): cache config
+			appConfig, err := s.appConfigStore.Get(ctx, appIndex)
+			if err != nil {
+				if err == app.ErrNotFound {
+					return resp, nil
+				}
+
+				log.WithError(err).Warn("Failed to get app config")
+				return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 			}
 
-			log.WithError(err).Warn("Failed to get app config")
-			return nil, status.Error(codes.Internal, "failed to retrieve agora data")
-		}
-
-		item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, tx.hash)
-		if err != nil {
-			log.WithError(err).Warn("Failed to retrieve invoice list")
-			return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
+			item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, tx.hash)
+			if err != nil {
+				log.WithError(err).Warn("Failed to retrieve invoice list")
+				return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
+			}
 		}
 	}
 
@@ -429,4 +458,23 @@ func (s *server) getInvoiceList(ctx context.Context, appConfig *app.Config, txHa
 		return nil, nil
 	}
 	return il, err
+}
+
+func parseAppID(memo string) (appID string) {
+	parts := strings.Split(memo, "-")
+	if len(parts) < 2 {
+		return ""
+	}
+
+	// Only one supported version of text memos exist
+	if parts[0] != "1" {
+		return ""
+	}
+
+	// App IDs are expected to be 3 or 4 characters
+	if !app.IsValidAppID(parts[1]) {
+		return ""
+	}
+
+	return parts[1]
 }
