@@ -166,7 +166,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
-	encodedXDR := base64.StdEncoding.EncodeToString(req.EnvelopeXdr)
 	if appIndex > 0 {
 		config, err := s.appConfigStore.Get(ctx, appIndex)
 		if err == app.ErrNotFound {
@@ -256,6 +255,11 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			}
 		}
 	}
+	envelopeBytes, err := e.MarshalBinary()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
+	}
+	encodedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
 
 	// todo: timeout on txn send?
 	resp, err := s.client.SubmitTransaction(encodedXDR)
