@@ -57,6 +57,14 @@ type Reader interface {
 	// If no options are specified, the results will be in ascending order starting
 	// from the beginning (with an undefined limit).
 	GetAccountTransactions(ctx context.Context, account string, opts *ReadOptions) ([]*model.Entry, error)
+
+	// GetLatestForAccount returns the latest model.Entry in an accounts history.
+	//
+	// The entry is not guaranteed to be committed. As a result, it should be filtered
+	// before being returned to callers / users.
+	//
+	// If no entries exist for the account, ErrNotFound is returned.
+	GetLatestForAccount(ctx context.Context, account string) (*model.Entry, error)
 }
 
 type ReaderWriter interface {

@@ -1213,7 +1213,14 @@ func TestGetHistory_Query(t *testing.T) {
 		{
 			start:     -1,
 			direction: transactionpb.GetHistoryRequest_DESC,
-			expected:  []*model.Entry{},
+			// Since we haven't specified a cursor, the loader should
+			// default to the _latest_ entry as a cursor.
+			expected: generated,
+		},
+		{
+			start:     0,
+			direction: transactionpb.GetHistoryRequest_DESC,
+			expected:  generated[0:1],
 		},
 		{
 			direction: transactionpb.GetHistoryRequest_DESC,

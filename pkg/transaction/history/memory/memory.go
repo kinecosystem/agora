@@ -105,6 +105,19 @@ func (rw *RW) GetTransaction(_ context.Context, txHash []byte) (*model.Entry, er
 	return e, nil
 }
 
+// GetLatestForAccount implements history.Reader.GetLatestForAccount.
+func (rw *RW) GetLatestForAccount(_ context.Context, account string) (*model.Entry, error) {
+	rw.Lock()
+	defer rw.Unlock()
+
+	accountHistory := rw.accountTxns[account]
+	if len(accountHistory) == 0 {
+		return nil, history.ErrNotFound
+	}
+
+	return proto.Clone(accountHistory[len(accountHistory)-1]).(*model.Entry), nil
+}
+
 // GetAccountTransactions implements history.Writer.GetAccountTransactions.
 func (rw *RW) GetAccountTransactions(_ context.Context, account string, opts *history.ReadOptions) ([]*model.Entry, error) {
 	rw.Lock()

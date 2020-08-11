@@ -107,11 +107,18 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 		ctx := context.Background()
 		accounts := testutil.GenerateAccountIDs(t, 10)
 
+		_, err := rw.GetLatestForAccount(ctx, accounts[0].Address())
+		assert.Equal(t, err, history.ErrNotFound)
+
 		generated := make([]*model.Entry, 100)
 		for i := 0; i < 100; i++ {
 			generated[i], _ = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil)
 			require.NoError(t, rw.Write(ctx, generated[i]))
 		}
+
+		latest, err := rw.GetLatestForAccount(ctx, accounts[0].Address())
+		assert.NoError(t, err)
+		assert.True(t, proto.Equal(generated[99], latest))
 
 		lastKey, err := generated[99].GetOrderingKey()
 		require.NoError(t, err)

@@ -96,6 +96,28 @@ func (db *db) GetAccountTransactions(ctx context.Context, account string, opts *
 	return entries, nil
 }
 
+// GetLatestForAccount implements history.Reader.GetLatestForAccount.
+func (db *db) GetLatestForAccount(ctx context.Context, account string) (*model.Entry, error) {
+	resp, err := db.client.QueryRequest(&dynamodb.QueryInput{
+		TableName:              txByAccountTableStr,
+		KeyConditionExpression: getAccountLatestQueryStr,
+		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
+			":account": dynamodb.AttributeValue{S: aws.String(account)},
+		},
+		Limit:            aws.Int64(1),
+		ScanIndexForward: aws.Bool(false),
+	}).Send(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get latest entry")
+	}
+
+	if len(resp.Items) == 0 {
+		return nil, history.ErrNotFound
+	}
+
+	return getEntry(resp.Items[0])
+}
+
 // Write implements history.Writer.Write.
 func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 	if entry == nil {

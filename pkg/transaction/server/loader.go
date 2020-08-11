@@ -93,6 +93,19 @@ func (h *historyLoader) getTransactions(ctx context.Context, account string, cur
 		} else {
 			opts.Start = start
 		}
+	} else if opts.Descending {
+		var latestEntry *model.Entry
+		latestEntry, err := h.reader.GetLatestForAccount(ctx, account)
+		if err == history.ErrNotFound {
+			return nil, nil
+		} else if err != nil {
+			return nil, errors.Wrap(err, "failed to get last entry for account")
+		}
+
+		opts.Start, err = latestEntry.GetOrderingKey()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get ordering key from latest entry")
+		}
 	}
 
 	entries, err := h.reader.GetAccountTransactions(ctx, account, opts)
