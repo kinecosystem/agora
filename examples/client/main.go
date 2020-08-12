@@ -30,8 +30,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Initialize the SDK using AppIndex 1, the test app.
-	c, err := client.New(client.EnvironmentTest, client.WithAppIndex(1))
+	// Initialize the SDK using AppIndex 2, the test app.
+	c, err := client.New(client.EnvironmentTest, client.WithAppIndex(2))
 	if err != nil {
 		log.Fatal(err)
 	}
