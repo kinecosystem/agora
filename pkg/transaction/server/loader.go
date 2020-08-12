@@ -135,6 +135,16 @@ func (h *historyLoader) getTransactions(ctx context.Context, account string, cur
 			continue
 		}
 
+		// If a cursor was specified, we don't want to include that entry
+		// in the results, as the caller presumably has it.
+		//
+		// Note: we do it here instead of the reader layer, as there may be
+		//       cases where we want the start to be included (and notably, it's
+		//       more natural to have the start be inclusive).
+		if bytes.Equal(opts.GetStart(), orderingKey) {
+			continue
+		}
+
 		data, err := txDataFromEntry(e)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get txData from entry")

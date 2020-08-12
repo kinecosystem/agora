@@ -1332,29 +1332,33 @@ func TestGetHistory_Query(t *testing.T) {
 			expected: generated,
 		},
 		{
-			start:    10,
-			expected: generated[10:],
+			start: 10,
+			// Since we don't include the entry at the cursor position,
+			// we should receive cursor+1 and onward.
+			expected: generated[11:],
 		},
 		{
 			start:     -1,
 			direction: transactionpb.GetHistoryRequest_DESC,
 			// Since we haven't specified a cursor, the loader should
-			// default to the _latest_ entry as a cursor.
-			expected: generated,
+			// default to the _latest_ entry as a cursor. Additionally,
+			// as with the above case, the entry at the cursor position
+			// is not returned.
+			expected: generated[:len(generated)-1],
 		},
 		{
-			start:     0,
+			start:     1,
 			direction: transactionpb.GetHistoryRequest_DESC,
 			expected:  generated[0:1],
 		},
 		{
-			direction: transactionpb.GetHistoryRequest_DESC,
 			start:     len(generated) - 1,
-			expected:  generated,
+			direction: transactionpb.GetHistoryRequest_DESC,
+			expected:  generated[:len(generated)-1],
 		},
 	}
 
-	for _, tc := range testCases {
+	for i, tc := range testCases {
 		var cursor *transactionpb.Cursor
 		if tc.start >= 0 {
 			k, err := generated[tc.start].GetOrderingKey()
@@ -1372,7 +1376,7 @@ func TestGetHistory_Query(t *testing.T) {
 			Cursor:    cursor,
 		})
 		require.NoError(t, err)
-		require.Equal(t, len(tc.expected), len(resp.Items))
+		require.Equal(t, len(tc.expected), len(resp.Items), "case: %d", i)
 
 		for i := 0; i < len(tc.expected); i++ {
 			var expected txData
