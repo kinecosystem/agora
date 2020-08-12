@@ -1513,7 +1513,7 @@ func TestGetHistory_TextMemoWithInvoicingEnabled(t *testing.T) {
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
-	require.NoError(t, env.committer.Commit(context.Background(), model.KinVersion_KIN3.String(), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
 
 	for _, hash := range hashes {
 		require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))
