@@ -46,9 +46,11 @@ func EventsHandler(secret []byte, f EventsFunc) http.HandlerFunc {
 		}
 		defer r.Body.Close()
 
-		if err := verifySignature(r.Header, body, secret); err != nil {
-			http.Error(w, "", http.StatusUnauthorized)
-			return
+		if len(secret) > 0 {
+			if err := verifySignature(r.Header, body, secret); err != nil {
+				http.Error(w, "", http.StatusUnauthorized)
+				return
+			}
 		}
 
 		var events []events.Event
@@ -190,9 +192,11 @@ func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFun
 		}
 		defer r.Body.Close()
 
-		if err := verifySignature(r.Header, body, secret); err != nil {
-			http.Error(w, "", http.StatusUnauthorized)
-			return
+		if len(secret) > 0 {
+			if err := verifySignature(r.Header, body, secret); err != nil {
+				http.Error(w, "", http.StatusUnauthorized)
+				return
+			}
 		}
 
 		var signRequest signtransaction.RequestBody

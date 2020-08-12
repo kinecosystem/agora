@@ -79,6 +79,18 @@ func TestEventsHandler(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.True(t, called)
 
+	// if no webhook secret was provided, don't validate
+	req, err = http.NewRequest(http.MethodPost, "/events", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString([]byte("fake sig")))
+
+	rr = httptest.NewRecorder()
+	handler = EventsHandler(nil, f)
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, called)
+
 	f = func([]events.Event) error {
 		return errors.New("server error")
 	}
@@ -237,6 +249,22 @@ func TestSignTransactionHandler(t *testing.T) {
 		assert.NoError(t, envelope.UnmarshalBinary(resp.EnvelopeXDR))
 		assert.Len(t, envelope.Signatures, 1)
 	}
+
+	// if no webhook secret was provided, don't validate
+	signRequest := genRequest(t, xdr.MemoTypeMemoNone)
+	body, err := json.Marshal(signRequest)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/sign_transaction", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString([]byte("fake sig")))
+
+	rr := httptest.NewRecorder()
+	handler := SignTransactionHandler(EnvironmentTest, nil, f)
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, called)
 }
 
 func TestSignTransactionHandler_Rejected(t *testing.T) {
