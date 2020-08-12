@@ -132,14 +132,6 @@ func (c *InternalClient) GetTransaction(ctx context.Context, txHash []byte) (dat
 
 		data.Payments, err = parsePaymentsFromEnvelope(envelope, transactionType, resp.Item.InvoiceList)
 		return data, err
-	case transactionpb.GetTransactionResponse_FAILED:
-		txErrors, err := errorFromXDRBytes(resp.Item.ResultXdr)
-		if err != nil {
-			return data, errors.Wrap(err, "failed to parse transaction errors")
-		}
-
-		data.Errors = txErrors
-		return data, nil
 	default:
 		return TransactionData{}, errors.Errorf("unexpected transaction state from agora: %v", resp.State)
 	}

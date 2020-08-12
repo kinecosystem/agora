@@ -150,51 +150,6 @@ func TestInternal_GetTransaction(t *testing.T) {
 			assert.True(t, proto.Equal(txData.Payments[i].Invoice, actual.Payments[i].Invoice))
 		}
 	}
-
-	// Ensure that the errors field is properly set.
-	for i, tc := range []struct {
-		handled bool
-		code    xdr.TransactionResultCode
-	}{
-		{
-			true,
-			xdr.TransactionResultCodeTxBadAuth,
-		},
-		{
-			false,
-			xdr.TransactionResultCodeTxTooLate,
-		},
-	} {
-		hash := make([]byte, 32)
-		hash[0] = byte(i)
-
-		result := xdr.TransactionResult{
-			Result: xdr.TransactionResultResult{
-				Code: tc.code,
-			},
-		}
-		resultBytes, err := result.MarshalBinary()
-		require.NoError(t, err)
-
-		env.server.mu.Lock()
-		env.server.gets[string(hash)] = transactionpb.GetTransactionResponse{
-			State: transactionpb.GetTransactionResponse_FAILED,
-			Item: &transactionpb.HistoryItem{
-				Hash:        &commonpb.TransactionHash{Value: hash},
-				EnvelopeXdr: []byte{0},
-				ResultXdr:   resultBytes,
-			},
-		}
-		env.server.mu.Unlock()
-
-		data, err := env.internal.GetTransaction(context.Background(), hash)
-		if tc.handled {
-			assert.NoError(t, err)
-			assert.Error(t, data.Errors.TxError)
-		} else {
-			assert.Error(t, err)
-		}
-	}
 }
 
 func TestInternal_SubmitStellarTransaction(t *testing.T) {

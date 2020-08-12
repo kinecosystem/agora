@@ -515,7 +515,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoiceAndDisabled(t *testing.T
 	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: base64.StdEncoding.EncodeToString(envelopeBytes)}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)
@@ -995,7 +995,7 @@ func TestSubmitTransaction_TextMemoSignTransaction200WithInvoice(t *testing.T) {
 	_, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "1-test")
 
 	// Set up test server with a successful sign response
-	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: base64.StdEncoding.EncodeToString(envelopeBytes)}
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
 	b, err := json.Marshal(webhookResp)
 	require.NoError(t, err)
 	testServer := newTestServerWithJSONResponse(t, 200, b)
