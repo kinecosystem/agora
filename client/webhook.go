@@ -32,7 +32,7 @@ type EventsFunc func([]events.Event) error
 
 // EventsHandler returns an http.HandlerFunc that decodes and verifies
 // an Events webhook call, before forwarding it to the specified EventsFunc.
-func EventsHandler(secret []byte, f EventsFunc) http.HandlerFunc {
+func EventsHandler(secret string, f EventsFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "", http.StatusMethodNotAllowed)
@@ -47,7 +47,7 @@ func EventsHandler(secret []byte, f EventsFunc) http.HandlerFunc {
 		defer r.Body.Close()
 
 		if len(secret) > 0 {
-			if err := verifySignature(r.Header, body, secret); err != nil {
+			if err := verifySignature(r.Header, body, []byte(secret)); err != nil {
 				http.Error(w, "", http.StatusUnauthorized)
 				return
 			}
@@ -170,7 +170,7 @@ func (r *SignTransactionResponse) MarkSKUNotFound(idx int) {
 
 // SignTransactionHandler returns an http.HandlerFunc that decodes and verifies
 // a signtransaction webhook call, before forwarding it to the specified SignTransactionFunc.
-func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFunc) http.HandlerFunc {
+func SignTransactionHandler(env Environment, secret string, f SignTransactionFunc) http.HandlerFunc {
 	var network build.Network
 	switch env {
 	case EnvironmentTest:
@@ -193,7 +193,7 @@ func SignTransactionHandler(env Environment, secret []byte, f SignTransactionFun
 		defer r.Body.Close()
 
 		if len(secret) > 0 {
-			if err := verifySignature(r.Header, body, secret); err != nil {
+			if err := verifySignature(r.Header, body, []byte(secret)); err != nil {
 				http.Error(w, "", http.StatusUnauthorized)
 				return
 			}
@@ -286,7 +286,7 @@ func verifySignature(header http.Header, body, secret []byte) error {
 		return errors.Wrap(err, "invalid signature")
 	}
 
-	h := hmac.New(sha256.New, secret)
+	h := hmac.New(sha256.New, []byte(secret))
 	if _, err := h.Write(body); err != nil {
 		return err
 	}

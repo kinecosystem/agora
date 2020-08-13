@@ -54,6 +54,6 @@ func main() {
 		log.Fatalf("unknown environment: %s", env)
 	}
 
-	http.HandleFunc("/sign_transaction", client.SignTransactionHandler(env, []byte(webhookSecret), signHandler))
+	http.HandleFunc("/sign_transaction", client.SignTransactionHandler(env, webhookSecret, signHandler))
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }

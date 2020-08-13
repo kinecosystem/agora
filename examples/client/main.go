@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
+	"time"
 
 	"github.com/kinecosystem/agora-common/kin"
 
@@ -32,6 +35,16 @@ func main() {
 
 	// Initialize the SDK using AppIndex 2, the test app.
 	c, err := client.New(client.EnvironmentTest, client.WithAppIndex(2))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a new account
+	_, priv, err := ed25519.GenerateKey(rand.New(rand.NewSource(time.Now().UnixNano())))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = c.CreateAccount(context.Background(), client.PrivateKey(priv))
 	if err != nil {
 		log.Fatal(err)
 	}

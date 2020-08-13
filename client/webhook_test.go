@@ -62,9 +62,9 @@ func TestEventsHandler(t *testing.T) {
 	body, err := json.Marshal(data)
 	require.NoError(t, err)
 
-	secret := []byte("secret")
+	secret := "secret"
 	b := bytes.NewBuffer(body)
-	h := hmac.New(sha256.New, secret)
+	h := hmac.New(sha256.New, []byte(secret))
 	_, _ = h.Write(b.Bytes())
 	sig := h.Sum(nil)
 
@@ -85,7 +85,7 @@ func TestEventsHandler(t *testing.T) {
 	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString([]byte("fake sig")))
 
 	rr = httptest.NewRecorder()
-	handler = EventsHandler(nil, f)
+	handler = EventsHandler("", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -130,15 +130,15 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	}
 	for _, r := range invalidMethodRequest {
 		rr := httptest.NewRecorder()
-		handler := EventsHandler([]byte("secret"), f)
+		handler := EventsHandler("secret", f)
 		handler.ServeHTTP(rr, r)
 
 		assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
 	}
 
-	secret := []byte("secret")
+	secret := "secret"
 	b := bytes.NewBuffer([]byte("{"))
-	h := hmac.New(sha256.New, secret)
+	h := hmac.New(sha256.New, []byte(secret))
 	_, _ = h.Write(b.Bytes())
 	sig := h.Sum(nil)
 
@@ -148,7 +148,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString(sig[:]))
 
 	rr := httptest.NewRecorder()
-	handler := EventsHandler([]byte("secret"), f)
+	handler := EventsHandler("secret", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -159,7 +159,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString([]byte("fake sig")))
 
 	rr = httptest.NewRecorder()
-	handler = EventsHandler([]byte("secret"), f)
+	handler = EventsHandler("secret", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -169,7 +169,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 	require.NoError(t, err)
 
 	rr = httptest.NewRecorder()
-	handler = EventsHandler([]byte("secret"), f)
+	handler = EventsHandler("secret", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -224,9 +224,9 @@ func TestSignTransactionHandler(t *testing.T) {
 		body, err := json.Marshal(data)
 		require.NoError(t, err)
 
-		secret := []byte("secret")
+		secret := "secret"
 		b := bytes.NewBuffer(body)
-		h := hmac.New(sha256.New, secret)
+		h := hmac.New(sha256.New, []byte(secret))
 		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
@@ -260,7 +260,7 @@ func TestSignTransactionHandler(t *testing.T) {
 	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString([]byte("fake sig")))
 
 	rr := httptest.NewRecorder()
-	handler := SignTransactionHandler(EnvironmentTest, nil, f)
+	handler := SignTransactionHandler(EnvironmentTest, "", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -284,9 +284,9 @@ func TestSignTransactionHandler_Rejected(t *testing.T) {
 		body, err := json.Marshal(data)
 		require.NoError(t, err)
 
-		secret := []byte("secret")
+		secret := "secret"
 		b := bytes.NewBuffer(body)
-		h := hmac.New(sha256.New, secret)
+		h := hmac.New(sha256.New, []byte(secret))
 		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
@@ -330,9 +330,9 @@ func TestSignTransactionHandler_InvoiceErrors(t *testing.T) {
 		body, err := json.Marshal(data)
 		require.NoError(t, err)
 
-		secret := []byte("secret")
+		secret := "secret"
 		b := bytes.NewBuffer(body)
-		h := hmac.New(sha256.New, secret)
+		h := hmac.New(sha256.New, []byte(secret))
 		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
@@ -383,15 +383,15 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	}
 	for _, r := range invalidMethodRequest {
 		rr := httptest.NewRecorder()
-		handler := SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+		handler := SignTransactionHandler(EnvironmentTest, "secret", f)
 		handler.ServeHTTP(rr, r)
 
 		assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
 	}
 
-	secret := []byte("secret")
+	secret := "secret"
 	b := bytes.NewBuffer([]byte("{"))
-	h := hmac.New(sha256.New, secret)
+	h := hmac.New(sha256.New, []byte(secret))
 	_, _ = h.Write(b.Bytes())
 	sig := h.Sum(nil)
 
@@ -401,7 +401,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString(sig[:]))
 
 	rr := httptest.NewRecorder()
-	handler := SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+	handler := SignTransactionHandler(EnvironmentTest, "secret", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -412,7 +412,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	req.Header.Add(webhook.AgoraHMACHeader, base64.StdEncoding.EncodeToString([]byte("fake sig")))
 
 	rr = httptest.NewRecorder()
-	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+	handler = SignTransactionHandler(EnvironmentTest, "secret", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -422,7 +422,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	require.NoError(t, err)
 
 	rr = httptest.NewRecorder()
-	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+	handler = SignTransactionHandler(EnvironmentTest, "secret", f)
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -432,7 +432,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 		require.NoError(t, err)
 
 		b := bytes.NewBuffer(body)
-		h := hmac.New(sha256.New, secret)
+		h := hmac.New(sha256.New, []byte(secret))
 		_, _ = h.Write(b.Bytes())
 		sig := h.Sum(nil)
 
@@ -452,7 +452,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	signReq.InvoiceList = ilBytes
 
 	rr = httptest.NewRecorder()
-	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+	handler = SignTransactionHandler(EnvironmentTest, "secret", f)
 	handler.ServeHTTP(rr, makeReq(signReq))
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -462,7 +462,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	signReq.EnvelopeXDR = signReq.EnvelopeXDR[1:]
 
 	rr = httptest.NewRecorder()
-	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+	handler = SignTransactionHandler(EnvironmentTest, "secret", f)
 	handler.ServeHTTP(rr, makeReq(signReq))
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 
@@ -470,7 +470,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	signReq = genRequest(t, xdr.MemoTypeMemoHash)
 	signReq.InvoiceList = signReq.InvoiceList[1:]
 	rr = httptest.NewRecorder()
-	handler = SignTransactionHandler(EnvironmentTest, []byte("secret"), f)
+	handler = SignTransactionHandler(EnvironmentTest, "secret", f)
 	handler.ServeHTTP(rr, makeReq(signReq))
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
