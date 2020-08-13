@@ -359,19 +359,19 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 	// Verify that there isn't a mixed usage of Invoices and text Memos, so we can
 	// fail early to reduce the chance of partial failures.
 	if batch.Memo != "" {
-		for _, r := range batch.Receivers {
+		for _, r := range batch.Earns {
 			if r.Invoice != nil {
 				err = errors.New("cannot have invoice set when memo is set")
 				break
 			}
 		}
 	} else {
-		for i := 0; i < len(batch.Receivers)-1; i++ {
-			if batch.Receivers[i].Invoice != nil && c.opts.appIndex == 0 {
+		for i := 0; i < len(batch.Earns)-1; i++ {
+			if batch.Earns[i].Invoice != nil && c.opts.appIndex == 0 {
 				err = errors.New("cannot submit earn batch with invoices without an app index")
 				break
 			}
-			if (batch.Receivers[i].Invoice == nil) != (batch.Receivers[i+1].Invoice == nil) {
+			if (batch.Earns[i].Invoice == nil) != (batch.Earns[i+1].Invoice == nil) {
 				err = errors.New("either all or none of the receivers should have an invoice set")
 				break
 			}
@@ -379,7 +379,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 	}
 
 	if err != nil {
-		for _, r := range batch.Receivers {
+		for _, r := range batch.Earns {
 			result.Failed = append(result.Failed, EarnResult{
 				Receiver: r,
 			})
@@ -390,15 +390,15 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 	// Stellar has an operation batch size of 100, so we break apart the EarnBatch into
 	// sub-batches of 100 each.
 	var batches []EarnBatch
-	for start := 0; start < len(batch.Receivers); start += 100 {
-		end := int(math.Min(float64(start+100), float64(len(batch.Receivers))))
+	for start := 0; start < len(batch.Earns); start += 100 {
+		end := int(math.Min(float64(start+100), float64(len(batch.Earns))))
 		b := EarnBatch{
-			Sender:    batch.Sender,
-			Source:    batch.Source,
-			Memo:      batch.Memo,
-			Receivers: make([]EarnReceiver, end-start),
+			Sender: batch.Sender,
+			Source: batch.Source,
+			Memo:   batch.Memo,
+			Earns:  make([]Earn, end-start),
 		}
-		copy(b.Receivers, batch.Receivers[start:end])
+		copy(b.Earns, batch.Earns[start:end])
 		batches = append(batches, b)
 	}
 
@@ -422,7 +422,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 
 		// If there are no errors in the result, then the batch was successful.
 		if submitResult.Errors.TxError == nil {
-			for _, r := range b.Receivers {
+			for _, r := range b.Earns {
 				result.Succeeded = append(result.Succeeded, EarnResult{
 					TxHash:   submitResult.Hash,
 					Receiver: r,
@@ -441,7 +441,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 		for j, e := range submitResult.Errors.OpErrors {
 			result.Failed = append(result.Failed, EarnResult{
 				TxHash:   submitResult.Hash,
-				Receiver: b.Receivers[j],
+				Receiver: b.Earns[j],
 				Error:    e,
 			})
 		}
@@ -457,7 +457,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 
 	// Add all of the aborted receivers to the Failed list.
 	for i := unprocessedBatch; i < len(batches); i++ {
-		for _, r := range batches[i].Receivers {
+		for _, r := range batches[i].Earns {
 			result.Failed = append(result.Failed, EarnResult{
 				Receiver: r,
 			})
@@ -484,11 +484,11 @@ func (c *client) sendEarnBatch(ctx context.Context, batch EarnBatch) (result Sub
 	envelope := xdr.TransactionEnvelope{
 		Tx: xdr.Transaction{
 			SourceAccount: accountIDFromPublicKey(signers[0].Public()),
-			Fee:           100 * xdr.Uint32(len(batch.Receivers)),
+			Fee:           100 * xdr.Uint32(len(batch.Earns)),
 		},
 	}
 
-	for _, r := range batch.Receivers {
+	for _, r := range batch.Earns {
 		envelope.Tx.Operations = append(envelope.Tx.Operations, xdr.Operation{
 			SourceAccount: &sender,
 			Body: xdr.OperationBody{
@@ -512,10 +512,10 @@ func (c *client) sendEarnBatch(ctx context.Context, batch EarnBatch) (result Sub
 		}
 	} else {
 		invoiceList = &commonpb.InvoiceList{
-			Invoices: make([]*commonpb.Invoice, 0, len(batch.Receivers)),
+			Invoices: make([]*commonpb.Invoice, 0, len(batch.Earns)),
 		}
 
-		for _, r := range batch.Receivers {
+		for _, r := range batch.Earns {
 			if r.Invoice != nil {
 				invoiceList.Invoices = append(invoiceList.Invoices, r.Invoice)
 			}
@@ -523,7 +523,7 @@ func (c *client) sendEarnBatch(ctx context.Context, batch EarnBatch) (result Sub
 
 		var fk [sha256.Size224]byte
 		if len(invoiceList.Invoices) > 0 {
-			if len(invoiceList.Invoices) != len(batch.Receivers) {
+			if len(invoiceList.Invoices) != len(batch.Earns) {
 				return result, errors.Errorf("either all or none of the receivers should have an invoice set")
 			}
 			invoiceBytes, err := proto.Marshal(invoiceList)

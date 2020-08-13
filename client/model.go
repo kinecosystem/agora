@@ -116,11 +116,11 @@ type EarnBatch struct {
 
 	Memo string
 
-	Receivers []EarnReceiver
+	Earns []Earn
 }
 
-// EarnReceiver represents a receiver in an earn batch.
-type EarnReceiver struct {
+// Earn represents a receiver in an earn batch.
+type Earn struct {
 	Destination PublicKey
 	Quarks      int64
 	Invoice     *commonpb.Invoice
@@ -138,6 +138,6 @@ type EarnBatchResult struct {
 // earn batch.
 type EarnResult struct {
 	TxHash   []byte
-	Receiver EarnReceiver
+	Receiver Earn
 	Error    error
 }

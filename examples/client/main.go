@@ -77,7 +77,7 @@ func main() {
 	result, err := c.SendEarnBatch(context.Background(), client.EarnBatch{
 		Sender: sender,
 		Memo:   "1-test",
-		Receivers: []client.EarnReceiver{
+		Earns: []client.Earn{
 			{
 				Destination: dest,
 				Quarks:      client.KinToQuarks(1.0),
