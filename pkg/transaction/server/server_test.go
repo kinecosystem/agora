@@ -769,15 +769,13 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
 		_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 			EnvelopeXdr: envelopeBytes,
-			InvoiceList: il,
 		})
 		require.NoError(t, err)
 	}
 
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, nil, 1)
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
 	})
 
 	require.Equal(t, codes.Unavailable, status.Code(err))
@@ -796,15 +794,13 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 		env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
 		_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 			EnvelopeXdr: envelopeBytes,
-			InvoiceList: il,
 		})
 		require.NoError(t, err)
 	}
 
-	_, envelopeBytes, _ = generateEnvelope(t, il, 1)
+	_, envelopeBytes, _ = generateEnvelope(t, nil, 1)
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
 	})
 
 	require.Equal(t, codes.Unavailable, status.Code(err))
@@ -985,14 +981,38 @@ func TestSubmitTransaction_TextMemoAppNotFound(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestSubmitTransaction_TextMemoSignTransaction200WithInvoice(t *testing.T) {
+func TestSubmitTransaction_TextMemoWithInvoices(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
 	err := env.appMapper.Add(context.Background(), "test", 1)
 	require.NoError(t, err)
 
-	_, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "1-test")
+	_, envelopeBytes, _ := generateEnvelopeWithTextMemo(t, "1-test")
+
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:          "some name",
+		InvoicingEnabled: true,
+	})
+	require.NoError(t, err)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Nil(t, resp)
+}
+
+func TestSubmitTransaction_TextMemoSignTransaction200(t *testing.T) {
+	env, cleanup := setup(t, -1, -1)
+	defer cleanup()
+
+	err := env.appMapper.Add(context.Background(), "test", 1)
+	require.NoError(t, err)
+
+	_, envelopeBytes, _ := generateEnvelopeWithTextMemo(t, "1-test")
 
 	// Set up test server with a successful sign response
 	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
@@ -1006,7 +1026,6 @@ func TestSubmitTransaction_TextMemoSignTransaction200WithInvoice(t *testing.T) {
 	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
 		AppName:            "some name",
 		SignTransactionURL: signURL,
-		InvoicingEnabled:   true,
 		WebhookSecret:      generateWebhookKey(t),
 	})
 	require.NoError(t, err)
@@ -1021,18 +1040,12 @@ func TestSubmitTransaction_TextMemoSignTransaction200WithInvoice(t *testing.T) {
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
-		InvoiceList: il,
 	})
 	require.NoError(t, err)
 
 	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
 	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
 	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
-
-	// Ensure that the invoice got stored
-	storedIL, err := env.invoiceStore.Get(context.Background(), txHash)
-	require.NoError(t, err)
-	assert.True(t, proto.Equal(il, storedIL))
 }
 
 func TestGetTransaction_Loader(t *testing.T) {
@@ -1243,15 +1256,12 @@ func TestGetTransaction_TextMemo(t *testing.T) {
 	appConfig := &app.Config{
 		AppName:            "kin",
 		SignTransactionURL: signTxURL,
-		InvoicingEnabled:   true,
 	}
 
 	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
 
 	envelope, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "1-test")
-	err = env.invoiceStore.Put(context.Background(), txHash, il)
-	require.NoError(t, err)
 
 	horizonResult := horizonprotocols.Transaction{
 		Hash:        hex.EncodeToString(txHash),
@@ -1276,7 +1286,7 @@ func TestGetTransaction_TextMemo(t *testing.T) {
 	assert.Equal(t, horizonResult.Hash, hex.EncodeToString(resp.Item.Hash.Value))
 	assert.Equal(t, horizonResult.ResultXdr, base64.StdEncoding.EncodeToString(resp.Item.ResultXdr))
 	assert.Equal(t, horizonResult.EnvelopeXdr, base64.StdEncoding.EncodeToString(resp.Item.EnvelopeXdr))
-	require.True(t, proto.Equal(il, resp.Item.InvoiceList))
+	assert.Nil(t, resp.Item.InvoiceList)
 }
 
 func TestGetHistory_Query(t *testing.T) {
@@ -1489,7 +1499,7 @@ func TestGetHistory_WithInvoicingDisabled(t *testing.T) {
 	}
 }
 
-func TestGetHistory_TextMemoWithInvoicingEnabled(t *testing.T) {
+func TestGetHistory_TextMemo(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
@@ -1502,7 +1512,6 @@ func TestGetHistory_TextMemoWithInvoicingEnabled(t *testing.T) {
 	appConfig := &app.Config{
 		AppName:            "kin",
 		SignTransactionURL: signTxURL,
-		InvoicingEnabled:   true,
 	}
 
 	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
@@ -1519,10 +1528,6 @@ func TestGetHistory_TextMemoWithInvoicingEnabled(t *testing.T) {
 
 	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated[len(generated)-1])))
 
-	for _, hash := range hashes {
-		require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))
-	}
-
 	resp, err := env.client.GetHistory(context.Background(), &transactionpb.GetHistoryRequest{
 		AccountId: &commonpb.StellarAccountId{
 			Value: accounts[0].Address(),
@@ -1532,8 +1537,7 @@ func TestGetHistory_TextMemoWithInvoicingEnabled(t *testing.T) {
 	require.Len(t, resp.Items, len(generated))
 
 	for _, item := range resp.Items {
-		require.NotNil(t, item.InvoiceList)
-		require.True(t, proto.Equal(il, item.InvoiceList))
+		require.Nil(t, item.InvoiceList)
 	}
 }
 

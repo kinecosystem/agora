@@ -157,6 +157,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
 			}
 		}
+	} else if req.InvoiceList != nil {
+		return nil, status.Error(codes.InvalidArgument, "transaction must contain valid kin binary memo to use invoices")
 	} else if e.Tx.Memo.Text != nil {
 		if appID, ok := appIDFromTextMemo(*e.Tx.Memo.Text); ok {
 			appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
@@ -367,10 +369,12 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 	}
 
-	resp.Item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, req.TransactionHash.Value)
-	if err != nil {
-		log.WithError(err).Warn("Failed to retrieve invoice list")
-		return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
+	if tx.memo != nil {
+		resp.Item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, req.TransactionHash.Value)
+		if err != nil {
+			log.WithError(err).Warn("Failed to retrieve invoice list")
+			return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
+		}
 	}
 
 	return resp, nil
@@ -429,10 +433,12 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 				return nil, status.Error(codes.Internal, "failed to retrieve agora data")
 			}
 
-			item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, tx.hash)
-			if err != nil {
-				log.WithError(err).Warn("Failed to retrieve invoice list")
-				return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
+			if tx.memo != nil {
+				item.InvoiceList, err = s.getInvoiceList(ctx, appConfig, tx.hash)
+				if err != nil {
+					log.WithError(err).Warn("Failed to retrieve invoice list")
+					return nil, status.Error(codes.Internal, "failed to retrieve invoice list")
+				}
 			}
 		}
 	}
