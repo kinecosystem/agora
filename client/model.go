@@ -119,7 +119,7 @@ type EarnBatch struct {
 	Earns []Earn
 }
 
-// Earn represents a receiver in an earn batch.
+// Earn represents a earn payment in an earn batch.
 type Earn struct {
 	Destination PublicKey
 	Quarks      int64
@@ -137,7 +137,7 @@ type EarnBatchResult struct {
 // EarnResult contains the result of a single earn within an
 // earn batch.
 type EarnResult struct {
-	TxHash   []byte
-	Receiver Earn
-	Error    error
+	TxHash []byte
+	Earn   Earn
+	Error  error
 }

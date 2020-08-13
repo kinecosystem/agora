@@ -52,7 +52,7 @@ type Client interface {
 	// SubmitPayment submits a single payment to a specified kin account.
 	SubmitPayment(ctx context.Context, payment Payment) (txHash []byte, err error)
 
-	// SendEarnBatch sends a batch of Earn payments to a set of receivers.
+	// SendEarnBatch sends a batch of earn payments.
 	//
 	// The batch may be done in on or more transactions.
 	SendEarnBatch(ctx context.Context, batch EarnBatch) (result EarnBatchResult, err error)
@@ -352,7 +352,7 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 	return result.Hash, nil
 }
 
-// SendEarnBatch sends a batch of Earn payments to a set of receivers.
+// SendEarnBatch sends a batch of earn payments.
 //
 // The batch may be done in on or more transactions.
 func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result EarnBatchResult, err error) {
@@ -372,7 +372,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 				break
 			}
 			if (batch.Earns[i].Invoice == nil) != (batch.Earns[i+1].Invoice == nil) {
-				err = errors.New("either all or none of the receivers should have an invoice set")
+				err = errors.New("either all or none of the earns should have an invoice set")
 				break
 			}
 		}
@@ -381,7 +381,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 	if err != nil {
 		for _, r := range batch.Earns {
 			result.Failed = append(result.Failed, EarnResult{
-				Receiver: r,
+				Earn: r,
 			})
 		}
 		return result, err
@@ -424,8 +424,8 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 		if submitResult.Errors.TxError == nil {
 			for _, r := range b.Earns {
 				result.Succeeded = append(result.Succeeded, EarnResult{
-					TxHash:   submitResult.Hash,
-					Receiver: r,
+					TxHash: submitResult.Hash,
+					Earn:   r,
 				})
 			}
 
@@ -440,9 +440,9 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 		// for this batch, and then mark the next batch as aborted.
 		for j, e := range submitResult.Errors.OpErrors {
 			result.Failed = append(result.Failed, EarnResult{
-				TxHash:   submitResult.Hash,
-				Receiver: b.Earns[j],
-				Error:    e,
+				TxHash: submitResult.Hash,
+				Earn:   b.Earns[j],
+				Error:  e,
 			})
 		}
 
@@ -455,11 +455,11 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 		break
 	}
 
-	// Add all of the aborted receivers to the Failed list.
+	// Add all of the aborted earns to the Failed list.
 	for i := unprocessedBatch; i < len(batches); i++ {
 		for _, r := range batches[i].Earns {
 			result.Failed = append(result.Failed, EarnResult{
-				Receiver: r,
+				Earn: r,
 			})
 		}
 	}
@@ -524,7 +524,7 @@ func (c *client) sendEarnBatch(ctx context.Context, batch EarnBatch) (result Sub
 		var fk [sha256.Size224]byte
 		if len(invoiceList.Invoices) > 0 {
 			if len(invoiceList.Invoices) != len(batch.Earns) {
-				return result, errors.Errorf("either all or none of the receivers should have an invoice set")
+				return result, errors.Errorf("either all or none of the earns should have an invoice set")
 			}
 			invoiceBytes, err := proto.Marshal(invoiceList)
 			if err != nil {

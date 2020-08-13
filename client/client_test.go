@@ -339,28 +339,28 @@ func TestClient_SendEarnBatchInternal(t *testing.T) {
 	_, source, err := ed25519.GenerateKey(r)
 	require.NoError(t, err)
 
-	receiverAccounts := make([]PrivateKey, 5)
-	for i := 0; i < len(receiverAccounts); i++ {
+	earnAccounts := make([]PrivateKey, 5)
+	for i := 0; i < len(earnAccounts); i++ {
 		_, dest, err := ed25519.GenerateKey(r)
 		require.NoError(t, err)
-		receiverAccounts[i] = PrivateKey(dest)
+		earnAccounts[i] = PrivateKey(dest)
 	}
 
-	for _, acc := range append([]PrivateKey{PrivateKey(sender), PrivateKey(source)}, receiverAccounts...) {
+	for _, acc := range append([]PrivateKey{PrivateKey(sender), PrivateKey(source)}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
-	var receivers []Earn
-	for i, r := range receiverAccounts {
-		receivers = append(receivers, Earn{
+	var earns []Earn
+	for i, r := range earnAccounts {
+		earns = append(earns, Earn{
 			Destination: PrivateKey(r).Public(),
 			Quarks:      int64(i) + 1,
 		})
 	}
 
-	var invoiceReceivers []Earn
-	for i, r := range receiverAccounts {
-		invoiceReceivers = append(invoiceReceivers, Earn{
+	var invoiceEarns []Earn
+	for i, r := range earnAccounts {
+		invoiceEarns = append(invoiceEarns, Earn{
 			Destination: PrivateKey(r).Public(),
 			Quarks:      int64(i) + 1,
 			Invoice: &commonpb.Invoice{
@@ -374,8 +374,8 @@ func TestClient_SendEarnBatchInternal(t *testing.T) {
 		})
 	}
 
-	var mixedReceivers []Earn
-	for i, r := range receiverAccounts {
+	var mixedEarns []Earn
+	for i, r := range earnAccounts {
 		e := Earn{
 			Destination: PrivateKey(r).Public(),
 			Quarks:      int64(i) + 1,
@@ -390,27 +390,27 @@ func TestClient_SendEarnBatchInternal(t *testing.T) {
 				},
 			}
 		}
-		mixedReceivers = append(mixedReceivers, e)
+		mixedEarns = append(mixedEarns, e)
 	}
 
 	batches := []EarnBatch{
 		{
 			Sender: PrivateKey(sender),
-			Earns:  receivers,
+			Earns:  earns,
 		},
 		{
 			Sender: PrivateKey(sender),
 			Source: (*PrivateKey)(&source),
-			Earns:  receivers,
+			Earns:  earns,
 		},
 		{
 			Sender: PrivateKey(sender),
 			Memo:   "1-test",
-			Earns:  receivers,
+			Earns:  earns,
 		},
 		{
 			Sender: PrivateKey(sender),
-			Earns:  invoiceReceivers,
+			Earns:  invoiceEarns,
 		},
 	}
 
@@ -495,7 +495,7 @@ func TestClient_SendEarnBatchInternal(t *testing.T) {
 	badBatches := []EarnBatch{
 		{
 			Sender: PrivateKey(sender),
-			Earns:  mixedReceivers,
+			Earns:  mixedEarns,
 		},
 	}
 	for _, b := range badBatches {
@@ -515,27 +515,27 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	_, source, err := ed25519.GenerateKey(r)
 	require.NoError(t, err)
 
-	receiverAccounts := make([]PrivateKey, 202)
-	for i := 0; i < len(receiverAccounts); i++ {
+	earnAccounts := make([]PrivateKey, 202)
+	for i := 0; i < len(earnAccounts); i++ {
 		_, dest, err := ed25519.GenerateKey(r)
 		require.NoError(t, err)
-		receiverAccounts[i] = PrivateKey(dest)
+		earnAccounts[i] = PrivateKey(dest)
 	}
 
-	for _, acc := range append([]PrivateKey{PrivateKey(sender), PrivateKey(source)}, receiverAccounts...) {
+	for _, acc := range append([]PrivateKey{PrivateKey(sender), PrivateKey(source)}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
-	var receivers []Earn
-	for i, r := range receiverAccounts {
-		receivers = append(receivers, Earn{
+	var earns []Earn
+	for i, r := range earnAccounts {
+		earns = append(earns, Earn{
 			Destination: PrivateKey(r).Public(),
 			Quarks:      int64(i) + 1,
 		})
 	}
-	var invoiceReceivers []Earn
-	for i, r := range receiverAccounts {
-		invoiceReceivers = append(invoiceReceivers, Earn{
+	var invoiceEarns []Earn
+	for i, r := range earnAccounts {
+		invoiceEarns = append(invoiceEarns, Earn{
 			Destination: PrivateKey(r).Public(),
 			Quarks:      int64(i) + 1,
 			Invoice: &commonpb.Invoice{
@@ -552,16 +552,16 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	batches := []EarnBatch{
 		{
 			Sender: PrivateKey(sender),
-			Earns:  receivers,
+			Earns:  earns,
 		},
 		{
 			Sender: PrivateKey(sender),
 			Source: (*PrivateKey)(&source),
-			Earns:  receivers,
+			Earns:  earns,
 		},
 		{
 			Sender: PrivateKey(sender),
-			Earns:  invoiceReceivers,
+			Earns:  invoiceEarns,
 		},
 	}
 
@@ -586,14 +586,14 @@ func TestClient_SendEarnBatch(t *testing.T) {
 			defer func() { env.server.submits = nil }()
 
 			assert.Len(t, env.server.submits, 3)
-			assert.Len(t, result.Succeeded, len(receiverAccounts))
+			assert.Len(t, result.Succeeded, len(earnAccounts))
 			assert.Empty(t, result.Failed)
 
 			txHashes := make(map[string]struct{})
 			for i, r := range result.Succeeded {
 				txHashes[string(r.TxHash)] = struct{}{}
 				assert.NoError(t, r.Error)
-				assert.Equal(t, b.Earns[i], r.Receiver)
+				assert.Equal(t, b.Earns[i], r.Earn)
 			}
 			assert.Len(t, txHashes, 3)
 
@@ -696,11 +696,11 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	for i := 0; i < len(result.Succeeded); i++ {
 		assert.NoError(t, result.Succeeded[i].Error)
 		assert.NotNil(t, result.Succeeded[i].TxHash)
-		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Receiver)
+		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
 	}
 	for i := 0; i < len(result.Failed); i++ {
 		assert.NoError(t, result.Failed[i].Error)
-		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Receiver)
+		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
 	}
 
 	opResults := make([]xdr.OperationResult, 100)
@@ -742,14 +742,14 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	for i := 0; i < len(result.Succeeded); i++ {
 		assert.NoError(t, result.Succeeded[i].Error)
 		assert.NotNil(t, result.Succeeded[i].TxHash)
-		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Receiver)
+		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
 	}
 	for i := 0; i < 100; i++ {
 		assert.NotNil(t, result.Failed[i].Error)
-		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Receiver)
+		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
 	}
 	for i := 100; i < 102; i++ {
 		assert.Nil(t, result.Failed[i].Error)
-		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Receiver)
+		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
 	}
 }

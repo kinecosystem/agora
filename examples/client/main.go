@@ -94,10 +94,10 @@ func main() {
 
 	fmt.Println("Succeeded:")
 	for _, p := range result.Succeeded {
-		fmt.Printf("\tHash: %x, Receiver: %s\n", p.TxHash, p.Receiver.Destination.StellarAddress())
+		fmt.Printf("\tHash: %x, Receiver: %s\n", p.TxHash, p.Earn.Destination.StellarAddress())
 	}
 	fmt.Println("Failed:")
 	for _, p := range result.Failed {
-		fmt.Printf("\tHash: %x, Receiver: %s, Error: %v\n", p.TxHash, p.Receiver.Destination.StellarAddress(), p.Error)
+		fmt.Printf("\tHash: %x, Receiver: %s, Error: %v\n", p.TxHash, p.Earn.Destination.StellarAddress(), p.Error)
 	}
 }
