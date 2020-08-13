@@ -111,6 +111,9 @@ func TestInternal_GetTransaction(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
+	_, err := env.internal.GetTransaction(context.Background(), make([]byte, 32))
+	assert.Equal(t, ErrTransactionNotFound, err)
+
 	// Test valid combinations of transactions.
 	//
 	// Any transaction not using the invoice structure may have

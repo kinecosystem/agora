@@ -11,6 +11,7 @@ import (
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
+	"github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 )
 
@@ -116,6 +117,8 @@ func (c *InternalClient) GetTransaction(ctx context.Context, txHash []byte) (dat
 	}
 
 	switch resp.State {
+	case transaction.GetTransactionResponse_UNKNOWN:
+		return data, ErrTransactionNotFound
 	case transactionpb.GetTransactionResponse_SUCCESS:
 		data.TxHash = txHash
 
