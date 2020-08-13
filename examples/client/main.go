@@ -74,7 +74,7 @@ func main() {
 	fmt.Printf("Hash: %x, err: %v\n", txHash, err)
 
 	// Earn batch with an old style memo
-	result, err := c.SendEarnBatch(context.Background(), client.EarnBatch{
+	result, err := c.SubmitEarnBatch(context.Background(), client.EarnBatch{
 		Sender: sender,
 		Memo:   "1-test",
 		Earns: []client.Earn{

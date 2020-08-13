@@ -52,10 +52,10 @@ type Client interface {
 	// SubmitPayment submits a single payment to a specified kin account.
 	SubmitPayment(ctx context.Context, payment Payment) (txHash []byte, err error)
 
-	// SendEarnBatch sends a batch of earn payments.
+	// SubmitEarnBatch submits a batch of earn payments.
 	//
 	// The batch may be done in on or more transactions.
-	SendEarnBatch(ctx context.Context, batch EarnBatch) (result EarnBatchResult, err error)
+	SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result EarnBatchResult, err error)
 }
 
 type client struct {
@@ -352,10 +352,10 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 	return result.Hash, nil
 }
 
-// SendEarnBatch sends a batch of earn payments.
+// SubmitEarnBatch submits a batch of earn payments.
 //
 // The batch may be done in on or more transactions.
-func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result EarnBatchResult, err error) {
+func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result EarnBatchResult, err error) {
 	// Verify that there isn't a mixed usage of Invoices and text Memos, so we can
 	// fail early to reduce the chance of partial failures.
 	if batch.Memo != "" {
@@ -415,7 +415,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 		}
 
 		var submitResult SubmitStellarTransactionResult
-		submitResult, err = c.sendEarnBatch(ctx, b)
+		submitResult, err = c.submitEarnBatch(ctx, b)
 		if err != nil {
 			break
 		}
@@ -467,7 +467,7 @@ func (c *client) SendEarnBatch(ctx context.Context, batch EarnBatch) (result Ear
 	return result, err
 }
 
-func (c *client) sendEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitStellarTransactionResult, err error) {
+func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitStellarTransactionResult, err error) {
 	var signers []PrivateKey
 	if batch.Source != nil {
 		signers = []PrivateKey{

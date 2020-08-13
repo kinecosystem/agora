@@ -328,7 +328,7 @@ func TestClient_SubmitPayment(t *testing.T) {
 	assert.Equal(t, ErrInsufficientBalance, err)
 }
 
-func TestClient_SendEarnBatchInternal(t *testing.T) {
+func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
@@ -426,7 +426,7 @@ func TestClient_SendEarnBatchInternal(t *testing.T) {
 			initSeq = info.SequenceNumber
 		}
 
-		result, err := env.client.sendEarnBatch(context.Background(), b)
+		result, err := env.client.submitEarnBatch(context.Background(), b)
 		assert.NoError(t, err)
 
 		func() {
@@ -499,12 +499,12 @@ func TestClient_SendEarnBatchInternal(t *testing.T) {
 		},
 	}
 	for _, b := range badBatches {
-		_, err := env.client.sendEarnBatch(context.Background(), b)
+		_, err := env.client.submitEarnBatch(context.Background(), b)
 		assert.NotNil(t, err)
 	}
 }
 
-func TestClient_SendEarnBatch(t *testing.T) {
+func TestClient_SubmitEarnBatch(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
@@ -577,7 +577,7 @@ func TestClient_SendEarnBatch(t *testing.T) {
 			initSeq = info.SequenceNumber
 		}
 
-		result, err := env.client.SendEarnBatch(context.Background(), b)
+		result, err := env.client.SubmitEarnBatch(context.Background(), b)
 		assert.NoError(t, err)
 
 		func() {
@@ -662,7 +662,7 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	// Ensure context cancellation works correctly.
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	cancelFunc()
-	result, err := env.client.SendEarnBatch(ctx, batches[0])
+	result, err := env.client.SubmitEarnBatch(ctx, batches[0])
 	assert.Error(t, err)
 	assert.Empty(t, result.Succeeded, len(batches[0].Earns))
 	assert.Len(t, result.Failed, len(batches[0].Earns))
@@ -689,7 +689,7 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	}
 	env.server.mu.Unlock()
 
-	result, err = env.client.SendEarnBatch(context.Background(), batches[0])
+	result, err = env.client.SubmitEarnBatch(context.Background(), batches[0])
 	assert.Error(t, err)
 	assert.Len(t, result.Succeeded, 100)
 	assert.Len(t, result.Failed, 102)
@@ -735,7 +735,7 @@ func TestClient_SendEarnBatch(t *testing.T) {
 	}
 	env.server.mu.Unlock()
 
-	result, err = env.client.SendEarnBatch(context.Background(), batches[0])
+	result, err = env.client.SubmitEarnBatch(context.Background(), batches[0])
 	assert.Error(t, err)
 	assert.Len(t, result.Succeeded, 100)
 	assert.Len(t, result.Failed, 102)
