@@ -51,7 +51,7 @@ func main() {
 		Sender:      sender,
 		Destination: dest,
 		Type:        kin.TransactionTypeP2P,
-		Quarks:      client.KinToQuarks(1.0),
+		Quarks:      client.MustKinToQuarks("1"),
 	})
 	fmt.Printf("Hash: %x, err: %v\n", txHash, err)
 
@@ -60,7 +60,7 @@ func main() {
 		Sender:      sender,
 		Destination: dest,
 		Type:        kin.TransactionTypeSpend,
-		Quarks:      client.KinToQuarks(1.0),
+		Quarks:      client.MustKinToQuarks("1.0"),
 		Memo:        "1-test",
 	})
 
@@ -69,13 +69,13 @@ func main() {
 		Sender:      sender,
 		Destination: dest,
 		Type:        kin.TransactionTypeSpend,
-		Quarks:      client.KinToQuarks(1.0),
+		Quarks:      client.MustKinToQuarks("1.0"),
 		Invoice: &commonpb.Invoice{
 			Items: []*commonpb.Invoice_LineItem{
 				{
 					Title:       "TestPayment",
 					Description: "Optional desc about the payment",
-					Amount:      client.KinToQuarks(1.0),
+					Amount:      client.MustKinToQuarks("1.0"),
 					Sku:         []byte("some opaque sky"),
 				},
 			},
@@ -90,11 +90,11 @@ func main() {
 		Earns: []client.Earn{
 			{
 				Destination: dest,
-				Quarks:      client.KinToQuarks(1.0),
+				Quarks:      client.MustKinToQuarks("1.0"),
 			},
 			{
 				Destination: dest,
-				Quarks:      client.KinToQuarks(1.0),
+				Quarks:      client.MustKinToQuarks("1.0"),
 			},
 		},
 	})

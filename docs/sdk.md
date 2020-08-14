@@ -84,7 +84,8 @@ txHash, err := client.SubmitPayment(context.Background(), client.Payment{
     Sender: sender,
     Destination: dest,
     Type: kin.TransactionTypeEarn,
-    Quarks: client.KinToQuarks(1.0),
+    // Note: should use client.KinToQuarks when using non-constants.
+    Quarks: client.MustKinToQuarks("1.0"),
 });
 ```
 
@@ -111,11 +112,13 @@ result, err := client.SubmitEarnBatch(context.Background(), client.EarnBatch{
     Earns: []client.Earn{
         {
             Destination: dest1,
-            Quarks:      client.KinToQuarks(1.0),
+            // Note: should use client.KinToQuarks when using non-constants.
+            Quarks:      client.KinToQuarks("1.0"),
         },
         {
             Destination: dest2,
-            Quarks:      client.KinToQuarks(1.0),
+            // Note: should use client.KinToQuarks when using non-constants.
+            Quarks:      client.KinToQuarks("1.0"),
         },
     },
 })

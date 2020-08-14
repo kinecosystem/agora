@@ -1,6 +1,8 @@
 package client
 
 import (
+	"math/big"
+
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
@@ -8,8 +10,50 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 )
 
-func KinToQuarks(amount float64) int64 {
-	return int64(amount * 1e5)
+var (
+	quarkCoeff = big.NewFloat(1e5)
+)
+
+// KinToQuarks converts a string representation of kin
+// the quark value.
+//
+// An error is returned if the value string is invalid, or
+// it cannot be accurately represented as quarks. For example,
+// a value smaller than quarks, or a value _far_ greater than
+// the supply.
+func KinToQuarks(val string) (int64, error) {
+	x, _, err := big.ParseFloat(val, 10, 64, big.ToZero)
+	if err != nil {
+		return 0, err
+	}
+
+	r, accuracy := new(big.Float).Mul(x, quarkCoeff).Int64()
+	if accuracy != big.Exact {
+		return 0, errors.New("value cannot be represented with quarks")
+	}
+
+	return r, nil
+}
+
+// MustKinToQuarks calls KinToQuarks, panicing if there's an error.
+//
+// This should only be used if you know for sure this will not panic.
+func MustKinToQuarks(val string) int64 {
+	result, err := KinToQuarks(val)
+	if err != nil {
+		panic(err)
+	}
+
+	return result
+}
+
+// QuarksToKin converts an int64 amount of quarks to the
+// string representation of kin.
+func QuarksToKin(amount int64) string {
+	quarks := big.NewFloat(0)
+	quarks.SetInt64(amount)
+
+	return new(big.Float).Quo(quarks, quarkCoeff).Text('f', 5)
 }
 
 // Payment represents a kin payment.
