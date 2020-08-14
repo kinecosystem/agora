@@ -13,7 +13,7 @@ go get -u github.com/kinecosystem/agora
 
 ## Overview
 The SDK contains two main components, a `Client` and web hook handlers. The `Client` is used for blockchain actions, such as creating accounts sending payments, while the web hook handlers are meant for developers who wish to make
-use of Agora Webhooks. For a high-level overview of using Agora, please refer to the website documentation (TODO: hyperlink).
+use of Agora Webhooks. For a high-level overview of using Agora, please refer to the [website](https://docs.kin.org) documentation.
 
 ## Client
 The main component of this library is the `Client`, which facilitates access to the Kin blockchain.
@@ -33,7 +33,7 @@ func main() {
 }
 ```
 
-Apps with registered (TODO: hyperlink) app indexes should initialize the client with their index:
+Apps with registered app indexes (see [here](https://docs.kin.org/app-registration)) should initialize the client with their index:
 
 ```go
 package main
@@ -96,7 +96,7 @@ A `Payment` has the following required properties:
 
 Additionally, it has some optional properties:
 - `Source`: The private key of a source account to use for the transaction. If unset, `sender` will be used as the transaction source.
-- `Invoice`: An Invoice (TODO: hyperlink) to associate with this payment. Cannot be set if `memo` is set.
+- `Invoice`: An [Invoice](https://docs.kin.org/how-it-works#invoices) to associate with this payment. Cannot be set if `memo` is set.
 - `Memo` A text memo to include in the transaction. Cannot be set if `invoice` is set.
 
 #### Submit an Earn Batch
@@ -125,7 +125,7 @@ result, err := client.SubmitEarnBatch(context.Background(), client.EarnBatch{
 A single `Earn` has the following properties:
 - `Destination`: The public key of the account to which the earn will be sent.
 - `Quarks`: The amount of the earn, in quarks.
-- `Invoice`: (optional) An Invoice (TODO: hyperlink) to associate with this earn.
+- `Invoice`: (optional) An [Invoice](https://docs.kin.org/how-it-works#invoices) to associate with this earn.
 
 The `submitEarnBatch` method has the following parameters:
 - `Sender`:  The private key of the account from which the earns will be sent.
@@ -138,9 +138,9 @@ A few examples for creating an account and different ways of submitting payments
 
 ## Webhook Handlers
 
-The SDK offers handler functions to assist  developers with implementing the Agora webhooks (TODO: hyperlink).
+The SDK offers handler functions to assist  developers with implementing the [Agora webhooks](ttps://docs.kin.org/how-it-works#webhooks)
 
-Only apps that have been assigned an app index (TODO: hyperlink) can make use of Agora webhooks.
+Only apps that have been assigned an [app index](https://docs.kin.org/app-registration) can make use of Agora webhooks.
 
 ### Usage
 
