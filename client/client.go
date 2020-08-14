@@ -402,17 +402,21 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 		batches = append(batches, b)
 	}
 
-	var unprocessedBatch int
+	lastProcessedBatch := -1
 	for i, b := range batches {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
 		default:
 		}
-
 		if err != nil {
 			break
 		}
+
+		// After this, the batch will always be considered 'processed', as
+		// we have performed a submitEarnBatch call, and the results for the batch
+		// will be handled (processed).
+		lastProcessedBatch = i
 
 		var submitResult SubmitStellarTransactionResult
 		submitResult, err = c.submitEarnBatch(ctx, b)
@@ -435,7 +439,6 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 				})
 			}
 
-			unprocessedBatch = i + 1
 			continue
 		}
 
@@ -462,13 +465,11 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 			}
 		}
 
-		unprocessedBatch = i + 1
-
 		break
 	}
 
 	// Add all of the aborted earns to the Failed list.
-	for i := unprocessedBatch; i < len(batches); i++ {
+	for i := lastProcessedBatch + 1; i < len(batches); i++ {
 		for _, r := range batches[i].Earns {
 			result.Failed = append(result.Failed, EarnResult{
 				Earn: r,
