@@ -417,6 +417,12 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 		var submitResult SubmitStellarTransactionResult
 		submitResult, err = c.submitEarnBatch(ctx, b)
 		if err != nil {
+			for j := range b.Earns {
+				result.Failed = append(result.Failed, EarnResult{
+					Earn:  b.Earns[j],
+					Error: err,
+				})
+			}
 			break
 		}
 
@@ -438,19 +444,25 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 
 		// If there was operation level errors, we set the individual results
 		// for this batch, and then mark the next batch as aborted.
-		for j, e := range submitResult.Errors.OpErrors {
-			result.Failed = append(result.Failed, EarnResult{
-				TxHash: submitResult.Hash,
-				Earn:   b.Earns[j],
-				Error:  e,
-			})
+		if len(submitResult.Errors.OpErrors) > 0 {
+			for j, e := range submitResult.Errors.OpErrors {
+				result.Failed = append(result.Failed, EarnResult{
+					TxHash: submitResult.Hash,
+					Earn:   b.Earns[j],
+					Error:  e,
+				})
+			}
+		} else {
+			for j := range b.Earns {
+				result.Failed = append(result.Failed, EarnResult{
+					TxHash: submitResult.Hash,
+					Earn:   b.Earns[j],
+					Error:  err,
+				})
+			}
 		}
 
-		if len(submitResult.Errors.OpErrors) > 0 {
-			unprocessedBatch = i + 1
-		} else {
-			unprocessedBatch = i
-		}
+		unprocessedBatch = i + 1
 
 		break
 	}

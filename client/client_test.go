@@ -698,7 +698,11 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 		assert.NotNil(t, result.Succeeded[i].TxHash)
 		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
 	}
-	for i := 0; i < len(result.Failed); i++ {
+	for i := 0; i < 100; i++ {
+		assert.Equal(t, ErrInvalidSignature, result.Failed[i].Error)
+		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
+	}
+	for i := 100; i < 102; i++ {
 		assert.NoError(t, result.Failed[i].Error)
 		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
 	}
@@ -745,11 +749,11 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
 	}
 	for i := 0; i < 100; i++ {
-		assert.NotNil(t, result.Failed[i].Error)
+		assert.EqualValues(t, ErrInsufficientBalance, result.Failed[i].Error)
 		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
 	}
 	for i := 100; i < 102; i++ {
-		assert.Nil(t, result.Failed[i].Error)
+		assert.NoError(t, result.Failed[i].Error)
 		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
 	}
 }
