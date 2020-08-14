@@ -366,14 +366,14 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 			}
 		}
 	} else {
-		for i := 0; i < len(batch.Earns)-1; i++ {
-			if batch.Earns[i].Invoice != nil && c.opts.appIndex == 0 {
-				err = errors.New("cannot submit earn batch with invoices without an app index")
-				break
-			}
-			if (batch.Earns[i].Invoice == nil) != (batch.Earns[i+1].Invoice == nil) {
-				err = errors.New("either all or none of the earns should have an invoice set")
-				break
+		if batch.Earns[0].Invoice != nil && c.opts.appIndex == 0 {
+			err = errors.New("cannot submit earn batch with invoices without an app index")
+		} else {
+			for i := 0; i < len(batch.Earns)-1; i++ {
+				if (batch.Earns[i].Invoice == nil) != (batch.Earns[i+1].Invoice == nil) {
+					err = errors.New("either all or none of the earns should have an invoice set")
+					break
+				}
 			}
 		}
 	}
