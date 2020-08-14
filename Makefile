@@ -42,10 +42,3 @@ images: build images-only
 images-only: agora-image
 agora-image:
 	docker build service/agora -t agora-service:$(GIT_BRANCH)
-
-.PHONY: deploy-agora
-deploy-agora: GO_OS=linux
-deploy-agora: build
-deploy-agora: agora-image
-deploy-agora:
-	cddc deploy --service-config service/agora/service.yaml -p agora$(ENV) -t $(GIT_BRANCH)
