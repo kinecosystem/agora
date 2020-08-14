@@ -13,7 +13,7 @@ go get -u github.com/kinecosystem/agora
 
 ## Overview
 The SDK contains two main components, a `Client` and web hook handlers. The `Client` is used for blockchain actions, such as creating accounts sending payments, while the web hook handlers are meant for developers who wish to make
-use of Agora Webhooks. For a high-level overview of using Agora, please refer to the [website](https://docs.kin.org) documentation.
+use of Agora Webhooks. For a high-level overview of using Agora, please refer to the [website documentation](https://docs.kin.org).
 
 ## Client
 The main component of this library is the `Client`, which facilitates access to the Kin blockchain.
@@ -33,7 +33,7 @@ func main() {
 }
 ```
 
-Apps with registered app indexes (see [here](https://docs.kin.org/app-registration)) should initialize the client with their index:
+Apps with [registered](https://docs.kin.org/app-registration) app indexes should initialize the client with their index:
 
 ```go
 package main
@@ -146,8 +146,10 @@ Only apps that have been assigned an [app index](https://docs.kin.org/app-regist
 
 There are currently two handlers:
 
-- `EventsHandler`
-- `SignTransactionHandler`
+- [Events](https://docs.kin.org/how-it-works#events) with `EventsHandler`
+- [Sign Transaction](https://docs.kin.org/how-it-works#sign-transaction) with `SignTransactionHandler`
+
+When configuring a webhook, a [webhook secret](https://docs.kin.org/agora/webhook#authentication) can be specified.
 
 #### Events Webhook
 
