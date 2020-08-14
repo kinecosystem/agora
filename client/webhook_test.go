@@ -2,12 +2,10 @@ package client
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -176,8 +174,7 @@ func TestEventsHandler_Invalid(t *testing.T) {
 }
 
 func TestSignTransactionHandler(t *testing.T) {
-	r := rand.New(rand.NewSource(0))
-	_, whitelist, err := ed25519.GenerateKey(r)
+	whitelist, err := NewPrivateKey()
 	require.NoError(t, err)
 
 	called := false

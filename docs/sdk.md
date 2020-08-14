@@ -56,7 +56,7 @@ Some additional options include:
 #### Create an Account
 The createAccount method creates an account with the provided private key.
 ```go
-account, err := client.PrivateKeyFromString("")
+account, err := client.NewPrivateKey()
 err = client.CreateAccount(context.Background(), account)
 ```
 

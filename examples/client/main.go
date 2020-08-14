@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
-	"time"
 
 	"github.com/kinecosystem/agora-common/kin"
 
@@ -40,7 +37,7 @@ func main() {
 	}
 
 	// Create a new account
-	_, priv, err := ed25519.GenerateKey(rand.New(rand.NewSource(time.Now().UnixNano())))
+	priv, err := client.NewPrivateKey()
 	if err != nil {
 		log.Fatal(err)
 	}

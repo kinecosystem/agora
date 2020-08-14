@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 
 	"github.com/kinecosystem/go/xdr"
 	"github.com/mr-tron/base58"
@@ -13,11 +14,13 @@ import (
 // PublicKey is an ed25519.PublicKey.
 type PublicKey ed25519.PublicKey
 
+// StellarAddress returns the stellar address representation
+// of the public key.
 func (k PublicKey) StellarAddress() string {
 	return strkey.MustEncode(strkey.VersionByteAccountID, k)
 }
 
-// PublicKey is an ed25519.PrivateKey.
+// PrivateKey is an ed25519.PrivateKey.
 type PrivateKey ed25519.PrivateKey
 
 // Public returns the corresponding PublicKey.
@@ -52,6 +55,17 @@ func PublicKeyFromString(address string) (PublicKey, error) {
 	}
 
 	return raw, nil
+}
+
+// NewPrivateKey returns a new PrivateKey from derived from
+// crypto/rand. The public key can be accessed via key.Public().
+func NewPrivateKey() (PrivateKey, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	return PrivateKey(priv), nil
 }
 
 // PrivateKeyFromString parses a provided address, returning

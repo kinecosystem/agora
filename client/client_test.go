@@ -2,10 +2,8 @@ package client
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"math"
-	"math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -24,11 +22,10 @@ func TestClient_AccountManagement(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	r := rand.New(rand.NewSource(0))
-	pub, priv, err := ed25519.GenerateKey(r)
+	priv, err := NewPrivateKey()
 	require.NoError(t, err)
 
-	balance, err := env.client.GetBalance(context.Background(), PublicKey(pub))
+	balance, err := env.client.GetBalance(context.Background(), priv.Public())
 	assert.Equal(t, ErrAccountDoesNotExist, err)
 	assert.Zero(t, balance)
 
@@ -38,7 +35,7 @@ func TestClient_AccountManagement(t *testing.T) {
 	err = env.client.CreateAccount(context.Background(), PrivateKey(priv))
 	assert.Equal(t, ErrAccountExists, err)
 
-	balance, err = env.client.GetBalance(context.Background(), PublicKey(pub))
+	balance, err = env.client.GetBalance(context.Background(), priv.Public())
 	assert.NoError(t, err)
 	assert.EqualValues(t, 10, balance)
 }
@@ -61,25 +58,23 @@ func TestClient_AppIndexNotSet(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	r := rand.New(rand.NewSource(0))
-
-	_, sender, err := ed25519.GenerateKey(r)
+	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	require.NoError(t, env.client.CreateAccount(context.Background(), PrivateKey(sender)))
-	_, dest, err := ed25519.GenerateKey(r)
+	require.NoError(t, env.client.CreateAccount(context.Background(), sender))
+	dest, err := NewPrivateKey()
 	require.NoError(t, err)
-	require.NoError(t, env.client.CreateAccount(context.Background(), PrivateKey(dest)))
+	require.NoError(t, env.client.CreateAccount(context.Background(), dest))
 
 	payments := []Payment{
 		{
-			Sender:      PrivateKey(sender),
-			Destination: PrivateKey(dest).Public(),
+			Sender:      sender,
+			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
 		},
 		{
-			Sender:      PrivateKey(sender),
-			Destination: PrivateKey(dest).Public(),
+			Sender:      sender,
+			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
 			Memo:        "1-test",
@@ -92,8 +87,8 @@ func TestClient_AppIndexNotSet(t *testing.T) {
 	}
 
 	invoicePayment := Payment{
-		Sender:      PrivateKey(sender),
-		Destination: PrivateKey(dest).Public(),
+		Sender:      sender,
+		Destination: dest.Public(),
 		Type:        kin.TransactionTypeSpend,
 		Quarks:      11,
 		Invoice: &commonpb.Invoice{
@@ -115,43 +110,41 @@ func TestClient_SubmitPayment(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	r := rand.New(rand.NewSource(0))
-
-	_, sender, err := ed25519.GenerateKey(r)
+	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	_, source, err := ed25519.GenerateKey(r)
+	source, err := NewPrivateKey()
 	require.NoError(t, err)
-	_, dest, err := ed25519.GenerateKey(r)
+	dest, err := NewPrivateKey()
 	require.NoError(t, err)
 
 	for _, acc := range [][]byte{sender, source, dest} {
-		require.NoError(t, env.client.CreateAccount(context.Background(), PrivateKey(acc)))
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
 	payments := []Payment{
 		{
-			Sender:      PrivateKey(sender),
-			Destination: PrivateKey(dest).Public(),
+			Sender:      sender,
+			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
 		},
 		{
-			Sender:      PrivateKey(sender),
-			Destination: PrivateKey(dest).Public(),
+			Sender:      sender,
+			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
 			Source:      (*PrivateKey)(&source),
 		},
 		{
-			Sender:      PrivateKey(sender),
-			Destination: PrivateKey(dest).Public(),
+			Sender:      sender,
+			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
 			Memo:        "1-test",
 		},
 		{
-			Sender:      PrivateKey(sender),
-			Destination: PrivateKey(dest).Public(),
+			Sender:      sender,
+			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
 			Invoice: &commonpb.Invoice{
@@ -332,28 +325,26 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	r := rand.New(rand.NewSource(0))
-
-	_, sender, err := ed25519.GenerateKey(r)
+	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	_, source, err := ed25519.GenerateKey(r)
+	source, err := NewPrivateKey()
 	require.NoError(t, err)
 
 	earnAccounts := make([]PrivateKey, 5)
 	for i := 0; i < len(earnAccounts); i++ {
-		_, dest, err := ed25519.GenerateKey(r)
+		dest, err := NewPrivateKey()
 		require.NoError(t, err)
-		earnAccounts[i] = PrivateKey(dest)
+		earnAccounts[i] = dest
 	}
 
-	for _, acc := range append([]PrivateKey{PrivateKey(sender), PrivateKey(source)}, earnAccounts...) {
+	for _, acc := range append([]PrivateKey{sender, source}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
 	var earns []Earn
 	for i, r := range earnAccounts {
 		earns = append(earns, Earn{
-			Destination: PrivateKey(r).Public(),
+			Destination: r.Public(),
 			Quarks:      int64(i) + 1,
 		})
 	}
@@ -361,7 +352,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 	var invoiceEarns []Earn
 	for i, r := range earnAccounts {
 		invoiceEarns = append(invoiceEarns, Earn{
-			Destination: PrivateKey(r).Public(),
+			Destination: r.Public(),
 			Quarks:      int64(i) + 1,
 			Invoice: &commonpb.Invoice{
 				Items: []*commonpb.Invoice_LineItem{
@@ -377,7 +368,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 	var mixedEarns []Earn
 	for i, r := range earnAccounts {
 		e := Earn{
-			Destination: PrivateKey(r).Public(),
+			Destination: r.Public(),
 			Quarks:      int64(i) + 1,
 		}
 		if i%2 == 0 {
@@ -395,21 +386,21 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 
 	batches := []EarnBatch{
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Earns:  earns,
 		},
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Source: (*PrivateKey)(&source),
 			Earns:  earns,
 		},
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Memo:   "1-test",
 			Earns:  earns,
 		},
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Earns:  invoiceEarns,
 		},
 	}
@@ -494,7 +485,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 
 	badBatches := []EarnBatch{
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Earns:  mixedEarns,
 		},
 	}
@@ -508,35 +499,33 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	r := rand.New(rand.NewSource(0))
-
-	_, sender, err := ed25519.GenerateKey(r)
+	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	_, source, err := ed25519.GenerateKey(r)
+	source, err := NewPrivateKey()
 	require.NoError(t, err)
 
 	earnAccounts := make([]PrivateKey, 202)
 	for i := 0; i < len(earnAccounts); i++ {
-		_, dest, err := ed25519.GenerateKey(r)
+		dest, err := NewPrivateKey()
 		require.NoError(t, err)
-		earnAccounts[i] = PrivateKey(dest)
+		earnAccounts[i] = dest
 	}
 
-	for _, acc := range append([]PrivateKey{PrivateKey(sender), PrivateKey(source)}, earnAccounts...) {
+	for _, acc := range append([]PrivateKey{sender, source}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
 	var earns []Earn
 	for i, r := range earnAccounts {
 		earns = append(earns, Earn{
-			Destination: PrivateKey(r).Public(),
+			Destination: r.Public(),
 			Quarks:      int64(i) + 1,
 		})
 	}
 	var invoiceEarns []Earn
 	for i, r := range earnAccounts {
 		invoiceEarns = append(invoiceEarns, Earn{
-			Destination: PrivateKey(r).Public(),
+			Destination: r.Public(),
 			Quarks:      int64(i) + 1,
 			Invoice: &commonpb.Invoice{
 				Items: []*commonpb.Invoice_LineItem{
@@ -551,16 +540,16 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 
 	batches := []EarnBatch{
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Earns:  earns,
 		},
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Source: (*PrivateKey)(&source),
 			Earns:  earns,
 		},
 		{
-			Sender: PrivateKey(sender),
+			Sender: sender,
 			Earns:  invoiceEarns,
 		},
 	}

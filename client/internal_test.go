@@ -2,10 +2,8 @@ package client
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
-	"math/rand"
 	"testing"
 	"time"
 
@@ -79,29 +77,28 @@ func TestInternal_CreateStellarAccount(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	r := rand.New(rand.NewSource(0))
-	pub, priv, err := ed25519.GenerateKey(r)
+	priv, err := NewPrivateKey()
 	require.NoError(t, err)
 
-	accountInfo, err := env.internal.GetStellarAccountInfo(context.Background(), PublicKey(pub))
+	accountInfo, err := env.internal.GetStellarAccountInfo(context.Background(), priv.Public())
 	assert.Nil(t, accountInfo)
 	assert.Equal(t, ErrAccountDoesNotExist, err)
 
 	assert.NoError(t, env.internal.CreateStellarAccount(context.Background(), PrivateKey(priv)))
 	assert.Equal(t, ErrAccountExists, env.internal.CreateStellarAccount(context.Background(), PrivateKey(priv)))
 
-	accountInfo, err = env.internal.GetStellarAccountInfo(context.Background(), PublicKey(pub))
+	accountInfo, err = env.internal.GetStellarAccountInfo(context.Background(), priv.Public())
 	assert.NotNil(t, accountInfo)
 	assert.EqualValues(t, 1, accountInfo.SequenceNumber)
 	assert.EqualValues(t, 10, accountInfo.Balance)
 	assert.NoError(t, err)
 
-	_, priv, err = ed25519.GenerateKey(r)
+	priv, err = NewPrivateKey()
 	require.NoError(t, err)
 	env.server.setError(errors.New("unexpected"), 2)
 	assert.NoError(t, env.internal.CreateStellarAccount(context.Background(), PrivateKey(priv)))
 
-	_, priv, err = ed25519.GenerateKey(r)
+	priv, err = NewPrivateKey()
 	require.NoError(t, err)
 	env.server.setError(errors.New("unexpected"), 3)
 	assert.NotNil(t, env.internal.CreateStellarAccount(context.Background(), PrivateKey(priv)))

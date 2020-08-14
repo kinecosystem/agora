@@ -34,6 +34,13 @@ func TestKeys_Stellar(t *testing.T) {
 	roundTrip, err := publicKeyFromStellarXDR(accountIDFromPublicKey(pub))
 	assert.NoError(t, err)
 	assert.EqualValues(t, pub, roundTrip)
+
+	priv, err = NewPrivateKey()
+	require.NoError(t, err)
+
+	stellarPriv, err := PrivateKeyFromString(priv.stellarSeed())
+	require.NoError(t, err)
+	assert.EqualValues(t, priv, stellarPriv)
 }
 
 func TestKeys_StellarErrors(t *testing.T) {
@@ -73,5 +80,4 @@ func TestKeys_StellarErrors(t *testing.T) {
 		_, err := publicKeyFromStellarXDR(accountID)
 		assert.Error(t, err)
 	}
-
 }
