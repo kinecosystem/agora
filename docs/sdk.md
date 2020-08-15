@@ -113,12 +113,12 @@ result, err := client.SubmitEarnBatch(context.Background(), client.EarnBatch{
         {
             Destination: dest1,
             // Note: should use client.KinToQuarks when using non-constants.
-            Quarks:      client.KinToQuarks("1.0"),
+            Quarks:      client.MustKinToQuarks("1.0"),
         },
         {
             Destination: dest2,
             // Note: should use client.KinToQuarks when using non-constants.
-            Quarks:      client.KinToQuarks("1.0"),
+            Quarks:      client.MustKinToQuarks("1.0"),
         },
     },
 })
