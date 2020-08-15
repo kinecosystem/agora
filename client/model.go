@@ -35,7 +35,7 @@ func KinToQuarks(val string) (int64, error) {
 	return r, nil
 }
 
-// MustKinToQuarks calls KinToQuarks, panicing if there's an error.
+// MustKinToQuarks calls KinToQuarks, panicking if there's an error.
 //
 // This should only be used if you know for sure this will not panic.
 func MustKinToQuarks(val string) int64 {
