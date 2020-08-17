@@ -1351,10 +1351,12 @@ func TestGetHistory_Query(t *testing.T) {
 			start:     -1,
 			direction: transactionpb.GetHistoryRequest_DESC,
 			// Since we haven't specified a cursor, the loader should
-			// default to the _latest_ entry as a cursor. Additionally,
-			// as with the above case, the entry at the cursor position
-			// is not returned.
-			expected: generated[:len(generated)-1],
+			// default to the _latest_ entry as a cursor.
+			//
+			// However, unlike when we explicitly set a cursor, we _do_
+			// want to include the value at the cursor, as the client
+			// does not know about it yet.
+			expected: generated,
 		},
 		{
 			start:     1,

@@ -81,7 +81,10 @@ func (h *historyLoader) getTransaction(ctx context.Context, hash []byte) (txn tx
 }
 
 func (h *historyLoader) getTransactions(ctx context.Context, account string, cursor *transactionpb.Cursor, order transactionpb.GetHistoryRequest_Direction) ([]txData, error) {
-	log := h.log.WithField("method", "getTransactions")
+	log := h.log.WithFields(logrus.Fields{
+		"method":  "getTransactions",
+		"account": account,
+	})
 
 	opts := &history.ReadOptions{
 		Limit:      100,
@@ -141,7 +144,7 @@ func (h *historyLoader) getTransactions(ctx context.Context, account string, cur
 		// Note: we do it here instead of the reader layer, as there may be
 		//       cases where we want the start to be included (and notably, it's
 		//       more natural to have the start be inclusive).
-		if bytes.Equal(opts.GetStart(), orderingKey) {
+		if cursor != nil && bytes.Equal(opts.GetStart(), orderingKey) {
 			continue
 		}
 
