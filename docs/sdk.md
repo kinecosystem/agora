@@ -68,7 +68,7 @@ transactionData, err := client.GetTransaction(context.Background(txHash))
 ```
 
 #### Get an Account Balance
-The `GetBalance` method gets the balance of the provided account, in quarks
+The `GetBalance` method gets the balance of the provided account, in [quarks](https://docs.kin.org/terms-and-concepts#quark)
 ```go
 account, err := client.PublicKeyFromString("")
 quarks, err = client.GetBalance(context.Background(), account)
@@ -93,7 +93,7 @@ A `Payment` has the following required properties:
 - `Sender`: The private key of the account from which the payment will be sent.
 - `Destination`: The public key of the account to which the payment will be sent.
 - `Type`: The transaction type of the payment.
-- `Quarks`: The amount of the payment, in quarks.
+- `Quarks`: The amount of the payment, in [quarks](https://docs.kin.org/terms-and-concepts#quark).
 
 Additionally, it has some optional properties:
 - `Source`: The private key of a source account to use for the transaction. If unset, `sender` will be used as the transaction source.
@@ -127,7 +127,7 @@ result, err := client.SubmitEarnBatch(context.Background(), client.EarnBatch{
 
 A single `Earn` has the following properties:
 - `Destination`: The public key of the account to which the earn will be sent.
-- `Quarks`: The amount of the earn, in quarks.
+- `Quarks`: The amount of the earn, in [quarks](https://docs.kin.org/terms-and-concepts#quark).
 - `Invoice`: (optional) An [Invoice](https://docs.kin.org/how-it-works#invoices) to associate with this earn.
 
 The `submitEarnBatch` method has the following parameters:
