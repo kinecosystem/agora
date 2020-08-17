@@ -79,11 +79,46 @@ func TestRoundTrip(t *testing.T) {
 
 	ledgers := generateLedgers(t, 5, 3)
 	for _, l := range ledgers {
-		req := horizonclient.TransactionRequest{
-			ForLedger: uint(l.ledger.Sequence),
+		requests := []horizonclient.TransactionRequest{
+			{
+				ForLedger: uint(l.ledger.Sequence),
+				Order:     horizonclient.OrderAsc,
+				Limit:     200,
+			},
+			{
+				ForLedger: uint(l.ledger.Sequence),
+				Order:     horizonclient.OrderAsc,
+				Limit:     200,
+				Cursor:    l.txnPage.Embedded.Records[1].PagingToken(),
+			},
+			{
+				ForLedger: uint(l.ledger.Sequence),
+				Order:     horizonclient.OrderAsc,
+				Limit:     200,
+				Cursor:    l.txnPage.Embedded.Records[2].PagingToken(),
+			},
 		}
 
-		env.horizonClient.On("Transactions", req).Return(l.txnPage, nil)
+		// splice the txnPage in half to emulate paging
+		pages := []hProtocol.TransactionsPage{
+			{
+				Embedded: struct{ Records []hProtocol.Transaction }{
+					Records: l.txnPage.Embedded.Records[0:2],
+				},
+			},
+			{
+				Embedded: struct{ Records []hProtocol.Transaction }{
+					Records: l.txnPage.Embedded.Records[2:3],
+				},
+			},
+			{
+				Embedded: struct{ Records []hProtocol.Transaction }{},
+			},
+		}
+
+		for i := 0; i < len(requests); i++ {
+			env.horizonClient.On("Transactions", requests[i]).Return(pages[i], nil)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -125,6 +160,14 @@ func TestRoundTrip(t *testing.T) {
 			t.Fatal("timed out waiting for result (queue)")
 		}
 	}
+
+	// We've forced the horizon client to break up each ledger into 2 pages.
+	// Since the ingestor keeps paging until it sees empty results, we expect
+	// that each ledger takes N+1 requests (for N pages).
+	//
+	// Additionally, there is a StreamLedgers call, making the total calls to
+	// horizon, StreamLedgers(1) + Transactions(5*3)
+	assert.Len(t, env.horizonClient.Calls, 1+5*3)
 
 	assert.Nil(t, results[0].Err)
 	for i := 1; i < len(results); i++ {

@@ -144,50 +144,71 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 }
 
 func (i *ingestor) processLedger(ledger hProtocol.Ledger, w history.Writer) error {
-	page, err := i.client.Transactions(horizonclient.TransactionRequest{
-		ForLedger: uint(ledger.Sequence),
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to get ledger transactions")
-	}
+	var cursor string
+	var totalTxns int
 
-	closeTime, err := ptypes.TimestampProto(ledger.ClosedAt)
-	if err != nil {
-		return errors.Wrap(err, "invalid close time")
-	}
-
-	for _, txn := range page.Embedded.Records {
-		envelopeBytes, err := base64.StdEncoding.DecodeString(txn.EnvelopeXdr)
+	for {
+		page, err := i.client.Transactions(horizonclient.TransactionRequest{
+			ForLedger: uint(ledger.Sequence),
+			Order:     horizonclient.OrderAsc,
+			// 200 is the maximum allowed limit from horizon
+			Limit:  200,
+			Cursor: cursor,
+		})
 		if err != nil {
-			return errors.Wrap(err, "failed to parse envelope xdr")
-		}
-		resultBytes, err := base64.StdEncoding.DecodeString(txn.ResultXdr)
-		if err != nil {
-			return errors.Wrap(err, "failed to parse result xdr")
-		}
-		pagingToken, err := strconv.ParseUint(txn.PagingToken(), 10, 64)
-		if err != nil {
-			return errors.Wrap(err, "failed to parse paging token")
+			return errors.Wrapf(err, "failed to get transactions for ledger: %d", ledger.Sequence)
 		}
 
-		entry := &model.Entry{
-			Version: i.version,
-			Kind: &model.Entry_Stellar{
-				Stellar: &model.StellarEntry{
-					Ledger:            uint64(ledger.Sequence),
-					PagingToken:       pagingToken,
-					LedgerCloseTime:   closeTime,
-					NetworkPassphrase: i.networkPassphrase,
-					EnvelopeXdr:       envelopeBytes,
-					ResultXdr:         resultBytes,
+		// If there are no more transactions left, we're done paging.
+		if len(page.Embedded.Records) == 0 {
+			break
+		}
+
+		totalTxns += len(page.Embedded.Records)
+		cursor = page.Embedded.Records[len(page.Embedded.Records)-1].PagingToken()
+
+		closeTime, err := ptypes.TimestampProto(ledger.ClosedAt)
+		if err != nil {
+			return errors.Wrap(err, "invalid close time")
+		}
+
+		for _, txn := range page.Embedded.Records {
+			envelopeBytes, err := base64.StdEncoding.DecodeString(txn.EnvelopeXdr)
+			if err != nil {
+				return errors.Wrap(err, "failed to parse envelope xdr")
+			}
+			resultBytes, err := base64.StdEncoding.DecodeString(txn.ResultXdr)
+			if err != nil {
+				return errors.Wrap(err, "failed to parse result xdr")
+			}
+			pagingToken, err := strconv.ParseUint(txn.PagingToken(), 10, 64)
+			if err != nil {
+				return errors.Wrap(err, "failed to parse paging token")
+			}
+
+			entry := &model.Entry{
+				Version: i.version,
+				Kind: &model.Entry_Stellar{
+					Stellar: &model.StellarEntry{
+						Ledger:            uint64(ledger.Sequence),
+						PagingToken:       pagingToken,
+						LedgerCloseTime:   closeTime,
+						NetworkPassphrase: i.networkPassphrase,
+						EnvelopeXdr:       envelopeBytes,
+						ResultXdr:         resultBytes,
+					},
 				},
-			},
-		}
+			}
 
-		if err := w.Write(context.Background(), entry); err != nil {
-			return errors.Wrap(err, "failed to write txn")
+			if err := w.Write(context.Background(), entry); err != nil {
+				return errors.Wrap(err, "failed to write txn")
+			}
 		}
 	}
 
+	i.log.WithFields(logrus.Fields{
+		"ledger":       ledger.Sequence,
+		"transactions": totalTxns,
+	}).Debug("Processed ledger")
 	return nil
 }
