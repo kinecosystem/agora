@@ -56,6 +56,51 @@ func TestRun_Cancellation(t *testing.T) {
 	}
 }
 
+func TestRun_SubCancellation(t *testing.T) {
+	// We want to double check that creating sub-contexts off of a
+	// root context can be cancelled independently.
+	//
+	// This is an assumption made by the Ingestion retry when it
+	// decides to restart the ingestion process.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithCancel(rootCtx)
+		select {
+		case <-ctx.Done():
+			t.Fail()
+		default:
+		}
+
+		cancel()
+		select {
+		case <-ctx.Done():
+			assert.Equal(t, context.Canceled, ctx.Err())
+		default:
+			t.Fail()
+		}
+
+		select {
+		case <-rootCtx.Done():
+			t.Fail()
+		default:
+		}
+	}
+
+	rootCancel()
+
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithCancel(rootCtx)
+		select {
+		case <-ctx.Done():
+			assert.Equal(t, context.Canceled, ctx.Err())
+		default:
+			t.Fail()
+		}
+		cancel()
+	}
+}
+
 func TestRun_SingleRunner(t *testing.T) {
 	env := setup(t)
 

@@ -100,6 +100,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 			}
 
 			resultCh <- result
+			close(resultCh)
 		}()
 	}
 

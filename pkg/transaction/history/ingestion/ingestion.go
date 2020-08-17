@@ -152,8 +152,17 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 					return errors.Wrapf(err, "failed to get latest commit for '%s'", i.Name())
 				}
 
+				// We create a specific queue context that 'defines' the lifetime of the Queue.
+				//
+				// When an error occurs, we want to restart the ingestion process. This creates
+				// a new queue, and so we must ensure that we close the previous one in order to
+				// prevent a memory leak. By tying each queue's lifetime to a context, we can
+				// properly cleanup the underlying resources.
+				queueCtx, cancel := context.WithCancel(ctx)
+				defer cancel()
+
 				log.WithField("parent", hex.EncodeToString(latest)).Debug("Starting ingestor")
-				queue, err := i.Ingest(ctx, w, latest)
+				queue, err := i.Ingest(queueCtx, w, latest)
 				if err != nil {
 					return errors.Wrapf(err, "failed to start ingestor '%s'", i.Name())
 				}
