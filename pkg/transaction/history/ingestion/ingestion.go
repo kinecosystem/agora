@@ -9,6 +9,7 @@ import (
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -124,6 +125,8 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 		"ingestor": i.Name(),
 	})
 
+	metrics := getMetricsBundle(i.Name())
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -147,6 +150,8 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 		// such as a bad network connection, or invalid/expired permissions.
 		_, err = retry.Retry(
 			func() error {
+				defer metrics.restarts.Inc()
+
 				latest, err := c.Latest(ctx, i.Name())
 				if err != nil {
 					return errors.Wrapf(err, "failed to get latest commit for '%s'", i.Name())
@@ -204,6 +209,9 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 
 							return errors.Wrapf(err, "failed to commit block (%x, %x)", r.Parent, r.Block)
 						}
+
+						metrics.lastIngestionTime.Set(float64(time.Now().Unix()))
+						metrics.commits.Inc()
 					}
 				}
 			},
@@ -219,4 +227,55 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 			log.WithError(err).Warn("Failed to release lock")
 		}
 	}
+}
+
+type metricsBundle struct {
+	commits           prometheus.Counter
+	restarts          prometheus.Counter
+	lastIngestionTime prometheus.Gauge
+}
+
+func getMetricsBundle(name string) *metricsBundle {
+	bundle := &metricsBundle{}
+	bundle.commits = prometheus.NewCounter(prometheus.CounterOpts{
+		Name:      "history_commits",
+		Namespace: "agora",
+		ConstLabels: prometheus.Labels{
+			"ingestor": name,
+		},
+	})
+
+	if err := prometheus.Register(bundle.commits); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			bundle.commits = e.ExistingCollector.(prometheus.Counter)
+		}
+	}
+
+	bundle.restarts = prometheus.NewCounter(prometheus.CounterOpts{
+		Name:      "history_restarts",
+		Namespace: "agora",
+		ConstLabels: prometheus.Labels{
+			"ingestor": name,
+		},
+	})
+	if err := prometheus.Register(bundle.restarts); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			bundle.restarts = e.ExistingCollector.(prometheus.Counter)
+		}
+	}
+
+	bundle.lastIngestionTime = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:      "history_last_ingestion_time_unix",
+		Namespace: "agora",
+		ConstLabels: prometheus.Labels{
+			"ingestor": name,
+		},
+	})
+	if err := prometheus.Register(bundle.lastIngestionTime); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			bundle.lastIngestionTime = e.ExistingCollector.(prometheus.Gauge)
+		}
+	}
+
+	return bundle
 }
