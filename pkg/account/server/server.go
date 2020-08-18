@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
 	"google.golang.org/grpc/codes"
@@ -28,6 +28,14 @@ const (
 	eventStreamBufferSize = 64
 
 	globalRateLimitKey = "create-account-rate-limit-global"
+)
+
+var (
+	createAccountRLCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "create_account_rate_limited_global",
+		Help:      "Number of globally rate limited create account requests",
+	})
 )
 
 type server struct {
@@ -62,6 +70,10 @@ func New(
 		return nil, errors.Wrap(err, "failed to get network")
 	}
 
+	if err = registerMetrics(); err != nil {
+		return nil, err
+	}
+
 	return &server{
 		log:             logrus.StandardLogger().WithField("type", "account/server"),
 		rootAccountKP:   rootAccountKP,
@@ -81,9 +93,9 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	if s.config.CreateAccountGlobalLimit > 0 {
 		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
 		if err != nil {
-			fmt.Println(err.Error())
 			log.WithError(err).Warn("failed to check global rate limit")
 		} else if !result.Allowed {
+			createAccountRLCounter.Inc()
 			return nil, status.Error(codes.Unavailable, "rate limited")
 		}
 	}
@@ -445,6 +457,18 @@ func (s *server) createAccount(sourceKP *keypair.Full, sourceAccount horizon.Acc
 		if len(rc.OperationCodes) == 0 || rc.OperationCodes[0] != "op_already_exists" {
 			return errors.Wrap(hErr, "failed to submit create account transaction")
 		}
+	}
+
+	return nil
+}
+
+func registerMetrics() (err error) {
+	if err := prometheus.Register(createAccountRLCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			createAccountRLCounter = e.ExistingCollector.(prometheus.Counter)
+			return nil
+		}
+		return errors.Wrap(err, "failed to register create account global rate limit counter")
 	}
 
 	return nil

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/go-redis/redis_rate/v8"
@@ -16,6 +17,7 @@ import (
 	"github.com/kinecosystem/go/network"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/clients/horizonclient"
 	"google.golang.org/grpc/codes"
@@ -35,6 +37,19 @@ import (
 const (
 	globalRateLimitKey    = "submit-transaction-rate-limit-global"
 	appRateLimitKeyFormat = "submit-transaction-rate-limit-app-%d"
+)
+
+var (
+	submitRLCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_rate_limited_global",
+		Help:      "Number of globally rate limited create account requests",
+	})
+	submitRLAppCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_rate_limited_app",
+		Help:      "Number of app rate limited create account requests",
+	}, []string{"app_index"})
 )
 
 type server struct {
@@ -84,6 +99,10 @@ func New(
 		return nil, errors.Wrap(err, "failed to get network")
 	}
 
+	if err = registerMetrics(); err != nil {
+		return nil, err
+	}
+
 	return &server{
 		log:     logrus.StandardLogger().WithField("type", "transaction/server"),
 		network: network,
@@ -111,6 +130,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		if err != nil {
 			log.WithError(err).Warn("failed to check global rate limit")
 		} else if !result.Allowed {
+			submitRLCounter.Inc()
 			return nil, status.Error(codes.Unavailable, "rate limited")
 		}
 	}
@@ -131,15 +151,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
 		memo = kin.Memo(*e.Tx.Memo.Hash)
 		appIndex = memo.AppIndex()
-
-		if s.config.SubmitTxAppLimit > 0 {
-			result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, memo.AppIndex()), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
-			if err != nil {
-				log.WithError(err).Warn("failed to check per app rate limit")
-			} else if !result.Allowed {
-				return nil, status.Error(codes.Unavailable, "rate limited")
-			}
-		}
 
 		if req.InvoiceList != nil {
 			if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
@@ -170,6 +181,16 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	if appIndex > 0 {
+		if s.config.SubmitTxAppLimit > 0 {
+			result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, appIndex), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
+			if err != nil {
+				log.WithError(err).Warn("failed to check per app rate limit")
+			} else if !result.Allowed {
+				submitRLAppCounter.WithLabelValues(strconv.Itoa(int(appIndex)))
+				return nil, status.Error(codes.Unavailable, "rate limited")
+			}
+		}
+
 		config, err := s.appConfigStore.Get(ctx, appIndex)
 		if err == app.ErrNotFound {
 			return nil, status.Error(codes.InvalidArgument, "app index not found")
@@ -488,4 +509,23 @@ func appIDFromTextMemo(memo string) (appID string, ok bool) {
 	}
 
 	return parts[1], true
+}
+
+func registerMetrics() (err error) {
+	if err := prometheus.Register(submitRLCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			submitRLCounter = e.ExistingCollector.(prometheus.Counter)
+			return nil
+		}
+		return errors.Wrap(err, "failed to register submit tx global rate limit counter")
+	}
+	if err := prometheus.Register(submitRLAppCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			submitRLAppCounter = e.ExistingCollector.(*prometheus.CounterVec)
+			return nil
+		}
+		return errors.Wrap(err, "failed to register submit tx app rate limit counter")
+	}
+
+	return nil
 }
