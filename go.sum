@@ -179,8 +179,8 @@ github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 h1:uC1QfSlInpQ
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88/go.mod h1:3w7q1U84EfirKl04SVQ/s7nPm1ZPhiXd34z40TNz36k=
 github.com/kinecosystem/agora-api v0.19.0 h1:QZYukuKfldcs+oXkwIUrh+pk8b4rU9zzNAZ3ItjKFUw=
 github.com/kinecosystem/agora-api v0.19.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
-github.com/kinecosystem/agora-common v0.35.0 h1:s1U/cr3KnKL3Xm+aLpsMZLs02aV5U7lWUOMZL/8GMlc=
-github.com/kinecosystem/agora-common v0.35.0/go.mod h1:EOt+IPFUXsC9ufNev5AHDi0aveP4bXpdAxweiHKEt0k=
+github.com/kinecosystem/agora-common v0.38.0 h1:hyU/w5w21URGNoEC+N6lQnjwyS9qlZMiue+qYdOLYXg=
+github.com/kinecosystem/agora-common v0.38.0/go.mod h1:dHNqTJZcXZBOaIHdLEqkISczhstBhEJ9v9ZoBAwvDvs=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e h1:YP9l6K2VUnIc9SmT9irPeCrJ9JCWMQjOj0Pq2xSpEfs=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e/go.mod h1:25m9BWmQ2cj1bVnl4Axoxq8XNpODLSe01IA9HrhG4sA=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
@@ -435,8 +435,6 @@ golang.org/x/sys v0.0.0-20190502145724-3ef323f4f1fd/go.mod h1:h1NjWce9XRLGQEsW7w
 golang.org/x/sys v0.0.0-20190507160741-ecd444e8653b/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20190606165138-5da285871e9c/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20191010194322-b09406accb47/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
-golang.org/x/sys v0.0.0-20191120155948-bd437916bb0e h1:N7DeIrjYszNmSW409R3frPPwglRwMkXSBzwVbkOjLLA=
-golang.org/x/sys v0.0.0-20191120155948-bd437916bb0e/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200106162015-b016eb3dc98e/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200615200032-f1bc736245b1 h1:ogLJMz+qpzav7lGMh10LMvAkM/fAoGlaiiHYiFYdm80=
