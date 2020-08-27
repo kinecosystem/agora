@@ -154,11 +154,19 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		Value: rawHash[:],
 	}
 
+	// The only way a transaction can be an earn is if it's using the binary memo
+	// format, with a transaction type Earn. Otherwise, all transactions are considered
+	// "something else".
+	//
+	// Note: we can't differentiate earns from spends using text memos.
+	var isEarn bool
+
 	var appIndex uint16
 	var memo kin.Memo
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
 		memo = kin.Memo(*e.Tx.Memo.Hash)
 		appIndex = memo.AppIndex()
+		isEarn = memo.TransactionType() == kin.TransactionTypeEarn
 
 		if req.InvoiceList != nil {
 			if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
@@ -216,7 +224,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.Internal, "failed to submit transaction")
 		}
 
-		if config.SignTransactionURL != nil {
+		if !isEarn && config.SignTransactionURL != nil {
 			log = log.WithField("url", *config.SignTransactionURL)
 			e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
 			if err != nil {

@@ -176,7 +176,7 @@ func TestSubmitTransaction_NoKinMemo(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, txHash := generateEnvelope(t, nil, 0)
+	_, envelopeBytes, txHash := generateEnvelope(t, nil, 0, kin.TransactionTypeSpend)
 
 	horizonResult := horizonprotocols.TransactionSuccess{
 		Hash:   hex.EncodeToString(txHash),
@@ -205,7 +205,7 @@ func TestSubmitTransaction_AppNotFound(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
 		InvoiceList: il,
@@ -225,7 +225,7 @@ func TestSubmitTransaction_AppSignTxURLNotSet(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 	horizonResult := horizonprotocols.TransactionSuccess{
 		Hash:   hex.EncodeToString(txHash),
 		Ledger: 10,
@@ -265,7 +265,7 @@ func TestSubmitTransaction_SignTransaction400(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
 	})
@@ -338,7 +338,7 @@ func TestSubmitTransaction_SignTransaction403_Rejected(t *testing.T) {
 		},
 	}
 
-	_, envelopeBytes, txHash := generateEnvelope(t, invoiceList, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, invoiceList, 1, kin.TransactionTypeSpend)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
@@ -433,7 +433,7 @@ func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
 		},
 	}
 
-	_, envelopeBytes, txHash := generateEnvelope(t, invoiceList, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, invoiceList, 1, kin.TransactionTypeSpend)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
@@ -466,7 +466,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 
 	// Set up test server with a successful sign response
 	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
@@ -512,7 +512,7 @@ func TestSubmitTransaction_SignTransaction200WithInvoiceAndDisabled(t *testing.T
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 
 	// Set up test server with a successful sign response
 	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
@@ -557,7 +557,7 @@ func TestSubmitTransaction_SignTransaction200InvalidResponse(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 
 	// Set up test server with a successful sign response
 	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: []byte("invalidxdr")}
@@ -588,7 +588,7 @@ func TestSubmitTransaction_SignTransactionError(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 
 	// Set up test server with a successful sign response
 	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: []byte("invalidxdr")}
@@ -616,6 +616,55 @@ func TestSubmitTransaction_SignTransactionError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+func TestSubmitTransaction_EarnNoWebhook(t *testing.T) {
+	env, cleanup := setup(t, -1, -1)
+	defer cleanup()
+
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1, kin.TransactionTypeEarn)
+
+	// Set up test server that fails all responses.
+	//
+	// Since we shouldn't be calling out for earns, this
+	// shouldn't get hit.
+	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, 400, b)
+
+	// Set test server URL to app config
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	err = env.appConfigStore.Add(context.Background(), 1, &app.Config{
+		AppName:            "some name",
+		SignTransactionURL: signURL,
+		InvoicingEnabled:   true,
+		WebhookSecret:      generateWebhookKey(t),
+	})
+	require.NoError(t, err)
+
+	horizonResult := horizonprotocols.TransactionSuccess{
+		Hash:   hex.EncodeToString(txHash[:]),
+		Ledger: 10,
+		Result: base64.StdEncoding.EncodeToString([]byte("test")),
+	}
+	env.hClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(horizonResult, nil).Once()
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		EnvelopeXdr: envelopeBytes,
+		InvoiceList: il,
+	})
+	require.NoError(t, err)
+
+	assert.EqualValues(t, horizonResult.Ledger, resp.Ledger)
+	assert.EqualValues(t, horizonResult.Hash, hex.EncodeToString(resp.Hash.Value))
+	assert.EqualValues(t, horizonResult.Result, base64.StdEncoding.EncodeToString(resp.ResultXdr))
+
+	// Ensure that the invoice got stored
+	storedIL, err := env.invoiceStore.Get(context.Background(), txHash)
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(il, storedIL))
+}
+
 func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
@@ -634,7 +683,7 @@ func TestSubmitTransaction_InvalidInvoiceList(t *testing.T) {
 		},
 	}
 
-	_, envelopeBytes, _ := generateEnvelope(t, invalid, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, invalid, 1, kin.TransactionTypeSpend)
 
 	invalid.Invoices = append(invalid.Invoices,
 		&commonpb.Invoice{
@@ -657,7 +706,7 @@ func TestSubmitTransaction_WithInvoiceInvalidMemo(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	envelope, _, _ := generateEnvelope(t, nil, 1)
+	envelope, _, _ := generateEnvelope(t, nil, 1, kin.TransactionTypeSpend)
 
 	// wrong fk in memo
 	wrongTxn := envelope.Tx
@@ -719,7 +768,7 @@ func TestSubmitTransaction_HorizonErrors(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, envelopeBytes, _ := generateEnvelope(t, nil, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, nil, 1, kin.TransactionTypeSpend)
 
 	type testCase struct {
 		hError horizon.Error
@@ -758,7 +807,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 
 	var err error
 	for i := uint16(0); i < 5; i++ {
-		_, envelopeBytes, _ := generateEnvelope(t, nil, i)
+		_, envelopeBytes, _ := generateEnvelope(t, nil, i, kin.TransactionTypeSpend)
 		hashBytes := sha256.Sum256(envelopeBytes)
 		horizonResult := horizonprotocols.TransactionSuccess{
 			Hash:   hex.EncodeToString(hashBytes[:]),
@@ -772,7 +821,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	_, envelopeBytes, _ := generateEnvelope(t, nil, 1)
+	_, envelopeBytes, _ := generateEnvelope(t, nil, 1, kin.TransactionTypeSpend)
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
 	})
@@ -783,7 +832,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	for i := uint16(0); i < 5; i++ {
-		_, envelopeBytes, _ := generateEnvelope(t, nil, i)
+		_, envelopeBytes, _ := generateEnvelope(t, nil, i, kin.TransactionTypeSpend)
 		hashBytes := sha256.Sum256(envelopeBytes)
 		horizonResult := horizonprotocols.TransactionSuccess{
 			Hash:   hex.EncodeToString(hashBytes[:]),
@@ -797,7 +846,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	_, envelopeBytes, _ = generateEnvelope(t, nil, 1)
+	_, envelopeBytes, _ = generateEnvelope(t, nil, 1, kin.TransactionTypeSpend)
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
 	})
@@ -810,7 +859,7 @@ func TestSubmitTransaction_AppRateLimited(t *testing.T) {
 	env, cleanup := setup(t, -1, 3)
 	defer cleanup()
 
-	envelope, _, _ := generateEnvelope(t, nil, 1)
+	envelope, _, _ := generateEnvelope(t, nil, 1, kin.TransactionTypeSpend)
 
 	// a memo is required for the app index rate limit
 	memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, 1, make([]byte, 0))
@@ -1071,7 +1120,7 @@ func TestGetTransaction_HorizonFallback(t *testing.T) {
 	env, cleanup := setup(t, -1, -1)
 	defer cleanup()
 
-	_, txnEnvelopeBytes, txHash := generateEnvelope(t, nil, 0)
+	_, txnEnvelopeBytes, txHash := generateEnvelope(t, nil, 0, kin.TransactionTypeSpend)
 	horizonResult := horizonprotocols.Transaction{
 		PT:          strconv.FormatInt(10<<32, 10),
 		Hash:        hex.EncodeToString(txHash),
@@ -1113,7 +1162,7 @@ func TestGetTransaction_WithInvoicingEnabled(t *testing.T) {
 	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
 
-	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 1)
+	envelope, envelopeBytes, txHash := generateEnvelope(t, il, 1, kin.TransactionTypeSpend)
 	err = env.invoiceStore.Put(context.Background(), txHash, il)
 	require.NoError(t, err)
 
@@ -1539,7 +1588,7 @@ func TestGetHistory_TextMemo(t *testing.T) {
 }
 
 // todo: options may be better for longer term testing
-func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex uint16) (envelope xdr.TransactionEnvelope, envelopeBytes, txHash []byte) {
+func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex uint16, txType kin.TransactionType) (envelope xdr.TransactionEnvelope, envelopeBytes, txHash []byte) {
 	sender, err := keypair.Random()
 	require.NoError(t, err)
 
@@ -1572,7 +1621,7 @@ func generateEnvelope(t *testing.T, invoiceList *commonpb.InvoiceList, appIndex 
 		ilHash, err := invoice.GetSHA224Hash(invoiceList)
 		require.NoError(t, err)
 
-		memo, err := kin.NewMemo(byte(0), kin.TransactionTypeSpend, appIndex, ilHash)
+		memo, err := kin.NewMemo(byte(0), txType, appIndex, ilHash)
 		require.NoError(t, err)
 		xdrHash := xdr.Hash{}
 		for i := 0; i < len(memo); i++ {
