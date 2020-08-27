@@ -225,10 +225,9 @@ func TestSubmitTransaction_AppSignTxURLNotSet(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, envelopeBytes, _ := generateEnvelope(t, il, 1)
-	hashBytes := sha256.Sum256(envelopeBytes)
+	_, envelopeBytes, txHash := generateEnvelope(t, il, 1)
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
@@ -339,7 +338,7 @@ func TestSubmitTransaction_SignTransaction403_Rejected(t *testing.T) {
 		},
 	}
 
-	_, envelopeBytes, _ := generateEnvelope(t, invoiceList, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, invoiceList, 1)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
@@ -347,6 +346,7 @@ func TestSubmitTransaction_SignTransaction403_Rejected(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assert.Equal(t, txHash, resp.GetHash().GetValue())
 	assert.Equal(t, transactionpb.SubmitTransactionResponse_REJECTED, resp.Result)
 	assert.Equal(t, len(webhookResp.InvoiceErrors), len(resp.InvoiceErrors))
 }
@@ -433,7 +433,7 @@ func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
 		},
 	}
 
-	_, envelopeBytes, _ := generateEnvelope(t, invoiceList, 1)
+	_, envelopeBytes, txHash := generateEnvelope(t, invoiceList, 1)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
@@ -441,6 +441,7 @@ func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assert.Equal(t, txHash, resp.GetHash().GetValue())
 	assert.Equal(t, transactionpb.SubmitTransactionResponse_INVOICE_ERROR, resp.Result)
 	assert.Equal(t, len(webhookResp.InvoiceErrors), len(resp.InvoiceErrors))
 
@@ -484,9 +485,8 @@ func TestSubmitTransaction_SignTransaction200WithInvoice(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	hashBytes := sha256.Sum256(envelopeBytes)
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash[:]),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
@@ -531,9 +531,8 @@ func TestSubmitTransaction_SignTransaction200WithInvoiceAndDisabled(t *testing.T
 	})
 	require.NoError(t, err)
 
-	hashBytes := sha256.Sum256(envelopeBytes)
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash[:]),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
@@ -888,10 +887,9 @@ func TestSubmitTransaction_TextMemoNoAppID(t *testing.T) {
 	defer cleanup()
 
 	// If the text memo contains no app ID, it should still get submitted
-	_, envelopeBytes, _ := generateEnvelopeWithTextMemo(t, "somerandomtext")
-	hashBytes := sha256.Sum256(envelopeBytes)
+	_, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "somerandomtext")
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash[:]),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
@@ -920,10 +918,9 @@ func TestSubmitTransaction_TextMemoWithAppID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, envelopeBytes, _ := generateEnvelopeWithTextMemo(t, "1-test")
-	hashBytes := sha256.Sum256(envelopeBytes)
+	_, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "1-test")
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash[:]),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
@@ -944,10 +941,9 @@ func TestSubmitTransaction_TextMemoNoMapping(t *testing.T) {
 	defer cleanup()
 
 	// If a text memo results in no mapping being found, it should still get submitted
-	_, envelopeBytes, _ := generateEnvelopeWithTextMemo(t, "1-test")
-	hashBytes := sha256.Sum256(envelopeBytes)
+	_, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "1-test")
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash[:]),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}
@@ -1012,7 +1008,7 @@ func TestSubmitTransaction_TextMemoSignTransaction200(t *testing.T) {
 	err := env.appMapper.Add(context.Background(), "test", 1)
 	require.NoError(t, err)
 
-	_, envelopeBytes, _ := generateEnvelopeWithTextMemo(t, "1-test")
+	_, envelopeBytes, txHash := generateEnvelopeWithTextMemo(t, "1-test")
 
 	// Set up test server with a successful sign response
 	webhookResp := &signtransaction.SuccessResponse{EnvelopeXDR: envelopeBytes}
@@ -1030,9 +1026,8 @@ func TestSubmitTransaction_TextMemoSignTransaction200(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	hashBytes := sha256.Sum256(envelopeBytes)
 	horizonResult := horizonprotocols.TransactionSuccess{
-		Hash:   hex.EncodeToString(hashBytes[:]),
+		Hash:   hex.EncodeToString(txHash[:]),
 		Ledger: 10,
 		Result: base64.StdEncoding.EncodeToString([]byte("test")),
 	}

@@ -145,7 +145,15 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.InvalidArgument, "missing transaction signature")
 	}
 
-	var err error
+	rawHash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
+	if err != nil {
+		log.WithError(err).Warn("failed to compute hash of submitted transaction")
+		return nil, status.Error(codes.Internal, "failed to compute tx hash")
+	}
+	txHash := commonpb.TransactionHash{
+		Value: rawHash[:],
+	}
+
 	var appIndex uint16
 	var memo kin.Memo
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
@@ -218,6 +226,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 					case 403:
 						if len(signTxErr.OperationErrors) == 0 || len(req.InvoiceList.GetInvoices()) == 0 {
 							return &transactionpb.SubmitTransactionResponse{
+								Hash:   &txHash,
 								Result: transactionpb.SubmitTransactionResponse_REJECTED,
 							}, nil
 						}
@@ -251,6 +260,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							}
 						}
 						return &transactionpb.SubmitTransactionResponse{
+							Hash:          &txHash,
 							Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
 							InvoiceErrors: invoiceErrs,
 						}, nil
@@ -302,16 +312,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
 			}
 
-			hash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
-			if err != nil {
-				log.WithError(err).Warn("failed to compute hash of submitted transaction")
-				return nil, status.Error(codes.Internal, "failed to compute tx hash")
-			}
-
 			return &transactionpb.SubmitTransactionResponse{
-				Hash: &commonpb.TransactionHash{
-					Value: hash[:],
-				},
+				Hash:      &txHash,
 				Result:    transactionpb.SubmitTransactionResponse_FAILED,
 				ResultXdr: resultXDR,
 			}, nil
@@ -321,20 +323,13 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.Internal, "failed to submit transaction")
 	}
 
-	hashBytes, err := hex.DecodeString(resp.Hash)
-	if err != nil {
-		return nil, status.Error(codes.Internal, "invalid hash encoding from horizon")
-	}
-
 	resultXDR, err := base64.StdEncoding.DecodeString(resp.Result)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "invalid result encoding from horizon")
 	}
 
 	return &transactionpb.SubmitTransactionResponse{
-		Hash: &commonpb.TransactionHash{
-			Value: hashBytes,
-		},
+		Hash:      &txHash,
 		Ledger:    int64(resp.Ledger),
 		ResultXdr: resultXDR,
 	}, nil
