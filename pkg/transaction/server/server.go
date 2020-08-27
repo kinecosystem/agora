@@ -200,7 +200,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.Internal, "failed to get app config")
 		}
 
-		log.WithField("appIndex", appIndex)
+		log = log.WithField("appIndex", appIndex)
 
 		reqBody, err := signtransaction.RequestBodyFromProto(req)
 		if err != nil {
@@ -209,13 +209,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 
 		if config.SignTransactionURL != nil {
+			log = log.WithField("url", *config.SignTransactionURL)
 			e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
 			if err != nil {
 				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
+					log = log.WithField("status", signTxErr.StatusCode)
 					switch signTxErr.StatusCode {
-					case 400:
-						log.WithError(signTxErr).Warn("Received 400 from app server")
-						return nil, status.Error(codes.Internal, "failed to submit transaction")
 					case 403:
 						if len(signTxErr.OperationErrors) == 0 || len(req.InvoiceList.GetInvoices()) == 0 {
 							return &transactionpb.SubmitTransactionResponse{
@@ -256,13 +255,13 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							InvoiceErrors: invoiceErrs,
 						}, nil
 					default:
-						log.WithError(signTxErr).Warnf("Received %d from app server", signTxErr.StatusCode)
-						return nil, status.Error(codes.Internal, "failed to submit transaction")
+						log.WithError(signTxErr).Warn("Received unexpected error from app server")
+						return nil, status.Error(codes.Internal, "failed to verify transaction with webhook")
 					}
 				}
 
 				log.WithError(err).Warn("failed to call sign transaction webhook")
-				return nil, status.Error(codes.Internal, "failed to whitelist transaction")
+				return nil, status.Error(codes.Internal, "failed to verify transaction with webhook")
 			}
 		}
 
