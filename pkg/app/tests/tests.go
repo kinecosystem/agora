@@ -33,7 +33,6 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 			AppName:            "kin",
 			SignTransactionURL: signTxURL,
 			EventsURL:          eventsURL,
-			InvoicingEnabled:   true,
 		}
 
 		err = store.Add(context.Background(), 1, config)

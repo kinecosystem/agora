@@ -28,7 +28,6 @@ type configItem struct {
 	AppName            string `dynamodbav:"app_name,omitempty"`
 	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
 	EventsURL          string `dynamodbav:"events_url,omitempty"`
-	InvoicingEnabled   bool   `dynamodbav:"invoicing_enabled,omitempty"`
 	WebhookSecret      string `dynamodbav:"webhook_secret,omitempty"`
 }
 
@@ -46,10 +45,9 @@ func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeV
 	}
 
 	configItem := &configItem{
-		AppIndex:         appIndex,
-		AppName:          config.AppName,
-		InvoicingEnabled: config.InvoicingEnabled,
-		WebhookSecret:    config.WebhookSecret,
+		AppIndex:      appIndex,
+		AppName:       config.AppName,
+		WebhookSecret: config.WebhookSecret,
 	}
 
 	if config.SignTransactionURL != nil {
@@ -69,9 +67,8 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*app.Config, error) {
 	}
 
 	config := &app.Config{
-		AppName:          configItem.AppName,
-		InvoicingEnabled: configItem.InvoicingEnabled,
-		WebhookSecret:    configItem.WebhookSecret,
+		AppName:       configItem.AppName,
+		WebhookSecret: configItem.WebhookSecret,
 	}
 
 	if len(configItem.SignTransactionURL) != 0 {

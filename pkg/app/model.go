@@ -14,6 +14,5 @@ type Config struct {
 	AppName            string
 	SignTransactionURL *url.URL
 	EventsURL          *url.URL
-	InvoicingEnabled   bool
 	WebhookSecret      string
 }

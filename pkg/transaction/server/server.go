@@ -283,7 +283,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			}
 		}
 
-		if config.InvoicingEnabled && req.InvoiceList != nil {
+		if req.InvoiceList != nil {
 			txHash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
 			if err != nil {
 				return nil, status.Error(codes.Internal, "failed to hash transaction")
@@ -470,11 +470,6 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 }
 
 func (s *server) getInvoiceList(ctx context.Context, appConfig *app.Config, txHash []byte) (*commonpb.InvoiceList, error) {
-	// shortcut to avoid unnecessary lookups
-	if !appConfig.InvoicingEnabled {
-		return nil, nil
-	}
-
 	il, err := s.invoiceStore.Get(ctx, txHash)
 	if err == invoice.ErrNotFound {
 		return nil, nil
