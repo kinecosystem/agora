@@ -112,12 +112,12 @@ func TestClient_SubmitPayment(t *testing.T) {
 
 	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	source, err := NewPrivateKey()
+	channel, err := NewPrivateKey()
 	require.NoError(t, err)
 	dest, err := NewPrivateKey()
 	require.NoError(t, err)
 
-	for _, acc := range [][]byte{sender, source, dest} {
+	for _, acc := range [][]byte{sender, channel, dest} {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
@@ -133,7 +133,7 @@ func TestClient_SubmitPayment(t *testing.T) {
 			Destination: dest.Public(),
 			Type:        kin.TransactionTypeSpend,
 			Quarks:      11,
-			Source:      (*PrivateKey)(&source),
+			Channel:     &channel,
 		},
 		{
 			Sender:      sender,
@@ -160,12 +160,12 @@ func TestClient_SubmitPayment(t *testing.T) {
 
 	for _, p := range payments {
 		var initSeq int64
-		if p.Source == nil {
+		if p.Channel == nil {
 			info, err := env.internal.GetStellarAccountInfo(context.Background(), p.Sender.Public())
 			require.NoError(t, err)
 			initSeq = info.SequenceNumber
 		} else {
-			info, err := env.internal.GetStellarAccountInfo(context.Background(), p.Source.Public())
+			info, err := env.internal.GetStellarAccountInfo(context.Background(), p.Channel.Public())
 			require.NoError(t, err)
 			initSeq = info.SequenceNumber
 		}
@@ -190,9 +190,9 @@ func TestClient_SubmitPayment(t *testing.T) {
 			assert.Nil(t, envelope.Tx.TimeBounds)
 
 			sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
-			if p.Source != nil {
+			if p.Channel != nil {
 				assert.Len(t, envelope.Signatures, 2)
-				assert.EqualValues(t, p.Source.Public(), sourceAccount[:])
+				assert.EqualValues(t, p.Channel.Public(), sourceAccount[:])
 			} else {
 				assert.Len(t, envelope.Signatures, 1)
 				assert.EqualValues(t, p.Sender.Public(), sourceAccount[:])
@@ -327,7 +327,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 
 	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	source, err := NewPrivateKey()
+	channel, err := NewPrivateKey()
 	require.NoError(t, err)
 
 	earnAccounts := make([]PrivateKey, 5)
@@ -337,7 +337,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 		earnAccounts[i] = dest
 	}
 
-	for _, acc := range append([]PrivateKey{sender, source}, earnAccounts...) {
+	for _, acc := range append([]PrivateKey{sender, channel}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
@@ -390,9 +390,9 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 			Earns:  earns,
 		},
 		{
-			Sender: sender,
-			Source: (*PrivateKey)(&source),
-			Earns:  earns,
+			Sender:  sender,
+			Channel: (*PrivateKey)(&channel),
+			Earns:   earns,
 		},
 		{
 			Sender: sender,
@@ -407,12 +407,12 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 
 	for _, b := range batches {
 		var initSeq int64
-		if b.Source == nil {
+		if b.Channel == nil {
 			info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Sender.Public())
 			require.NoError(t, err)
 			initSeq = info.SequenceNumber
 		} else {
-			info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Source.Public())
+			info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Channel.Public())
 			require.NoError(t, err)
 			initSeq = info.SequenceNumber
 		}
@@ -441,9 +441,9 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 			assert.Nil(t, envelope.Tx.TimeBounds)
 
 			sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
-			if b.Source != nil {
+			if b.Channel != nil {
 				assert.Len(t, envelope.Signatures, 2)
-				assert.EqualValues(t, b.Source.Public(), sourceAccount[:])
+				assert.EqualValues(t, b.Channel.Public(), sourceAccount[:])
 			} else {
 				assert.Len(t, envelope.Signatures, 1)
 				assert.EqualValues(t, b.Sender.Public(), sourceAccount[:])
@@ -501,7 +501,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 
 	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	source, err := NewPrivateKey()
+	channel, err := NewPrivateKey()
 	require.NoError(t, err)
 
 	earnAccounts := make([]PrivateKey, 202)
@@ -511,7 +511,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 		earnAccounts[i] = dest
 	}
 
-	for _, acc := range append([]PrivateKey{sender, source}, earnAccounts...) {
+	for _, acc := range append([]PrivateKey{sender, channel}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
@@ -544,9 +544,9 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 			Earns:  earns,
 		},
 		{
-			Sender: sender,
-			Source: (*PrivateKey)(&source),
-			Earns:  earns,
+			Sender:  sender,
+			Channel: (*PrivateKey)(&channel),
+			Earns:   earns,
 		},
 		{
 			Sender: sender,
@@ -556,12 +556,12 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 
 	for _, b := range batches {
 		var initSeq int64
-		if b.Source == nil {
+		if b.Channel == nil {
 			info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Sender.Public())
 			require.NoError(t, err)
 			initSeq = info.SequenceNumber
 		} else {
-			info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Source.Public())
+			info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Channel.Public())
 			require.NoError(t, err)
 			initSeq = info.SequenceNumber
 		}
@@ -604,9 +604,9 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 				assert.Nil(t, envelope.Tx.TimeBounds)
 
 				sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
-				if b.Source != nil {
+				if b.Channel != nil {
 					assert.Len(t, envelope.Signatures, 2)
-					assert.EqualValues(t, b.Source.Public(), sourceAccount[:])
+					assert.EqualValues(t, b.Channel.Public(), sourceAccount[:])
 				} else {
 					assert.Len(t, envelope.Signatures, 1)
 					assert.EqualValues(t, b.Sender.Public(), sourceAccount[:])

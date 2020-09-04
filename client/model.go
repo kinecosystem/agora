@@ -63,7 +63,7 @@ type Payment struct {
 	Type        kin.TransactionType
 	Quarks      int64
 
-	Source *PrivateKey
+	Channel *PrivateKey
 
 	Invoice *commonpb.Invoice
 	Memo    string
@@ -155,8 +155,8 @@ type TransactionData struct {
 // EarnBatch is a batch of Earn payments coming from a single
 // sender/source.
 type EarnBatch struct {
-	Sender PrivateKey
-	Source *PrivateKey
+	Sender  PrivateKey
+	Channel *PrivateKey
 
 	Memo string
 

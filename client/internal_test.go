@@ -364,7 +364,7 @@ func generatePayments(t *testing.T, sameSource, useInvoice bool) ([]Payment, Tra
 			Quarks:      10,
 		}
 		if !sameSource {
-			payments[i].Source = &txSourceKey
+			payments[i].Channel = &txSourceKey
 		}
 		if useInvoice {
 			payments[i].Invoice = invoiceList.Invoices[i]

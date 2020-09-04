@@ -250,9 +250,9 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 	}
 
 	var signers []PrivateKey
-	if payment.Source != nil {
+	if payment.Channel != nil {
 		signers = []PrivateKey{
-			*payment.Source,
+			*payment.Channel,
 			payment.Sender,
 		}
 	} else {
@@ -393,10 +393,10 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 	for start := 0; start < len(batch.Earns); start += 100 {
 		end := int(math.Min(float64(start+100), float64(len(batch.Earns))))
 		b := EarnBatch{
-			Sender: batch.Sender,
-			Source: batch.Source,
-			Memo:   batch.Memo,
-			Earns:  make([]Earn, end-start),
+			Sender:  batch.Sender,
+			Channel: batch.Channel,
+			Memo:    batch.Memo,
+			Earns:   make([]Earn, end-start),
 		}
 		copy(b.Earns, batch.Earns[start:end])
 		batches = append(batches, b)
@@ -482,9 +482,9 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 
 func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitStellarTransactionResult, err error) {
 	var signers []PrivateKey
-	if batch.Source != nil {
+	if batch.Channel != nil {
 		signers = []PrivateKey{
-			*batch.Source,
+			*batch.Channel,
 			batch.Sender,
 		}
 	} else {
