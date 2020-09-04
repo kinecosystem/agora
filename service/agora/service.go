@@ -21,6 +21,7 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -53,8 +54,9 @@ import (
 )
 
 const (
-	rootKeypairIDEnv = "ROOT_KEYPAIR_ID"
-	keystoreTypeEnv  = "KEYSTORE_TYPE"
+	rootKeypairIDEnv     = "ROOT_KEYPAIR_ID"
+	rootKin2KeypairIDEnv = "ROOT_KIN_2_KEYPAIR_ID"
+	keystoreTypeEnv      = "KEYSTORE_TYPE"
 
 	// Rate Limit Configs
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
@@ -92,14 +94,27 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to determine root keypair")
 	}
 
+	kin2RootAccountKP, err := keystore.Get(context.Background(), os.Getenv(rootKin2KeypairIDEnv))
+	if err != nil {
+		return errors.Wrap(err, "failed to determine kin 2 root keypair")
+	}
+
 	client, err := kin.GetClient()
 	if err != nil {
 		return errors.Wrap(err, "failed to get kin client")
 	}
+	kin2Client, err := kin.GetKin2Client()
+	if err != nil {
+		return errors.Wrap(err, "failed to get kin 2 client")
+	}
 
 	clientV2, err := kin.GetClientV2()
 	if err != nil {
-		return errors.Wrap(err, "failed to get kin client")
+		return errors.Wrap(err, "failed to get v2 kin client")
+	}
+	kin2ClientV2, err := kin.GetKin2ClientV2()
+	if err != nil {
+		return errors.Wrap(err, "failed to get v2 kin 2 client")
 	}
 
 	cfg, err := external.LoadDefaultAWSConfig()
@@ -115,6 +130,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	dynamoV1Client := dynamodbv1.New(sess)
 
 	accountNotifier := accountserver.NewAccountNotifier(client)
+	kin2AccountNotifier := accountserver.NewAccountNotifier(kin2Client)
 
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
@@ -156,6 +172,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 
 	var channelPool channel.Pool
+	var kin2ChannelPool channel.Pool
+
 	maxChannelsStr := os.Getenv(maxChannelsEnv)
 	if maxChannelsStr != "" && maxChannelsStr != "0" {
 		maxChannels, err := strconv.Atoi(maxChannelsStr)
@@ -168,9 +186,10 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Errorf("%s must be set if %s is set", channelSaltEnv, maxChannelsEnv)
 		}
 
-		pool, err := channelpool.New(
+		channelPool, err = channelpool.New(
 			dynamoV1Client,
 			maxChannels,
+			version.KinVersion3,
 			rootAccountKP,
 			channelSalt,
 		)
@@ -178,15 +197,28 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Wrap(err, "failed to initialize channel pool")
 		}
 
-		channelPool = pool
+		kin2ChannelPool, err = channelpool.New(
+			dynamoV1Client,
+			maxChannels,
+			version.KinVersion2,
+			kin2RootAccountKP,
+			channelSalt,
+		)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize channel pool")
+		}
 	}
 
 	a.accountServer, err = accountserver.New(
 		rootAccountKP,
 		client,
 		accountNotifier,
-		limiter,
 		channelPool,
+		kin2RootAccountKP,
+		kin2Client,
+		kin2AccountNotifier,
+		kin2ChannelPool,
+		limiter,
 		&accountserver.Config{
 			CreateAccountGlobalLimit: createAccountRL,
 		},
@@ -215,6 +247,10 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to get kin network")
 	}
+	kin2Network, err := kin.GetKin2Network()
+	if err != nil {
+		return errors.Wrap(err, "failed to get kin 2 network")
+	}
 
 	committer := ingestioncommitter.New(dynamoClient)
 	historyIngestor := stellar.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
@@ -228,6 +264,17 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init events ingestion lock")
 	}
 
+	kin2HistoryIngestor := stellar.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
+	kin2EventsIngestor := stellar.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
+	kin2HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin2", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init kin 2 history ingestion lock")
+	}
+	kin2EventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin2", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init kin 2 events ingestion lock")
+	}
+
 	historyRW := historyrw.New(dynamoClient)
 
 	a.txnServer, err = transactionserver.New(
@@ -237,7 +284,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		historyRW,
 		committer,
 		client,
-		clientV2,
+		kin2Client,
 		webhookClient,
 		limiter,
 		&transactionserver.Config{
@@ -266,6 +313,25 @@ func (a *app) Init(_ agoraapp.Config) error {
 			log.WithError(err).Warn("events ingestion loop terminated")
 		} else {
 			log.WithError(err).Info("events ingestion loop terminated")
+		}
+	}()
+	go func() {
+		transaction.StreamTransactions(ctx, kin2ClientV2, kin2AccountNotifier)
+	}()
+	go func() {
+		err := ingestion.Run(ctx, kin2HistoryLock, committer, historyRW, kin2HistoryIngestor)
+		if err != nil && err != context.Canceled {
+			log.WithError(err).Warn("kin 2 history ingestion loop terminated")
+		} else {
+			log.WithError(err).Info("kin 2 history ingestion loop terminated")
+		}
+	}()
+	go func() {
+		err := ingestion.Run(ctx, kin2EventsLock, committer, eventsProcessor, kin2EventsIngestor)
+		if err != nil && err != context.Canceled {
+			log.WithError(err).Warn("kin 2 events ingestion loop terminated")
+		} else {
+			log.WithError(err).Info("kin 2 events ingestion loop terminated")
 		}
 	}()
 

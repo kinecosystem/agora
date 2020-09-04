@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 	dynamotest "github.com/kinecosystem/agora-common/aws/dynamodb/test"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/ory/dockertest"
 	"github.com/pkg/errors"
@@ -46,8 +47,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	testPoolCtor = func(maxChannels int, rootKP *keypair.Full, channelSalt string) (pool channel.Pool, err error) {
-		return New(dynamoClient, maxChannels, rootKP, channelSalt)
+	testPoolCtor = func(maxChannels int, kinVersion version.KinVersion, rootKP *keypair.Full, channelSalt string) (pool channel.Pool, err error) {
+		return New(dynamoClient, maxChannels, kinVersion, rootKP, channelSalt)
 	}
 
 	teardown = func() {

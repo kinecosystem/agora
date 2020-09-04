@@ -12,14 +12,14 @@ import (
 
 	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
-	"github.com/kinecosystem/go/network"
+	kinnetwork "github.com/kinecosystem/go/network"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
-	"github.com/stellar/go/clients/horizonclient"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -53,16 +53,18 @@ var (
 )
 
 type server struct {
-	log     *logrus.Entry
-	network build.Network
+	log         *logrus.Entry
+	network     build.Network
+	kin2Network build.Network
 
 	appConfigStore app.ConfigStore
 	appMapper      app.Mapper
 	invoiceStore   invoice.Store
 	loader         *historyLoader
+	kin2Loader     *historyLoader
 
 	client        horizon.ClientInterface
-	clientV2      horizonclient.ClientInterface
+	kin2Client    horizon.ClientInterface
 	webhookClient *webhook.Client
 
 	limiter *redis_rate.Limiter
@@ -89,7 +91,7 @@ func New(
 	reader history.Reader,
 	committer ingestion.Committer,
 	client horizon.ClientInterface,
-	clientV2 horizonclient.ClientInterface,
+	kin2Client horizon.ClientInterface,
 	webhookClient *webhook.Client,
 	limiter *redis_rate.Limiter,
 	config *Config,
@@ -99,21 +101,28 @@ func New(
 		return nil, errors.Wrap(err, "failed to get network")
 	}
 
+	kin2Network, err := kin.GetKin2Network()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin 2 network")
+	}
+
 	if err = registerMetrics(); err != nil {
 		return nil, err
 	}
 
 	return &server{
-		log:     logrus.StandardLogger().WithField("type", "transaction/server"),
-		network: network,
+		log:         logrus.StandardLogger().WithField("type", "transaction/server"),
+		network:     network,
+		kin2Network: kin2Network,
 
 		appConfigStore: appConfigStore,
 		appMapper:      appMapper,
 		invoiceStore:   invoiceStore,
 		loader:         newLoader(client, reader, committer),
+		kin2Loader:     newLoader(kin2Client, reader, committer),
 
 		client:        client,
-		clientV2:      clientV2,
+		kin2Client:    kin2Client,
 		webhookClient: webhookClient,
 
 		limiter: limiter,
@@ -124,6 +133,22 @@ func New(
 // SubmitTransaction implements transactionpb.TransactionServer.SubmitTransaction.
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
+
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	var client horizon.ClientInterface
+	var network build.Network
+	switch kinVersion {
+	case version.KinVersion2:
+		client = s.kin2Client
+		network = s.kin2Network
+	default:
+		client = s.client
+		network = s.network
+	}
 
 	if s.config.SubmitTxGlobalLimit > 0 {
 		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.SubmitTxGlobalLimit))
@@ -145,7 +170,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.InvalidArgument, "missing transaction signature")
 	}
 
-	rawHash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
+	rawHash, err := kinnetwork.HashTransaction(&e.Tx, network.Passphrase)
 	if err != nil {
 		log.WithError(err).Warn("failed to compute hash of submitted transaction")
 		return nil, status.Error(codes.Internal, "failed to compute tx hash")
@@ -284,7 +309,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 
 		if req.InvoiceList != nil {
-			txHash, err := network.HashTransaction(&e.Tx, s.network.Passphrase)
+			txHash, err := kinnetwork.HashTransaction(&e.Tx, network.Passphrase)
 			if err != nil {
 				return nil, status.Error(codes.Internal, "failed to hash transaction")
 			}
@@ -303,7 +328,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	encodedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
 
 	// todo: timeout on txn send?
-	resp, err := s.client.SubmitTransaction(encodedXDR)
+	resp, err := client.SubmitTransaction(encodedXDR)
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
@@ -350,7 +375,20 @@ func (s *server) GetTransaction(ctx context.Context, req *transactionpb.GetTrans
 		"hash":   hex.EncodeToString(req.TransactionHash.Value),
 	})
 
-	tx, err := s.loader.getTransaction(ctx, req.TransactionHash.Value)
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	var loader *historyLoader
+	switch kinVersion {
+	case version.KinVersion2:
+		loader = s.kin2Loader
+	default:
+		loader = s.loader
+	}
+
+	tx, err := loader.getTransaction(ctx, req.TransactionHash.Value)
 	if err == history.ErrNotFound {
 		return &transactionpb.GetTransactionResponse{State: transactionpb.GetTransactionResponse_UNKNOWN}, nil
 	} else if err != nil {

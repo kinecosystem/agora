@@ -9,6 +9,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -39,14 +40,23 @@ var (
 )
 
 type server struct {
-	log             *logrus.Entry
-	rootAccountKP   *keypair.Full
+	log *logrus.Entry
+
+	rootKP          *keypair.Full
 	network         build.Network
-	horizonClient   horizon.ClientInterface
+	client          horizon.ClientInterface
 	accountNotifier *AccountNotifier
-	limiter         *redis_rate.Limiter
 	channelPool     channel.Pool
-	config          *Config
+
+	kin2RootKP          *keypair.Full
+	kin2Network         build.Network
+	kin2Client          horizon.ClientInterface
+	kin2Issuer          string
+	kin2AccountNotifier *AccountNotifier
+	kin2ChannelPool     channel.Pool
+
+	limiter *redis_rate.Limiter
+	config  *Config
 }
 
 type Config struct {
@@ -58,11 +68,15 @@ type Config struct {
 
 // New returns a new account server
 func New(
-	rootAccountKP *keypair.Full,
-	horizonClient horizon.ClientInterface,
+	rootKP *keypair.Full,
+	client horizon.ClientInterface,
 	accountNotifier *AccountNotifier,
-	limiter *redis_rate.Limiter,
 	channelPool channel.Pool,
+	kin2RootKP *keypair.Full,
+	kin2Client horizon.ClientInterface,
+	kin2AccountNotifier *AccountNotifier,
+	kin2ChannelPool channel.Pool,
+	limiter *redis_rate.Limiter,
 	c *Config,
 ) (accountpb.AccountServer, error) {
 	network, err := kin.GetNetwork()
@@ -70,25 +84,60 @@ func New(
 		return nil, errors.Wrap(err, "failed to get network")
 	}
 
+	kin2Network, err := kin.GetKin2Network()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin 2 network")
+	}
+
+	kin2Issuer, err := kin.GetKin2Issuer()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin 2 issuer")
+	}
+
 	if err = registerMetrics(); err != nil {
 		return nil, err
 	}
 
 	return &server{
-		log:             logrus.StandardLogger().WithField("type", "account/server"),
-		rootAccountKP:   rootAccountKP,
-		network:         network,
-		horizonClient:   horizonClient,
-		accountNotifier: accountNotifier,
-		limiter:         limiter,
-		channelPool:     channelPool,
-		config:          c,
+		log:                 logrus.StandardLogger().WithField("type", "account/server"),
+		rootKP:              rootKP,
+		network:             network,
+		client:              client,
+		accountNotifier:     accountNotifier,
+		channelPool:         channelPool,
+		kin2RootKP:          kin2RootKP,
+		kin2Network:         kin2Network,
+		kin2Client:          kin2Client,
+		kin2Issuer:          kin2Issuer,
+		kin2AccountNotifier: kin2AccountNotifier,
+		kin2ChannelPool:     kin2ChannelPool,
+		limiter:             limiter,
+		config:              c,
 	}, nil
 }
 
 // CreateAccount implements AccountServer.CreateAccount
 func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
 	log := s.log.WithField("method", "CreateAccount")
+
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	var client horizon.ClientInterface
+	var rootKP *keypair.Full
+	var channelPool channel.Pool
+	switch kinVersion {
+	case version.KinVersion2:
+		client = s.kin2Client
+		rootKP = s.kin2RootKP
+		channelPool = s.kin2ChannelPool
+	default:
+		client = s.client
+		rootKP = s.rootKP
+		channelPool = s.channelPool
+	}
 
 	if s.config.CreateAccountGlobalLimit > 0 {
 		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
@@ -101,7 +150,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	}
 
 	// Check if account exists on the blockchain
-	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)
+	horizonAccount, err := client.LoadAccount(req.AccountId.Value)
 	if err == nil {
 		accountInfo, err := parseAccountInfo(horizonAccount)
 		if err != nil {
@@ -124,8 +173,8 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 	var sourceAcc horizon.Account
 	var sourceKP *keypair.Full
-	if s.channelPool != nil {
-		c, err := s.channelPool.GetChannel()
+	if channelPool != nil {
+		c, err := channelPool.GetChannel()
 		if err != nil {
 			log.WithError(err).Warn("Failed to get channelKP")
 			return nil, status.Error(codes.Internal, err.Error())
@@ -136,7 +185,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			}
 		}()
 
-		channelAccount, err := s.horizonClient.LoadAccount(c.KP.Address())
+		channelAccount, err := client.LoadAccount(c.KP.Address())
 		if err != nil {
 			horizonError, ok := err.(*horizon.Error)
 			if !ok || horizonError.Problem.Status != 404 {
@@ -144,7 +193,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 				return nil, status.Error(codes.Internal, "failed to create account")
 			}
 
-			rootHorizonAccount, err := s.horizonClient.LoadAccount(s.rootAccountKP.Address())
+			rootHorizonAccount, err := client.LoadAccount(rootKP.Address())
 			if err != nil {
 				log.WithError(err).Warn("Failed to load root account")
 				return nil, status.Error(codes.Internal, err.Error())
@@ -152,7 +201,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 			_, err = retry.Retry(
 				func() error {
-					return s.createAccount(s.rootAccountKP, rootHorizonAccount, nil, c.KP.Address())
+					return s.createAccount(kinVersion, rootKP, rootHorizonAccount, nil, c.KP.Address())
 				},
 				retry.Limit(3),
 				retry.BackoffWithJitter(backoff.BinaryExponential(500*time.Millisecond), 2200*time.Millisecond, 0.1),
@@ -162,7 +211,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 				return nil, status.Error(codes.Internal, "Failed to create account")
 			}
 
-			channelAccount, err = s.horizonClient.LoadAccount(c.KP.Address())
+			channelAccount, err = client.LoadAccount(c.KP.Address())
 			if err != nil {
 				log.WithError(err).Warn("Failed to load created/existing channel account")
 				return nil, status.Error(codes.Internal, "Failed to create account")
@@ -172,23 +221,23 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		sourceAcc = channelAccount
 		sourceKP = c.KP
 	} else {
-		rootHorizonAccount, err := s.horizonClient.LoadAccount(s.rootAccountKP.Address())
+		rootHorizonAccount, err := client.LoadAccount(rootKP.Address())
 		if err != nil {
 			log.WithError(err).Warn("Failed to load root account")
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 
 		sourceAcc = rootHorizonAccount
-		sourceKP = s.rootAccountKP
+		sourceKP = rootKP
 	}
 
-	err = s.createAccount(sourceKP, sourceAcc, s.rootAccountKP, req.AccountId.Value)
+	err = s.createAccount(kinVersion, sourceKP, sourceAcc, rootKP, req.AccountId.Value)
 	if err != nil {
 		log.WithError(err).Warn("Failed to create new account")
 		return nil, status.Error(codes.Internal, "Failed to create account")
 	}
 
-	horizonAccount, err = s.horizonClient.LoadAccount(req.AccountId.Value)
+	horizonAccount, err = client.LoadAccount(req.AccountId.Value)
 	if err != nil {
 		log.WithError(err).Warn("Failed to load account from horizon after creation")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -210,7 +259,20 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
 	log := s.log.WithField("method", "GetAccountInfo")
 
-	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	var client horizon.ClientInterface
+	switch kinVersion {
+	case version.KinVersion2:
+		client = s.kin2Client
+	default:
+		client = s.client
+	}
+
+	horizonAccount, err := client.LoadAccount(req.AccountId.Value)
 	if err != nil {
 		horizonError, ok := err.(*horizon.Error)
 		if ok && horizonError.Problem.Status == 404 {
@@ -221,7 +283,13 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	accountInfo, err := parseAccountInfo(horizonAccount)
+	var accountInfo *accountpb.AccountInfo
+	switch kinVersion {
+	case version.KinVersion2:
+		accountInfo, err = parseKin2AccountInfo(horizonAccount, s.kin2Issuer)
+	default:
+		accountInfo, err = parseAccountInfo(horizonAccount)
+	}
 	if err != nil {
 		log.WithError(err).Warn("Failed to parse account info from horizon account")
 		return nil, status.Error(codes.Internal, err.Error())
@@ -236,7 +304,23 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Account_GetEventsServer) error {
 	log := s.log.WithField("method", "GetEvents")
 
-	horizonAccount, err := s.horizonClient.LoadAccount(req.AccountId.Value)
+	kinVersion, err := version.GetCtxKinVersion(stream.Context())
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	var client horizon.ClientInterface
+	var notifier *AccountNotifier
+	switch kinVersion {
+	case version.KinVersion2:
+		client = s.kin2Client
+		notifier = s.kin2AccountNotifier
+	default:
+		client = s.client
+		notifier = s.accountNotifier
+	}
+
+	horizonAccount, err := client.LoadAccount(req.AccountId.Value)
 	if err != nil {
 		horizonError, ok := err.(*horizon.Error)
 		if ok && horizonError.Problem.Status == 404 {
@@ -252,7 +336,15 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 	}
 
 	log = log.WithField("account", req.AccountId.Value)
-	accountInfo, err := parseAccountInfo(horizonAccount)
+
+	var accountInfo *accountpb.AccountInfo
+	switch kinVersion {
+	case version.KinVersion2:
+		accountInfo, err = parseKin2AccountInfo(horizonAccount, s.kin2Issuer)
+	default:
+		accountInfo, err = parseAccountInfo(horizonAccount)
+	}
+
 	if err != nil {
 		log.WithError(err).Warn("Failed to parse account info from horizon account")
 		return status.Error(codes.Internal, err.Error())
@@ -274,11 +366,11 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 	}
 
 	as := newEventStream(eventStreamBufferSize)
-	s.accountNotifier.AddStream(req.AccountId.Value, as)
+	notifier.AddStream(req.AccountId.Value, as)
 
 	defer func() {
 		as.close()
-		s.accountNotifier.RemoveStream(req.AccountId.Value, as)
+		notifier.RemoveStream(req.AccountId.Value, as)
 	}()
 
 	events := make([]*accountpb.Event, 0)
@@ -310,7 +402,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				},
 			})
 
-			accountInfo, accountRemoved, err := s.getMetaAccountInfoOrLoad(req.AccountId.Value, xdrData.Meta)
+			accountInfo, accountRemoved, err := s.getMetaAccountInfoOrLoad(client, kinVersion, req.AccountId.Value, xdrData.Meta)
 			if err != nil {
 				log.WithError(err).Warn("failed to get account info, excluding account event")
 			} else if accountInfo != nil {
@@ -347,7 +439,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 
 // getMetaAccountInfoOrLoad attempts to parse account info from the provided TransactionMeta. If the account info is
 // not present in the TransactionMeta, it will attempt to fetch the account info from Horizon.
-func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMeta) (accountInfo *accountpb.AccountInfo, accountRemoved bool, err error) {
+func (s *server) getMetaAccountInfoOrLoad(client horizon.ClientInterface, kinVersion version.KinVersion, accountID string, m xdr.TransactionMeta) (accountInfo *accountpb.AccountInfo, accountRemoved bool, err error) {
 	log := s.log.WithField("method", "getMetaAccountInfoOrLoad")
 
 	for _, opMeta := range m.OperationsMeta() {
@@ -363,9 +455,7 @@ func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMet
 					account, ok := entry.Data.GetAccount()
 					if !ok {
 						log.Warn("account not present in account ledger entry data")
-					}
-
-					if account.AccountId.Address() == accountID {
+					} else if account.AccountId.Address() == accountID {
 						info, err := parseAccountInfoFromEntry(account)
 						if err != nil {
 							log.WithError(err).Warn("failed to parse account info from account entry")
@@ -393,12 +483,17 @@ func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMet
 	}
 
 	if accountInfo == nil && !accountRemoved {
-		account, err := s.horizonClient.LoadAccount(accountID)
+		account, err := client.LoadAccount(accountID)
 		if err != nil {
 			return nil, false, err
 		}
 
-		accountInfo, err = parseAccountInfo(account)
+		switch kinVersion {
+		case version.KinVersion2:
+			accountInfo, err = parseKin2AccountInfo(account, s.kin2Issuer)
+		default:
+			accountInfo, err = parseAccountInfo(account)
+		}
 		if err != nil {
 			return nil, false, err
 		}
@@ -407,7 +502,18 @@ func (s *server) getMetaAccountInfoOrLoad(accountID string, m xdr.TransactionMet
 	return accountInfo, accountRemoved, err
 }
 
-func (s *server) createAccount(sourceKP *keypair.Full, sourceAccount horizon.Account, whitelistingKP *keypair.Full, newAccountID string) (err error) {
+func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.Full, sourceAccount horizon.Account, whitelistingKP *keypair.Full, newAccountID string) (err error) {
+	var network build.Network
+	var client horizon.ClientInterface
+	switch kinVersion {
+	case version.KinVersion2:
+		network = s.kin2Network
+		client = s.kin2Client
+	default:
+		network = s.network
+		client = s.client
+	}
+
 	// sequence number is typically represented with an int64, but the Horizon client sequence number mutator uses a
 	// uint64, so we parse it accordingly here.
 	prevSeq, err := strconv.ParseUint(sourceAccount.Sequence, 10, 64)
@@ -415,20 +521,35 @@ func (s *server) createAccount(sourceKP *keypair.Full, sourceAccount horizon.Acc
 		return errors.Wrap(err, "failed to parse root account sequence number")
 	}
 
-	tx, err := build.Transaction(build.SourceAccount{AddressOrSeed: sourceKP.Address()},
+	mutators := []build.TransactionMutator{
+		build.SourceAccount{AddressOrSeed: sourceKP.Address()},
 		build.Sequence{Sequence: prevSeq + 1},
-		s.network,
-		build.CreateAccount(
-			build.Destination{AddressOrSeed: newAccountID},
-			build.NativeAmount{Amount: "0"},
-		),
-	)
+		network,
+	}
+	if kinVersion == 2 {
+		mutators = append(mutators,
+			build.CreateAccount(
+				build.Destination{AddressOrSeed: newAccountID},
+				build.NativeAmount{Amount: "200"}, // 2 XLM, the minimum amount of XLM an account must hold
+			),
+			build.Trust(kin.KinAssetCode, s.kin2Issuer, build.SourceAccount{AddressOrSeed: newAccountID}),
+		)
+	} else {
+		mutators = append(mutators,
+			build.CreateAccount(
+				build.Destination{AddressOrSeed: newAccountID},
+				build.NativeAmount{Amount: "0"},
+			),
+		)
+	}
+
+	tx, err := build.Transaction(mutators...)
 	if err != nil {
 		return errors.Wrap(err, "failed to build transaction")
 	}
 
 	signers := []string{sourceKP.Seed()}
-	if whitelistingKP != nil {
+	if whitelistingKP != nil && whitelistingKP.Seed() != sourceKP.Seed() {
 		signers = append(signers, whitelistingKP.Seed())
 	}
 
@@ -442,7 +563,7 @@ func (s *server) createAccount(sourceKP *keypair.Full, sourceAccount horizon.Acc
 		return errors.Wrap(err, "failed to encode transaction")
 	}
 
-	_, err = s.horizonClient.SubmitTransaction(encodedTx)
+	_, err = client.SubmitTransaction(encodedTx)
 	if err != nil {
 		hErr, ok := err.(*horizon.Error)
 		if !ok {

@@ -38,7 +38,7 @@ var (
 func getEntry(item map[string]dynamodb.AttributeValue) (*model.Entry, error) {
 	rawEntry, ok := item["entry"]
 	if !ok {
-		return nil, errors.New("missing entry attribue")
+		return nil, errors.New("missing entry attribute")
 	}
 
 	entry := &model.Entry{}

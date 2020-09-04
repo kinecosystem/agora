@@ -3,13 +3,14 @@ package tests
 import (
 	"testing"
 
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/stretchr/testify/require"
 
 	"github.com/kinecosystem/agora/pkg/channel"
 )
 
-type PoolCtor func(maxChannels int, kp *keypair.Full, channelSalt string) (pool channel.Pool, err error)
+type PoolCtor func(maxChannels int, kinVersion version.KinVersion, kp *keypair.Full, channelSalt string) (pool channel.Pool, err error)
 
 // RunTestsMax1 runs tests on a channel pool.
 func RunTests(t *testing.T, poolCtor PoolCtor, teardown func()) {
@@ -22,7 +23,7 @@ func RunTests(t *testing.T, poolCtor PoolCtor, teardown func()) {
 func TestGetChannel(t *testing.T, poolCtor PoolCtor) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
-	pool, err := poolCtor(1, kp, "somesalt")
+	pool, err := poolCtor(1, version.KinVersion3, kp, "somesalt")
 	require.Nil(t, err)
 
 	c1, err := pool.GetChannel()

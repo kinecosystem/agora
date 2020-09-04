@@ -11,7 +11,7 @@ require (
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.2
 	github.com/kinecosystem/agora-api v0.19.0
-	github.com/kinecosystem/agora-common v0.39.0
+	github.com/kinecosystem/agora-common v0.41.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/mr-tron/base58 v1.2.0
 	github.com/ory/dockertest v3.3.5+incompatible

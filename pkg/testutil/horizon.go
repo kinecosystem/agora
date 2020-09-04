@@ -3,6 +3,7 @@ package testutil
 import (
 	"testing"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/go/keypair"
 	hProtocol "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/kinecosystem/go/protocols/horizon/base"
@@ -19,6 +20,23 @@ func GenerateHorizonAccount(accountID string, nativeBalance string, sequence str
 		Balances: []hProtocol.Balance{{
 			Balance: nativeBalance,
 			Asset:   base.Asset{Type: "native"},
+		}},
+		Sequence: sequence,
+	}
+}
+
+func GenerateKin2HorizonAccount(accountID string, balance string, sequence string) *hProtocol.Account {
+	return &hProtocol.Account{
+		HistoryAccount: hProtocol.HistoryAccount{
+			ID: accountID,
+		},
+		Balances: []hProtocol.Balance{{
+			Balance: balance,
+			Asset: base.Asset{
+				Type:   "credit_alphanum4",
+				Code:   kin.KinAssetCode,
+				Issuer: kin.Kin2TestIssuer,
+			},
 		}},
 		Sequence: sequence,
 	}

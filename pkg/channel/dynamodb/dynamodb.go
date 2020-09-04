@@ -1,14 +1,15 @@
 package dynamodb
 
 import (
+	"fmt"
 	"math/rand"
-	"strconv"
 	"sync"
 	"time"
 
 	"cirello.io/dynamolock"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 	"github.com/kinecosystem/agora-common/retry"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/pkg/errors"
 
@@ -26,12 +27,13 @@ var (
 
 type pool struct {
 	client        *dynamolock.Client
+	kinVersion    version.KinVersion
 	maxChannels   int
 	rootAccountKP *keypair.Full
 	channelSalt   string
 }
 
-func New(db dynamodbiface.DynamoDBAPI, maxChannels int, rootAccountKP *keypair.Full, channelSalt string) (channel.Pool, error) {
+func New(db dynamodbiface.DynamoDBAPI, maxChannels int, kinVersion version.KinVersion, rootAccountKP *keypair.Full, channelSalt string) (channel.Pool, error) {
 	client, err := dynamolock.New(
 		db,
 		tableName,
@@ -45,19 +47,22 @@ func New(db dynamodbiface.DynamoDBAPI, maxChannels int, rootAccountKP *keypair.F
 	return &pool{
 		client:        client,
 		maxChannels:   maxChannels,
+		kinVersion:    kinVersion,
 		rootAccountKP: rootAccountKP,
 		channelSalt:   channelSalt,
 	}, nil
 }
 
 func (p pool) GetChannel() (c *channel.Channel, err error) {
-	var id int
+	var i int
+	var id string
 	var dynamoLock *dynamolock.Lock
 
 	_, err = retry.Retry(
 		func() error {
-			id = rand.Intn(p.maxChannels)
-			dynamoLock, err = p.client.AcquireLock(strconv.Itoa(id), dynamolock.FailIfLocked())
+			i = rand.Intn(p.maxChannels)
+			id = fmt.Sprintf("%d-%d", p.kinVersion, i)
+			dynamoLock, err = p.client.AcquireLock(id, dynamolock.FailIfLocked())
 			if err != nil {
 				return err
 			}
@@ -71,7 +76,7 @@ func (p pool) GetChannel() (c *channel.Channel, err error) {
 		return nil, errors.Wrap(err, "failed to acquire locked channel")
 	}
 
-	kp, err := channel.GenerateChannelKeypair(p.rootAccountKP, id, p.channelSalt)
+	kp, err := channel.GenerateChannelKeypair(p.rootAccountKP, i, p.channelSalt)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate keypair")
 	}
