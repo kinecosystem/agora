@@ -577,13 +577,15 @@ func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result S
 func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, envelope xdr.TransactionEnvelope, invoiceList *commonpb.InvoiceList) (SubmitStellarTransactionResult, error) {
 	var result SubmitStellarTransactionResult
 
-	_, err := retry.Retry(
+	senderInfo, err := c.internal.GetStellarAccountInfo(ctx, signers[0].Public())
+	if err != nil {
+		return result, err
+	}
+
+	offset := int64(1)
+	_, err = retry.Retry(
 		func() error {
-			senderInfo, err := c.internal.GetStellarAccountInfo(ctx, signers[0].Public())
-			if err != nil {
-				return err
-			}
-			envelope.Tx.SeqNum = xdr.SequenceNumber(senderInfo.SequenceNumber) + 1
+			envelope.Tx.SeqNum = xdr.SequenceNumber(senderInfo.SequenceNumber + offset)
 
 			var signedEnvelope *xdr.TransactionEnvelope
 			for _, s := range signers {
@@ -609,6 +611,7 @@ func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, env
 				return err
 			}
 			if result.Errors.TxError == ErrBadNonce {
+				offset += 1
 				return ErrBadNonce
 			}
 
