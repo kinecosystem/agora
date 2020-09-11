@@ -2,17 +2,29 @@ package client
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	"github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+)
+
+const (
+	SDKVersion      = "0.2.0"
+	userAgentHeader = "kin-user-agent"
+)
+
+var (
+	userAgent = fmt.Sprintf("KinSDK/%s %s (%s; %s)", SDKVersion, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 )
 
 // InternalClient is a low level client used for interacting with
@@ -46,6 +58,8 @@ func (c *InternalClient) GetBlockchainVersion() (int, error) {
 }
 
 func (c *InternalClient) CreateStellarAccount(ctx context.Context, key PrivateKey) error {
+	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+
 	_, err := c.retrier.Retry(
 		func() error {
 			resp, err := c.accountClient.CreateAccount(ctx, &accountpb.CreateAccountRequest{
@@ -71,6 +85,8 @@ func (c *InternalClient) CreateStellarAccount(ctx context.Context, key PrivateKe
 }
 
 func (c *InternalClient) GetStellarAccountInfo(ctx context.Context, account PublicKey) (*accountpb.AccountInfo, error) {
+	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+
 	var accountInfo *accountpb.AccountInfo
 
 	_, err := c.retrier.Retry(
@@ -103,6 +119,8 @@ func (c *InternalClient) GetStellarAccountInfo(ctx context.Context, account Publ
 }
 
 func (c *InternalClient) GetTransaction(ctx context.Context, txHash []byte) (data TransactionData, err error) {
+	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+
 	var resp *transactionpb.GetTransactionResponse
 	_, err = c.retrier.Retry(func() error {
 		resp, err = c.transactionClient.GetTransaction(ctx, &transactionpb.GetTransactionRequest{
@@ -147,6 +165,8 @@ type SubmitStellarTransactionResult struct {
 }
 
 func (c *InternalClient) SubmitStellarTransaction(ctx context.Context, envelopeXDR []byte, invoiceList *commonpb.InvoiceList) (result SubmitStellarTransactionResult, err error) {
+	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+
 	var resp *transactionpb.SubmitTransactionResponse
 	_, err = c.retrier.Retry(func() error {
 		resp, err = c.transactionClient.SubmitTransaction(ctx, &transactionpb.SubmitTransactionRequest{

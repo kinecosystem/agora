@@ -8,6 +8,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/go/xdr"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
@@ -32,9 +33,13 @@ func newTestServer() *testServer {
 	}
 }
 
-func (t *testServer) CreateAccount(_ context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
+func (t *testServer) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if err := validateHeaders(ctx); err != nil {
+		return nil, err
+	}
 
 	if err := t.getError(); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -54,9 +59,13 @@ func (t *testServer) CreateAccount(_ context.Context, req *accountpb.CreateAccou
 
 	return &accountpb.CreateAccountResponse{}, nil
 }
-func (t *testServer) GetAccountInfo(_ context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
+func (t *testServer) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if err := validateHeaders(ctx); err != nil {
+		return nil, err
+	}
 
 	accountInfo, ok := t.accounts[req.AccountId.Value]
 	if !ok {
@@ -73,9 +82,13 @@ func (t *testServer) GetEvents(*accountpb.GetEventsRequest, accountpb.Account_Ge
 	return status.Error(codes.Unimplemented, "")
 }
 
-func (t *testServer) SubmitTransaction(_ context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
+func (t *testServer) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if err := validateHeaders(ctx); err != nil {
+		return nil, err
+	}
 
 	if err := t.getError(); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -135,9 +148,13 @@ func (t *testServer) SubmitTransaction(_ context.Context, req *transactionpb.Sub
 	}, nil
 }
 
-func (t *testServer) GetTransaction(_ context.Context, req *transactionpb.GetTransactionRequest) (*transactionpb.GetTransactionResponse, error) {
+func (t *testServer) GetTransaction(ctx context.Context, req *transactionpb.GetTransactionRequest) (*transactionpb.GetTransactionResponse, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if err := validateHeaders(ctx); err != nil {
+		return nil, err
+	}
 
 	if err := t.getError(); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -175,4 +192,20 @@ func (t *testServer) getError() error {
 	t.errors = t.errors[1:]
 
 	return err
+}
+
+func validateHeaders(ctx context.Context) error {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Internal, "failed to parse metadata")
+	}
+
+	vals := md.Get(userAgentHeader)
+	for _, v := range vals {
+		if v == userAgent {
+			return nil
+		}
+	}
+
+	return status.Error(codes.InvalidArgument, "missing user-agent")
 }
