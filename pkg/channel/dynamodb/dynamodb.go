@@ -55,13 +55,12 @@ func New(db dynamodbiface.DynamoDBAPI, maxChannels int, kinVersion version.KinVe
 
 func (p pool) GetChannel() (c *channel.Channel, err error) {
 	var i int
-	var id string
 	var dynamoLock *dynamolock.Lock
 
 	_, err = retry.Retry(
 		func() error {
 			i = rand.Intn(p.maxChannels)
-			id = fmt.Sprintf("%d-%d", p.kinVersion, i)
+			id := fmt.Sprintf("%d-%d", p.kinVersion, i)
 			dynamoLock, err = p.client.AcquireLock(id, dynamolock.FailIfLocked())
 			if err != nil {
 				return err
