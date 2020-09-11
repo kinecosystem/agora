@@ -1510,8 +1510,6 @@ func TestGetHistory_TextMemo(t *testing.T) {
 	}
 }
 
-// todo: options may be better for longer term
-
 type envelopeOptions struct {
 	invoiceList *commonpb.InvoiceList
 	appIndex    uint16
