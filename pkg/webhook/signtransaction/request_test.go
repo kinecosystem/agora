@@ -9,6 +9,8 @@ import (
 
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+
+	"github.com/kinecosystem/agora/pkg/version"
 )
 
 func TestRequest(t *testing.T) {
@@ -59,8 +61,9 @@ func TestRequest(t *testing.T) {
 		},
 	}
 
-	actual, err := RequestBodyFromProto(req)
+	actual, err := CreateRequestBody(version.KinVersion3, req)
 	require.NoError(t, err)
+	assert.EqualValues(t, 3, actual.KinVersion)
 	assert.Equal(t, envelopeXDR, actual.EnvelopeXDR)
 
 	actualProtoIL := &commonpb.InvoiceList{}

@@ -243,7 +243,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 
 		log = log.WithField("appIndex", appIndex)
 
-		reqBody, err := signtransaction.RequestBodyFromProto(req)
+		reqBody, err := signtransaction.CreateRequestBody(kinVersion, req)
 		if err != nil {
 			log.WithError(err).Warn("failed to convert request for signing")
 			return nil, status.Error(codes.Internal, "failed to submit transaction")
