@@ -51,7 +51,7 @@ func parseKin2AccountInfo(horizonAccount hProtocol.Account, issuer string) (info
 	return &accountpb.AccountInfo{
 		AccountId:      &commonpb.StellarAccountId{Value: horizonAccount.ID},
 		SequenceNumber: sequence,
-		Balance:        balance / 100, // the smallest amount on Kin 2 is 1e-7 instead of 1e-5, so we convert
+		Balance:        balance,
 	}, nil
 }
 

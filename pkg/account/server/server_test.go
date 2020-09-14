@@ -408,7 +408,7 @@ func TestGetAccountInfo_Kin2(t *testing.T) {
 	kp, err := keypair.Random()
 	require.NoError(t, err)
 
-	env.kin2HClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp.Address(), "10000", "1"), nil).Once()
+	env.kin2HClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp.Address(), "100", "1"), nil).Once()
 
 	req := accountpb.GetAccountInfoRequest{AccountId: &commonpb.StellarAccountId{Value: kp.Address()}}
 	resp, err := env.client.GetAccountInfo(testutil.GetKin2Context(context.Background()), &req)
@@ -748,7 +748,7 @@ func TestGetEvents_Kin2(t *testing.T) {
 		},
 	})
 
-	env.kin2HClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp1.Address(), "1000", "1"), nil).Once()
+	env.kin2HClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp1.Address(), "10", "1"), nil).Once()
 
 	req := &accountpb.GetEventsRequest{AccountId: &commonpb.StellarAccountId{Value: kp1.Address()}}
 	stream, err := env.client.GetEvents(testutil.GetKin2Context(context.Background()), req)
@@ -764,7 +764,7 @@ func TestGetEvents_Kin2(t *testing.T) {
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
 	// Successfully obtain account info; both the transaction and account events should get sent
-	env.kin2HClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp1.Address(), "900", "2"), nil).Once()
+	env.kin2HClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp1.Address(), "9", "2"), nil).Once()
 
 	env.kin2AccountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
 
