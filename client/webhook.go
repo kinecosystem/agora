@@ -18,6 +18,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/events"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
@@ -82,6 +83,7 @@ type SignTransactionFunc func(SignTransactionRequest, *SignTransactionResponse) 
 // SignTransactionRequest contains the transaction and payment data that
 // is requesting to be signed/approved.
 type SignTransactionRequest struct {
+	// The Kin Version provided by the client (optional)
 	// The UserID provided by the client (optional).
 	UserID string
 	// The UserPassKey provided by the client (optional).
@@ -205,6 +207,16 @@ func SignTransactionHandler(env Environment, secret string, f SignTransactionFun
 			return
 		}
 
+		// If no kin version is set, default to Kin 3
+		if signRequest.KinVersion == 0 {
+			signRequest.KinVersion = 3
+		}
+
+		if signRequest.KinVersion != 2 && signRequest.KinVersion != 3 {
+			http.Error(w, "invalid kin version", http.StatusBadRequest)
+			return
+		}
+
 		var envelope xdr.TransactionEnvelope
 		if err = envelope.UnmarshalBinary(signRequest.EnvelopeXDR); err != nil {
 			http.Error(w, "invalid xdr body", http.StatusBadRequest)
@@ -226,7 +238,7 @@ func SignTransactionHandler(env Environment, secret string, f SignTransactionFun
 			network:     network,
 			Envelope:    &envelope,
 		}
-		req.Payments, err = parsePaymentsFromEnvelope(envelope, kin.TransactionTypeSpend, invoiceList)
+		req.Payments, err = parsePaymentsFromEnvelope(envelope, kin.TransactionTypeSpend, invoiceList, version.KinVersion(signRequest.KinVersion))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

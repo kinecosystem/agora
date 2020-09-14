@@ -4,6 +4,7 @@ import (
 	"math/big"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 
@@ -81,7 +82,7 @@ type ReadOnlyPayment struct {
 	Memo    string
 }
 
-func parsePaymentsFromEnvelope(envelope xdr.TransactionEnvelope, txType kin.TransactionType, invoiceList *commonpb.InvoiceList) ([]ReadOnlyPayment, error) {
+func parsePaymentsFromEnvelope(envelope xdr.TransactionEnvelope, txType kin.TransactionType, invoiceList *commonpb.InvoiceList, v version.KinVersion) ([]ReadOnlyPayment, error) {
 	payments := make([]ReadOnlyPayment, 0, len(envelope.Tx.Operations))
 
 	if invoiceList != nil && len(invoiceList.Invoices) != len(envelope.Tx.Operations) {
@@ -118,10 +119,25 @@ func parsePaymentsFromEnvelope(envelope xdr.TransactionEnvelope, txType kin.Tran
 			return payments, errors.Wrap(err, "invalid destination account")
 		}
 
+		var quarks int64
+		if v == version.KinVersion2 {
+			if op.Body.PaymentOp.Asset.Type != xdr.AssetTypeAssetTypeCreditAlphanum4 || op.Body.PaymentOp.Asset.AlphaNum4.AssetCode != kinAssetCode {
+				// Only Kin payment operations are supported in this RPC.
+				continue
+			}
+
+			// On Kin 2, the smallest denomination is 1e-7, unlike on Kin 3, where the smallest amount (a quark) is 1e-5.
+			// We must therefore convert the payment amount from the base currency to the equivalent amount in quarks
+			// accordingly.
+			quarks = int64(op.Body.PaymentOp.Amount / 100)
+		} else {
+			quarks = int64(op.Body.PaymentOp.Amount)
+		}
+
 		p := ReadOnlyPayment{
 			Sender:      sender,
 			Destination: dest,
-			Quarks:      int64(op.Body.PaymentOp.Amount),
+			Quarks:      quarks,
 			Type:        txType,
 		}
 

@@ -213,9 +213,9 @@ func TestSignTransactionHandler(t *testing.T) {
 	}
 
 	signRequests := []signtransaction.RequestBody{
-		genRequest(t, xdr.MemoTypeMemoNone),
-		genRequest(t, xdr.MemoTypeMemoText),
-		genRequest(t, xdr.MemoTypeMemoHash),
+		genRequest(t, xdr.MemoTypeMemoNone, 3),
+		genRequest(t, xdr.MemoTypeMemoText, 3),
+		genRequest(t, xdr.MemoTypeMemoHash, 3),
 	}
 	for _, data := range signRequests {
 		body, err := json.Marshal(data)
@@ -248,7 +248,7 @@ func TestSignTransactionHandler(t *testing.T) {
 	}
 
 	// if no webhook secret was provided, don't validate
-	signRequest := genRequest(t, xdr.MemoTypeMemoNone)
+	signRequest := genRequest(t, xdr.MemoTypeMemoNone, 3)
 	body, err := json.Marshal(signRequest)
 	require.NoError(t, err)
 
@@ -273,9 +273,9 @@ func TestSignTransactionHandler_Rejected(t *testing.T) {
 	}
 
 	signRequests := []signtransaction.RequestBody{
-		genRequest(t, xdr.MemoTypeMemoNone),
-		genRequest(t, xdr.MemoTypeMemoText),
-		genRequest(t, xdr.MemoTypeMemoHash),
+		genRequest(t, xdr.MemoTypeMemoNone, 3),
+		genRequest(t, xdr.MemoTypeMemoText, 3),
+		genRequest(t, xdr.MemoTypeMemoHash, 3),
 	}
 	for _, data := range signRequests {
 		body, err := json.Marshal(data)
@@ -319,9 +319,9 @@ func TestSignTransactionHandler_InvoiceErrors(t *testing.T) {
 	}
 
 	signRequests := []signtransaction.RequestBody{
-		genRequest(t, xdr.MemoTypeMemoNone),
-		genRequest(t, xdr.MemoTypeMemoText),
-		genRequest(t, xdr.MemoTypeMemoHash),
+		genRequest(t, xdr.MemoTypeMemoNone, 3),
+		genRequest(t, xdr.MemoTypeMemoText, 3),
+		genRequest(t, xdr.MemoTypeMemoHash, 3),
 	}
 	for _, data := range signRequests {
 		body, err := json.Marshal(data)
@@ -439,8 +439,16 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 		return req
 	}
 
+	// Invalid version
+	signReq := genRequest(t, xdr.MemoTypeMemoNone, 1)
+	rr = httptest.NewRecorder()
+	handler = SignTransactionHandler(EnvironmentTest, "", f)
+	handler.ServeHTTP(rr, makeReq(signReq))
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+
 	// Generate a request with mis-matched invoice counts
-	signReq := genRequest(t, xdr.MemoTypeMemoHash)
+	signReq = genRequest(t, xdr.MemoTypeMemoHash, 3)
 	invoiceList := &commonpb.InvoiceList{}
 	assert.NoError(t, proto.Unmarshal(signReq.InvoiceList, invoiceList))
 	invoiceList.Invoices = invoiceList.Invoices[1:]
@@ -455,7 +463,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 
 	// Generate a request with malformed XDR
-	signReq = genRequest(t, xdr.MemoTypeMemoHash)
+	signReq = genRequest(t, xdr.MemoTypeMemoHash, 3)
 	signReq.EnvelopeXDR = signReq.EnvelopeXDR[1:]
 
 	rr = httptest.NewRecorder()
@@ -463,8 +471,8 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	handler.ServeHTTP(rr, makeReq(signReq))
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 
-	// Gnerate a request with a malformed invoice list
-	signReq = genRequest(t, xdr.MemoTypeMemoHash)
+	// Generate a request with a malformed invoice list
+	signReq = genRequest(t, xdr.MemoTypeMemoHash, 3)
 	signReq.InvoiceList = signReq.InvoiceList[1:]
 	rr = httptest.NewRecorder()
 	handler = SignTransactionHandler(EnvironmentTest, "secret", f)
@@ -472,7 +480,7 @@ func TestSignTransactionHandler_Invalid(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-func genRequest(t *testing.T, memoType xdr.MemoType) signtransaction.RequestBody {
+func genRequest(t *testing.T, memoType xdr.MemoType, version int) signtransaction.RequestBody {
 	accounts := testutil.GenerateAccountIDs(t, 10)
 	invoiceList := &commonpb.InvoiceList{}
 
@@ -490,7 +498,9 @@ func genRequest(t *testing.T, memoType xdr.MemoType) signtransaction.RequestBody
 	}
 
 	envelope := testutil.GenerateTransactionEnvelope(accounts[0], 1, ops)
-	req := signtransaction.RequestBody{}
+	req := signtransaction.RequestBody{
+		KinVersion: version,
+	}
 
 	switch memoType {
 	case xdr.MemoTypeMemoText:

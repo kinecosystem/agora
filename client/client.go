@@ -10,6 +10,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
@@ -33,6 +34,11 @@ const (
 var (
 	testnet = build.Network{Passphrase: "Kin Testnet ; December 2018"}
 	mainnet = build.Network{Passphrase: "Kin Mainnet ; December 2018"}
+
+	kin2Testnet  = build.Network{Passphrase: "Kin Playground Network ; June 2018"}
+	kin2TMainnet = build.Network{Passphrase: "Public Global Kin Ecosystem Network ; June 2018"}
+
+	kinAssetCode = [4]byte{75, 73, 78, 0} // KIN
 )
 
 type Client interface {
@@ -62,8 +68,7 @@ type client struct {
 	internal *InternalClient
 	opts     clientOpts
 
-	kinVersion int
-	network    build.Network
+	network build.Network
 }
 
 type clientOpts struct {
@@ -76,10 +81,22 @@ type clientOpts struct {
 	endpoint     string
 	whitelistKey PrivateKey
 	appIndex     uint16
+
+	kinVersion version.KinVersion
+	kinIssuer  PublicKey
 }
 
 // ClientOption configures a Client.
 type ClientOption func(*clientOpts)
+
+// WithKinVersion specifies the version of Kin to use.
+//
+// If none is provided, the client will default to using the Kin 3 blockchain.
+func WithKinVersion(kinVersion version.KinVersion) ClientOption {
+	return func(o *clientOpts) {
+		o.kinVersion = kinVersion
+	}
+}
 
 // WithAppIndex specifies the app index to use when
 // submitting transactions with Invoices, _or_ to use
@@ -154,8 +171,8 @@ func WithMaxDelay(maxDelay time.Duration) ClientOption {
 // todo: appIndex optional, can use string memo instead
 func New(env Environment, opts ...ClientOption) (Client, error) {
 	c := &client{
-		kinVersion: 3,
 		opts: clientOpts{
+			kinVersion:         version.KinVersion3,
 			maxRetries:         10,
 			maxSequenceRetries: 3,
 			minDelay:           500 * time.Millisecond,
@@ -168,16 +185,36 @@ func New(env Environment, opts ...ClientOption) (Client, error) {
 	}
 
 	var endpoint string
+	var issuer string
 
 	switch env {
 	case EnvironmentTest:
 		endpoint = "api.agorainfra.dev:443"
-		c.network = testnet
+		if c.opts.kinVersion == 2 {
+			c.network = kin2Testnet
+			issuer = kin.Kin2TestIssuer
+		} else {
+			c.network = testnet
+		}
 	case EnvironmentProd:
 		endpoint = "api.agorainfra.net:443"
-		c.network = mainnet
+		if c.opts.kinVersion == 2 {
+			c.network = kin2TMainnet
+			issuer = kin.Kin2TestIssuer
+		} else {
+			c.network = mainnet
+		}
 	default:
 		return nil, errors.Errorf("unknown environment: %s", env)
+	}
+
+	if c.opts.kinVersion == 2 {
+		kinIssuer, err := PublicKeyFromString(issuer)
+		if err != nil {
+			return nil, errors.New("failed to convert issuer address to public key")
+		}
+
+		c.opts.kinIssuer = kinIssuer
 	}
 
 	if c.opts.cc != nil && c.opts.endpoint != "" {
@@ -201,18 +238,18 @@ func New(env Environment, opts ...ClientOption) (Client, error) {
 		retry.NonRetriableErrors(nonRetriableErrors...),
 	)
 
-	c.internal = NewInternalClient(c.opts.cc, retrier)
+	c.internal = NewInternalClient(c.opts.cc, retrier, c.opts.kinVersion)
 
 	return c, nil
 }
 
 // CreateAccount creates a kin account.
 func (c *client) CreateAccount(ctx context.Context, key PrivateKey) error {
-	switch c.kinVersion {
-	case 3:
+	switch c.opts.kinVersion {
+	case version.KinVersion2, version.KinVersion3:
 		return c.internal.CreateStellarAccount(ctx, key)
 	default:
-		return errors.Errorf("unsupported kin version: %d", c.kinVersion)
+		return errors.Errorf("unsupported kin version: %d", c.opts.kinVersion)
 	}
 }
 
@@ -220,8 +257,8 @@ func (c *client) CreateAccount(ctx context.Context, key PrivateKey) error {
 //
 // ErrAccountDoesNotExist is returned if no account exists.
 func (c *client) GetBalance(ctx context.Context, account PublicKey) (int64, error) {
-	switch c.kinVersion {
-	case 3:
+	switch c.opts.kinVersion {
+	case version.KinVersion2, version.KinVersion3:
 		accountInfo, err := c.internal.GetStellarAccountInfo(ctx, account)
 		if err != nil {
 			return 0, err
@@ -229,7 +266,7 @@ func (c *client) GetBalance(ctx context.Context, account PublicKey) (int64, erro
 
 		return accountInfo.Balance, nil
 	default:
-		return 0, errors.Errorf("unsupported kin version: %d", c.kinVersion)
+		return 0, errors.Errorf("unsupported kin version: %d", c.opts.kinVersion)
 	}
 }
 
@@ -242,8 +279,8 @@ func (c *client) GetTransaction(ctx context.Context, txHash []byte) (Transaction
 
 // SubmitPayment sends a single payment to a specified kin account.
 func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, error) {
-	if c.kinVersion != 3 {
-		return nil, errors.Errorf("unsupported kin version: %d", c.kinVersion)
+	if c.opts.kinVersion != 3 && c.opts.kinVersion != 2 {
+		return nil, errors.Errorf("unsupported kin version: %d", c.opts.kinVersion)
 	}
 	if payment.Invoice != nil && c.opts.appIndex == 0 {
 		return nil, errors.New("cannot submit payment with invoices without an app index")
@@ -261,6 +298,27 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 		}
 	}
 
+	var amount xdr.Int64
+	var asset xdr.Asset
+	switch c.opts.kinVersion {
+	case version.KinVersion2:
+		// On Kin 2, the smallest denomination is 1e-7, unlike on Kin 3, where the smallest amount (a quark) is 1e-5.
+		// We must therefore convert the provided amount from quarks to the Kin 2 base currency accordingly.
+		amount = xdr.Int64(payment.Quarks * 100)
+		asset = xdr.Asset{
+			Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
+			AlphaNum4: &xdr.AssetAlphaNum4{
+				Issuer:    accountIDFromPublicKey(c.opts.kinIssuer),
+				AssetCode: kinAssetCode,
+			},
+		}
+	default:
+		amount = xdr.Int64(payment.Quarks)
+		asset = xdr.Asset{
+			Type: xdr.AssetTypeAssetTypeNative,
+		}
+	}
+
 	sender := accountIDFromPublicKey(payment.Sender.Public())
 	envelope := xdr.TransactionEnvelope{
 		Tx: xdr.Transaction{
@@ -273,10 +331,8 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 						Type: xdr.OperationTypePayment,
 						PaymentOp: &xdr.PaymentOp{
 							Destination: accountIDFromPublicKey(payment.Destination),
-							Amount:      xdr.Int64(payment.Quarks),
-							Asset: xdr.Asset{
-								Type: xdr.AssetTypeAssetTypeNative,
-							},
+							Amount:      amount,
+							Asset:       asset,
 						},
 					},
 				},
@@ -501,6 +557,27 @@ func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result S
 		},
 	}
 
+	var quarksToRaw int64
+	var asset xdr.Asset
+	switch c.opts.kinVersion {
+	case version.KinVersion2:
+		// On Kin 2, the smallest denomination is 1e-7, unlike on Kin 3, where the smallest amount (a quark) is 1e-5.
+		// We must therefore convert the provided amount from quarks to the Kin 2 base currency accordingly.
+		quarksToRaw = 100
+		asset = xdr.Asset{
+			Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
+			AlphaNum4: &xdr.AssetAlphaNum4{
+				Issuer:    accountIDFromPublicKey(c.opts.kinIssuer),
+				AssetCode: kinAssetCode,
+			},
+		}
+	default:
+		quarksToRaw = 1
+		asset = xdr.Asset{
+			Type: xdr.AssetTypeAssetTypeNative,
+		}
+	}
+
 	for _, r := range batch.Earns {
 		envelope.Tx.Operations = append(envelope.Tx.Operations, xdr.Operation{
 			SourceAccount: &sender,
@@ -508,10 +585,8 @@ func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result S
 				Type: xdr.OperationTypePayment,
 				PaymentOp: &xdr.PaymentOp{
 					Destination: accountIDFromPublicKey(r.Destination),
-					Amount:      xdr.Int64(r.Quarks),
-					Asset: xdr.Asset{
-						Type: xdr.AssetTypeAssetTypeNative,
-					},
+					Amount:      xdr.Int64(r.Quarks * quarksToRaw),
+					Asset:       asset,
 				},
 			},
 		})

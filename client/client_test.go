@@ -10,6 +10,8 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora/pkg/testutil"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,16 +179,20 @@ func TestClient_SubmitPayment(t *testing.T) {
 		func() {
 			env.server.mu.Lock()
 			defer env.server.mu.Unlock()
-			defer func() { env.server.submits = nil }()
+			defer func() { env.server.blockchains[version.KinVersion3].submits = nil }()
 
-			assert.Len(t, env.server.submits, 1)
+			assert.Len(t, env.server.blockchains[version.KinVersion3].submits, 1)
 
 			var envelope xdr.TransactionEnvelope
-			assert.NoError(t, envelope.UnmarshalBinary(env.server.submits[0].EnvelopeXdr))
+			assert.NoError(t, envelope.UnmarshalBinary(env.server.blockchains[version.KinVersion3].submits[0].EnvelopeXdr))
 
 			assert.EqualValues(t, 100, envelope.Tx.Fee)
 			assert.EqualValues(t, initSeq+1, envelope.Tx.SeqNum)
 			assert.Len(t, envelope.Tx.Operations, 1)
+
+			assert.EqualValues(t, xdr.Int64(11), envelope.Tx.Operations[0].Body.PaymentOp.Amount)
+			assert.EqualValues(t, xdr.AssetTypeAssetTypeNative, envelope.Tx.Operations[0].Body.PaymentOp.Asset.Type)
+
 			assert.Nil(t, envelope.Tx.TimeBounds)
 
 			sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
@@ -215,7 +221,7 @@ func TestClient_SubmitPayment(t *testing.T) {
 				assert.True(t, ok)
 
 				assert.EqualValues(t, ilHash[:], memo.ForeignKey()[:28])
-				assert.True(t, proto.Equal(invoiceList, env.server.submits[0].InvoiceList))
+				assert.True(t, proto.Equal(invoiceList, env.server.blockchains[version.KinVersion3].submits[0].InvoiceList))
 			} else {
 				assert.Equal(t, xdr.MemoTypeMemoHash, envelope.Tx.Memo.Type)
 
@@ -229,7 +235,7 @@ func TestClient_SubmitPayment(t *testing.T) {
 	}
 
 	env.server.mu.Lock()
-	env.server.submitResponses = []*transactionpb.SubmitTransactionResponse{
+	env.server.blockchains[version.KinVersion3].submitResponses = []*transactionpb.SubmitTransactionResponse{
 		{
 			Result: transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
 			InvoiceErrors: []*transactionpb.SubmitTransactionResponse_InvoiceError{
@@ -274,7 +280,7 @@ func TestClient_SubmitPayment(t *testing.T) {
 	resultBytes, err := txFailedResult.MarshalBinary()
 	require.NoError(t, err)
 	env.server.mu.Lock()
-	env.server.submitResponses = []*transactionpb.SubmitTransactionResponse{
+	env.server.blockchains[version.KinVersion3].submitResponses = []*transactionpb.SubmitTransactionResponse{
 		{
 			Result:    transactionpb.SubmitTransactionResponse_FAILED,
 			ResultXdr: resultBytes,
@@ -307,7 +313,7 @@ func TestClient_SubmitPayment(t *testing.T) {
 	require.NoError(t, err)
 
 	env.server.mu.Lock()
-	env.server.submitResponses = []*transactionpb.SubmitTransactionResponse{
+	env.server.blockchains[version.KinVersion3].submitResponses = []*transactionpb.SubmitTransactionResponse{
 		{
 			Result:    transactionpb.SubmitTransactionResponse_FAILED,
 			Hash:      nil,
@@ -319,6 +325,70 @@ func TestClient_SubmitPayment(t *testing.T) {
 	hash, err = env.client.SubmitPayment(context.Background(), payments[3])
 	assert.NotNil(t, hash)
 	assert.Equal(t, ErrInsufficientBalance, err)
+}
+
+func TestClient_SubmitPaymentKin2(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(version.KinVersion2))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	for _, acc := range [][]byte{sender, dest} {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+	payment := Payment{
+		Sender:      sender,
+		Destination: dest.Public(),
+		Type:        kin.TransactionTypeSpend,
+		Quarks:      11,
+	}
+
+	info, err := env.internal.GetStellarAccountInfo(context.Background(), sender.Public())
+	require.NoError(t, err)
+	initSeq := info.SequenceNumber
+	hash, err := env.client.SubmitPayment(context.Background(), payment)
+	assert.NotNil(t, hash)
+	assert.NoError(t, err)
+
+	func() {
+		env.server.mu.Lock()
+		defer env.server.mu.Unlock()
+		defer func() { env.server.blockchains[version.KinVersion2].submits = nil }()
+
+		assert.Len(t, env.server.blockchains[version.KinVersion2].submits, 1)
+
+		var envelope xdr.TransactionEnvelope
+		assert.NoError(t, envelope.UnmarshalBinary(env.server.blockchains[version.KinVersion2].submits[0].EnvelopeXdr))
+
+		assert.EqualValues(t, 100, envelope.Tx.Fee)
+		assert.EqualValues(t, initSeq+1, envelope.Tx.SeqNum)
+		assert.Len(t, envelope.Tx.Operations, 1)
+		assert.Nil(t, envelope.Tx.TimeBounds)
+
+		// Assert amount and proper asset
+		assert.EqualValues(t, xdr.Int64(11*100), envelope.Tx.Operations[0].Body.PaymentOp.Amount)
+		assert.EqualValues(t, xdr.AssetTypeAssetTypeCreditAlphanum4, envelope.Tx.Operations[0].Body.PaymentOp.Asset.Type)
+		assert.EqualValues(t, kinAssetCode, envelope.Tx.Operations[0].Body.PaymentOp.Asset.AlphaNum4.AssetCode)
+
+		expectedIssuer, err := testutil.StellarAccountIDFromString(kin.Kin2TestIssuer)
+		require.NoError(t, err)
+		assert.EqualValues(t, expectedIssuer, envelope.Tx.Operations[0].Body.PaymentOp.Asset.AlphaNum4.Issuer)
+
+		sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
+		assert.Len(t, envelope.Signatures, 1)
+		assert.EqualValues(t, payment.Sender.Public(), sourceAccount[:])
+
+		assert.Equal(t, xdr.MemoTypeMemoHash, envelope.Tx.Memo.Type)
+
+		memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
+		assert.True(t, ok)
+
+		assert.EqualValues(t, 1, memo.AppIndex())
+		assert.EqualValues(t, make([]byte, 29), memo.ForeignKey())
+	}()
 }
 
 func TestClient_SubmitEarnBatchInternal(t *testing.T) {
@@ -423,12 +493,12 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 		func() {
 			env.server.mu.Lock()
 			defer env.server.mu.Unlock()
-			defer func() { env.server.submits = nil }()
+			defer func() { env.server.blockchains[version.KinVersion3].submits = nil }()
 
-			assert.Len(t, env.server.submits, 1)
+			assert.Len(t, env.server.blockchains[version.KinVersion3].submits, 1)
 
 			var envelope xdr.TransactionEnvelope
-			assert.NoError(t, envelope.UnmarshalBinary(env.server.submits[0].EnvelopeXdr))
+			assert.NoError(t, envelope.UnmarshalBinary(env.server.blockchains[version.KinVersion3].submits[0].EnvelopeXdr))
 
 			txBytes, err := envelope.Tx.MarshalBinary()
 			assert.NoError(t, err)
@@ -478,7 +548,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 				assert.True(t, ok)
 
 				assert.EqualValues(t, ilHash[:], memo.ForeignKey()[:28])
-				assert.True(t, proto.Equal(invoiceList, env.server.submits[0].InvoiceList))
+				assert.True(t, proto.Equal(invoiceList, env.server.blockchains[version.KinVersion3].submits[0].InvoiceList))
 			}
 		}()
 	}
@@ -493,6 +563,92 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 		_, err := env.client.submitEarnBatch(context.Background(), b)
 		assert.NotNil(t, err)
 	}
+}
+
+func TestClient_SubmitEarnBatchInternalKin2(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(version.KinVersion2))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	channel, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	earnAccounts := make([]PrivateKey, 5)
+	for i := 0; i < len(earnAccounts); i++ {
+		dest, err := NewPrivateKey()
+		require.NoError(t, err)
+		earnAccounts[i] = dest
+	}
+
+	for _, acc := range append([]PrivateKey{sender, channel}, earnAccounts...) {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	var earns []Earn
+	for i, r := range earnAccounts {
+		earns = append(earns, Earn{
+			Destination: r.Public(),
+			Quarks:      int64(i) + 1,
+		})
+	}
+
+	b := EarnBatch{
+		Sender: sender,
+		Earns:  earns,
+	}
+
+	info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Sender.Public())
+	require.NoError(t, err)
+	initSeq := info.SequenceNumber
+
+	result, err := env.client.submitEarnBatch(context.Background(), b)
+	assert.NoError(t, err)
+
+	func() {
+		env.server.mu.Lock()
+		defer env.server.mu.Unlock()
+		defer func() { env.server.blockchains[version.KinVersion2].submits = nil }()
+
+		assert.Len(t, env.server.blockchains[version.KinVersion2].submits, 1)
+
+		var envelope xdr.TransactionEnvelope
+		assert.NoError(t, envelope.UnmarshalBinary(env.server.blockchains[version.KinVersion2].submits[0].EnvelopeXdr))
+
+		txBytes, err := envelope.Tx.MarshalBinary()
+		assert.NoError(t, err)
+		txHash := sha256.Sum256(txBytes)
+		assert.EqualValues(t, txHash[:], result.Hash)
+
+		assert.EqualValues(t, 100*len(b.Earns), envelope.Tx.Fee)
+		assert.EqualValues(t, initSeq+1, envelope.Tx.SeqNum)
+		assert.Len(t, envelope.Tx.Operations, len(b.Earns))
+		assert.Nil(t, envelope.Tx.TimeBounds)
+
+		expectedIssuer, err := testutil.StellarAccountIDFromString(kin.Kin2TestIssuer)
+		require.NoError(t, err)
+
+		// Assert amount and proper asset
+		for i, op := range envelope.Tx.Operations {
+			assert.EqualValues(t, xdr.Int64((i+1)*100), op.Body.PaymentOp.Amount)
+			assert.EqualValues(t, xdr.AssetTypeAssetTypeCreditAlphanum4, op.Body.PaymentOp.Asset.Type)
+			assert.EqualValues(t, kinAssetCode, op.Body.PaymentOp.Asset.AlphaNum4.AssetCode)
+			assert.EqualValues(t, expectedIssuer, op.Body.PaymentOp.Asset.AlphaNum4.Issuer)
+		}
+
+		sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
+
+		assert.Len(t, envelope.Signatures, 1)
+		assert.EqualValues(t, b.Sender.Public(), sourceAccount[:])
+
+		assert.Equal(t, xdr.MemoTypeMemoHash, envelope.Tx.Memo.Type)
+
+		memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
+		assert.True(t, ok)
+
+		assert.EqualValues(t, 1, memo.AppIndex())
+		assert.EqualValues(t, make([]byte, 29), memo.ForeignKey())
+	}()
 }
 
 func TestClient_SubmitEarnBatch(t *testing.T) {
@@ -572,9 +728,9 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 		func() {
 			env.server.mu.Lock()
 			defer env.server.mu.Unlock()
-			defer func() { env.server.submits = nil }()
+			defer func() { env.server.blockchains[version.KinVersion3].submits = nil }()
 
-			assert.Len(t, env.server.submits, 3)
+			assert.Len(t, env.server.blockchains[version.KinVersion3].submits, 3)
 			assert.Len(t, result.Succeeded, len(earnAccounts))
 			assert.Empty(t, result.Failed)
 
@@ -586,7 +742,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 			}
 			assert.Len(t, txHashes, 3)
 
-			for i, s := range env.server.submits {
+			for i, s := range env.server.blockchains[version.KinVersion3].submits {
 				var envelope xdr.TransactionEnvelope
 				assert.NoError(t, envelope.UnmarshalBinary(s.EnvelopeXdr))
 
@@ -668,7 +824,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	resultBytes, err := txFailedResult.MarshalBinary()
 	require.NoError(t, err)
 	env.server.mu.Lock()
-	env.server.submitResponses = []*transactionpb.SubmitTransactionResponse{
+	env.server.blockchains[version.KinVersion3].submitResponses = []*transactionpb.SubmitTransactionResponse{
 		nil,
 		{
 			Result:    transactionpb.SubmitTransactionResponse_FAILED,
@@ -718,7 +874,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	env.server.mu.Lock()
-	env.server.submitResponses = []*transactionpb.SubmitTransactionResponse{
+	env.server.blockchains[version.KinVersion3].submitResponses = []*transactionpb.SubmitTransactionResponse{
 		nil,
 		{
 			Result:    transactionpb.SubmitTransactionResponse_FAILED,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/retry"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	SDKVersion      = "0.2.0"
-	userAgentHeader = "kin-user-agent"
+	SDKVersion       = "0.2.0"
+	userAgentHeader  = "kin-user-agent"
+	kinVersionHeader = "kin-version"
 )
 
 var (
@@ -34,31 +36,35 @@ var (
 // the gRPC client directly). However, there are no stability guarantees between
 // releases, or during a migration event.
 type InternalClient struct {
-	retrier retry.Retrier
+	retrier    retry.Retrier
+	kinVersion version.KinVersion
 
 	accountClient     accountpb.AccountClient
 	transactionClient transactionpb.TransactionClient
 }
 
-func NewInternalClient(cc *grpc.ClientConn, retrier retry.Retrier) *InternalClient {
+func NewInternalClient(cc *grpc.ClientConn, retrier retry.Retrier, kinVersion version.KinVersion) *InternalClient {
 	return &InternalClient{
 		retrier:           retrier,
+		kinVersion:        kinVersion,
 		accountClient:     accountpb.NewAccountClient(cc),
 		transactionClient: transactionpb.NewTransactionClient(cc),
 	}
 }
 
-func (c *InternalClient) GetBlockchainVersion() (int, error) {
-	// todo(kin2): support specifying kin2 vs kin3 endpoints
+func (c *InternalClient) GetBlockchainVersion() (version.KinVersion, error) {
 	// todo(kin4): query for migration status of the blockchain.
 	//             once the migration to kin4 has happened, we can
 	//             aggressively cache this result, and eventually remove
 	//             this.
-	return 3, nil
+	return c.kinVersion, nil
 }
 
 func (c *InternalClient) CreateStellarAccount(ctx context.Context, key PrivateKey) error {
 	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+	if c.kinVersion == 2 {
+		ctx = metadata.AppendToOutgoingContext(ctx, kinVersionHeader, "2")
+	}
 
 	_, err := c.retrier.Retry(
 		func() error {
@@ -86,6 +92,9 @@ func (c *InternalClient) CreateStellarAccount(ctx context.Context, key PrivateKe
 
 func (c *InternalClient) GetStellarAccountInfo(ctx context.Context, account PublicKey) (*accountpb.AccountInfo, error) {
 	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+	if c.kinVersion == 2 {
+		ctx = metadata.AppendToOutgoingContext(ctx, kinVersionHeader, "2")
+	}
 
 	var accountInfo *accountpb.AccountInfo
 
@@ -120,8 +129,12 @@ func (c *InternalClient) GetStellarAccountInfo(ctx context.Context, account Publ
 
 func (c *InternalClient) GetTransaction(ctx context.Context, txHash []byte) (data TransactionData, err error) {
 	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+	if c.kinVersion == 2 {
+		ctx = metadata.AppendToOutgoingContext(ctx, kinVersionHeader, "2")
+	}
 
 	var resp *transactionpb.GetTransactionResponse
+
 	_, err = c.retrier.Retry(func() error {
 		resp, err = c.transactionClient.GetTransaction(ctx, &transactionpb.GetTransactionRequest{
 			TransactionHash: &commonpb.TransactionHash{
@@ -151,7 +164,7 @@ func (c *InternalClient) GetTransaction(ctx context.Context, txHash []byte) (dat
 			transactionType = memo.TransactionType()
 		}
 
-		data.Payments, err = parsePaymentsFromEnvelope(envelope, transactionType, resp.Item.InvoiceList)
+		data.Payments, err = parsePaymentsFromEnvelope(envelope, transactionType, resp.Item.InvoiceList, c.kinVersion)
 		return data, err
 	default:
 		return TransactionData{}, errors.Errorf("unexpected transaction state from agora: %v", resp.State)
@@ -166,6 +179,9 @@ type SubmitStellarTransactionResult struct {
 
 func (c *InternalClient) SubmitStellarTransaction(ctx context.Context, envelopeXDR []byte, invoiceList *commonpb.InvoiceList) (result SubmitStellarTransactionResult, err error) {
 	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent)
+	if c.kinVersion == 2 {
+		ctx = metadata.AppendToOutgoingContext(ctx, kinVersionHeader, "2")
+	}
 
 	var resp *transactionpb.SubmitTransactionResponse
 	_, err = c.retrier.Retry(func() error {

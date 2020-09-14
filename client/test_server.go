@@ -14,11 +14,10 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+	"github.com/kinecosystem/agora/pkg/version"
 )
 
-type testServer struct {
-	mu       sync.Mutex
-	errors   []error
+type testBlockchain struct {
 	accounts map[string]*accountpb.AccountInfo
 	gets     map[string]transactionpb.GetTransactionResponse
 
@@ -26,10 +25,24 @@ type testServer struct {
 	submitResponses []*transactionpb.SubmitTransactionResponse
 }
 
+type testServer struct {
+	mu     sync.Mutex
+	errors []error
+
+	blockchains map[version.KinVersion]*testBlockchain
+}
+
 func newTestServer() *testServer {
+	blockchains := make(map[version.KinVersion]*testBlockchain)
+	for _, v := range []version.KinVersion{version.KinVersion2, version.KinVersion3} {
+		blockchains[v] = &testBlockchain{
+			accounts: make(map[string]*accountpb.AccountInfo),
+			gets:     make(map[string]transactionpb.GetTransactionResponse),
+		}
+	}
+
 	return &testServer{
-		accounts: make(map[string]*accountpb.AccountInfo),
-		gets:     make(map[string]transactionpb.GetTransactionResponse),
+		blockchains: blockchains,
 	}
 }
 
@@ -45,13 +58,19 @@ func (t *testServer) CreateAccount(ctx context.Context, req *accountpb.CreateAcc
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if _, ok := t.accounts[req.AccountId.Value]; ok {
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	blockchain := t.blockchains[kinVersion]
+	if _, ok := blockchain.accounts[req.AccountId.Value]; ok {
 		return &accountpb.CreateAccountResponse{
 			Result: accountpb.CreateAccountResponse_EXISTS,
 		}, nil
 	}
 
-	t.accounts[req.AccountId.Value] = &accountpb.AccountInfo{
+	blockchain.accounts[req.AccountId.Value] = &accountpb.AccountInfo{
 		AccountId:      proto.Clone(req.AccountId).(*commonpb.StellarAccountId),
 		SequenceNumber: 1,
 		Balance:        10,
@@ -67,7 +86,13 @@ func (t *testServer) GetAccountInfo(ctx context.Context, req *accountpb.GetAccou
 		return nil, err
 	}
 
-	accountInfo, ok := t.accounts[req.AccountId.Value]
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	blockchain := t.blockchains[kinVersion]
+	accountInfo, ok := blockchain.accounts[req.AccountId.Value]
 	if !ok {
 		return &accountpb.GetAccountInfoResponse{
 			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
@@ -94,6 +119,12 @@ func (t *testServer) SubmitTransaction(ctx context.Context, req *transactionpb.S
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	blockchain := t.blockchains[kinVersion]
 	var envelope xdr.TransactionEnvelope
 	if err := envelope.UnmarshalBinary(req.EnvelopeXdr); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unmarshal envelope: %v", err)
@@ -104,10 +135,10 @@ func (t *testServer) SubmitTransaction(ctx context.Context, req *transactionpb.S
 	}
 	txHash := sha256.Sum256(txBytes)
 
-	t.submits = append(t.submits, proto.Clone(req).(*transactionpb.SubmitTransactionRequest))
-	if len(t.submitResponses) > 0 {
-		r := t.submitResponses[0]
-		t.submitResponses = t.submitResponses[1:]
+	blockchain.submits = append(blockchain.submits, proto.Clone(req).(*transactionpb.SubmitTransactionRequest))
+	if len(blockchain.submitResponses) > 0 {
+		r := blockchain.submitResponses[0]
+		blockchain.submitResponses = blockchain.submitResponses[1:]
 		if r != nil {
 			r.Hash = &commonpb.TransactionHash{
 				Value: txHash[:],
@@ -117,7 +148,7 @@ func (t *testServer) SubmitTransaction(ctx context.Context, req *transactionpb.S
 	}
 
 	// Update the sequence number
-	info := t.accounts[envelope.Tx.SourceAccount.Address()]
+	info := blockchain.accounts[envelope.Tx.SourceAccount.Address()]
 	if info == nil {
 		info = &accountpb.AccountInfo{
 			AccountId: &commonpb.StellarAccountId{
@@ -126,7 +157,7 @@ func (t *testServer) SubmitTransaction(ctx context.Context, req *transactionpb.S
 		}
 	}
 	info.SequenceNumber++
-	t.accounts[envelope.Tx.SourceAccount.Address()] = info
+	blockchain.accounts[envelope.Tx.SourceAccount.Address()] = info
 
 	resultXDR := xdr.TransactionResult{
 		Result: xdr.TransactionResultResult{
@@ -160,7 +191,13 @@ func (t *testServer) GetTransaction(ctx context.Context, req *transactionpb.GetT
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if resp, ok := t.gets[string(req.TransactionHash.Value)]; ok {
+	kinVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	blockchain := t.blockchains[kinVersion]
+	if resp, ok := blockchain.gets[string(req.TransactionHash.Value)]; ok {
 		return &resp, nil
 	}
 

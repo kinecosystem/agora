@@ -108,6 +108,29 @@ func GeneratePaymentOperation(src *xdr.AccountId, dest xdr.AccountId) xdr.Operat
 	}
 }
 
+func GenerateKin2PaymentOperation(src *xdr.AccountId, dest xdr.AccountId, issuer xdr.AccountId) xdr.Operation {
+	assetCode := [4]byte{}
+	copy(assetCode[:], "KIN")
+
+	return xdr.Operation{
+		SourceAccount: src,
+		Body: xdr.OperationBody{
+			Type: xdr.OperationTypePayment,
+			PaymentOp: &xdr.PaymentOp{
+				Destination: dest,
+				Amount:      1000, // equivalent to 10 quarks
+				Asset: xdr.Asset{
+					Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
+					AlphaNum4: &xdr.AssetAlphaNum4{
+						AssetCode: assetCode,
+						Issuer:    issuer,
+					},
+				},
+			},
+		},
+	}
+}
+
 func GenerateMergeOperation(src *xdr.AccountId, dest xdr.AccountId) xdr.Operation {
 	return xdr.Operation{
 		SourceAccount: src,
