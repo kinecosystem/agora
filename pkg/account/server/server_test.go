@@ -268,7 +268,42 @@ func TestCreateAccount_Kin2(t *testing.T) {
 
 	// Channels are enabled with a max of 1, so we expect the channel keypair to get used
 	channelKP := env.kin2Channels[0]
-	env.kin2HClient.On("LoadAccount", channelKP.Address()).Return(*testutil.GenerateHorizonAccount(channelKP.Address(), "100", "1"), nil).Once()
+	env.kin2HClient.On("LoadAccount", channelKP.Address()).Return(*testutil.GenerateHorizonAccount(channelKP.Address(), "400", "1"), nil).Once()
+
+	// The account initially does not exist, then after a transaction is submitted it should.
+	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}
+	env.kin2HClient.On("LoadAccount", kp.Address()).Return(hProtocol.Account{}, horizonErr).Once()
+	env.kin2HClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
+	env.kin2HClient.On("LoadAccount", kp.Address()).Return(*testutil.GenerateHorizonAccount(kp.Address(), "100", "1"), nil).Once()
+
+	req := accountpb.CreateAccountRequest{
+		AccountId: &commonpb.StellarAccountId{Value: kp.Address()},
+	}
+	resp, err := env.client.CreateAccount(testutil.GetKin2Context(context.Background()), &req)
+	require.NoError(t, err)
+
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.GetResult())
+	assert.Equal(t, kp.Address(), resp.GetAccountInfo().GetAccountId().Value)
+	assert.Equal(t, int64(100*1e5), resp.GetAccountInfo().GetBalance())
+	assert.Equal(t, int64(1), resp.GetAccountInfo().GetSequenceNumber())
+
+	env.kin2HClient.AssertExpectations(t)
+}
+
+func TestCreateAccount_Kin2ChannelUnderfunded(t *testing.T) {
+	env, cleanup := setup(t, 5, 1)
+	defer cleanup()
+
+	kp, err := keypair.Random()
+	require.NoError(t, err)
+
+	// Channels are enabled with a max of 1, so we expect the channel keypair to get used
+	channelKP := env.kin2Channels[0]
+	env.kin2HClient.On("LoadAccount", channelKP.Address()).Return(*testutil.GenerateHorizonAccount(channelKP.Address(), "300", "1"), nil).Once()
+
+	// The channel needs funding, so the root account gets loaded and a transaction gets submitted
+	env.kin2HClient.On("LoadAccount", env.kin2RootKP.Address()).Return(*testutil.GenerateHorizonAccount(env.kin2RootKP.Address(), "1000", "1"), nil).Once()
+	env.kin2HClient.On("SubmitTransaction", mock.AnythingOfType("string")).Return(hProtocol.TransactionSuccess{}, nil).Once()
 
 	// The account initially does not exist, then after a transaction is submitted it should.
 	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 404}}

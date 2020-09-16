@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/go/amount"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -29,6 +31,9 @@ const (
 	eventStreamBufferSize = 64
 
 	globalRateLimitKey = "create-account-rate-limit-global"
+
+	// Channels need more than 3 XLM + the 100 lumen fee to create an account with a balance of 2 XLM
+	minKin2ChannelBalance = 3e7 + 100
 )
 
 var (
@@ -185,6 +190,8 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			}
 		}()
 
+		var rootHorizonAccount horizon.Account
+
 		channelAccount, err := client.LoadAccount(c.KP.Address())
 		if err != nil {
 			horizonError, ok := err.(*horizon.Error)
@@ -193,7 +200,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 				return nil, status.Error(codes.Internal, "failed to create account")
 			}
 
-			rootHorizonAccount, err := client.LoadAccount(rootKP.Address())
+			rootHorizonAccount, err = client.LoadAccount(rootKP.Address())
 			if err != nil {
 				log.WithError(err).Warn("Failed to load root account")
 				return nil, status.Error(codes.Internal, err.Error())
@@ -207,6 +214,18 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 				retry.BackoffWithJitter(backoff.BinaryExponential(500*time.Millisecond), 2200*time.Millisecond, 0.1),
 			)
 			if err != nil {
+				if hErr, ok := err.(*horizon.Error); ok {
+					resultXDR, envelopeXDR, err := parseXDRFromHorizonError(hErr)
+					if err != nil {
+						log.WithError(err).Warn("failed to parse XDR from horizon error")
+					} else {
+						log = log.WithFields(map[string]interface{}{
+							"result_xdr":   resultXDR,
+							"envelope_xdr": envelopeXDR,
+						})
+					}
+				}
+
 				log.WithError(err).Warn("Failed to create channel account")
 				return nil, status.Error(codes.Internal, "Failed to create account")
 			}
@@ -215,6 +234,48 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			if err != nil {
 				log.WithError(err).Warn("Failed to load created/existing channel account")
 				return nil, status.Error(codes.Internal, "Failed to create account")
+			}
+		}
+
+		if kinVersion == 2 {
+			nativeBalance, err := channelAccount.GetNativeBalance()
+			if err != nil {
+				log.WithError(err).Warn("failed to get channel native balance")
+				return nil, status.Error(codes.Internal, "Failed to create account")
+			}
+			channelBalance, err := amount.ParseInt64(nativeBalance)
+			if err != nil {
+				log.WithError(err).Warn("failed to parse channel native balance")
+				return nil, status.Error(codes.Internal, "Failed to create account")
+			}
+
+			if channelBalance < minKin2ChannelBalance {
+				if rootHorizonAccount.AccountID == "" {
+					// load the root account, since we haven't already
+					rootHorizonAccount, err = client.LoadAccount(rootKP.Address())
+					if err != nil {
+						log.WithError(err).Warn("Failed to load root account")
+						return nil, status.Error(codes.Internal, err.Error())
+					}
+				}
+
+				err = s.fundKin2Channel(rootHorizonAccount, c.KP.Address())
+				if err != nil {
+					if hErr, ok := err.(*horizon.Error); ok {
+						resultXDR, envelopeXDR, err := parseXDRFromHorizonError(hErr)
+						if err != nil {
+							log.WithError(err).Warn("failed to parse XDR from horizon error")
+						} else {
+							log = log.WithFields(map[string]interface{}{
+								"result_xdr":   resultXDR,
+								"envelope_xdr": envelopeXDR,
+							})
+						}
+					}
+
+					log.WithError(err).Warn("Failed to fund channel account")
+					return nil, status.Error(codes.Internal, "Failed to create account")
+				}
 			}
 		}
 
@@ -233,6 +294,18 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 	err = s.createAccount(kinVersion, sourceKP, sourceAcc, rootKP, req.AccountId.Value)
 	if err != nil {
+		if hErr, ok := err.(*horizon.Error); ok {
+			resultXDR, envelopeXDR, err := parseXDRFromHorizonError(hErr)
+			if err != nil {
+				log.WithError(err).Warn("failed to parse XDR from horizon error")
+			} else {
+				log = log.WithFields(map[string]interface{}{
+					"result_xdr":   resultXDR,
+					"envelope_xdr": envelopeXDR,
+				})
+			}
+		}
+
 		log.WithError(err).Warn("Failed to create new account")
 		return nil, status.Error(codes.Internal, "Failed to create account")
 	}
@@ -553,17 +626,7 @@ func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.
 		signers = append(signers, whitelistingKP.Seed())
 	}
 
-	signedTx, err := tx.Sign(signers...)
-	if err != nil {
-		return errors.Wrap(err, "failed to sign transaction")
-	}
-
-	encodedTx, err := signedTx.Base64()
-	if err != nil {
-		return errors.Wrap(err, "failed to encode transaction")
-	}
-
-	_, err = client.SubmitTransaction(encodedTx)
+	err = signAndSubmitTransaction(client, tx, signers)
 	if err != nil {
 		hErr, ok := err.(*horizon.Error)
 		if !ok {
@@ -576,11 +639,61 @@ func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.
 		}
 
 		if len(rc.OperationCodes) == 0 || rc.OperationCodes[0] != "op_already_exists" {
-			return errors.Wrap(hErr, "failed to submit create account transaction")
+			return hErr
 		}
 	}
-
 	return nil
+}
+
+func (s *server) fundKin2Channel(rootAccount horizon.Account, channelAccountID string) (err error) {
+	// sequence number is typically represented with an int64, but the Horizon client sequence number mutator uses a
+	// uint64, so we parse it accordingly here.
+	prevSeq, err := strconv.ParseUint(rootAccount.Sequence, 10, 64)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse root account sequence number")
+	}
+
+	tx, err := build.Transaction(
+		build.SourceAccount{AddressOrSeed: s.kin2RootKP.Address()},
+		build.Sequence{Sequence: prevSeq + 1},
+		s.kin2Network,
+		build.Payment(
+			build.Destination{AddressOrSeed: channelAccountID},
+			build.NativeAmount{Amount: "10000"}, // 100 XLM
+		),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to build transaction")
+	}
+
+	return signAndSubmitTransaction(s.kin2Client, tx, []string{s.kin2RootKP.Seed()})
+}
+
+func signAndSubmitTransaction(client horizon.ClientInterface, tx *build.TransactionBuilder, signers []string) (err error) {
+	signedTx, err := tx.Sign(signers...)
+	if err != nil {
+		return errors.Wrap(err, "failed to sign transaction")
+	}
+
+	encodedTx, err := signedTx.Base64()
+	if err != nil {
+		return errors.Wrap(err, "failed to encode transaction")
+	}
+
+	_, err = client.SubmitTransaction(encodedTx)
+	return err
+}
+
+func parseXDRFromHorizonError(hErr *horizon.Error) (resultXDR string, envelopeXDR string, err error) {
+	if err := json.Unmarshal(hErr.Problem.Extras["result_xdr"], &resultXDR); err != nil {
+		return resultXDR, envelopeXDR, errors.Wrap(hErr, "invalid json result encoding from horizon")
+	}
+
+	if err := json.Unmarshal(hErr.Problem.Extras["envelope_xdr"], &envelopeXDR); err != nil {
+		return resultXDR, envelopeXDR, errors.Wrap(hErr, "invalid json envelope encoding from horizon")
+	}
+
+	return resultXDR, envelopeXDR, nil
 }
 
 func registerMetrics() (err error) {
