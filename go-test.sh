@@ -10,10 +10,8 @@ golangci-lint run \
     --exclude proto.MessageName \
     --exclude github.com/golang/protobuf/proto
 
-for d in $(go list -e ./... | grep -v vendor | grep -v mocks | grep -v systemtest); do
-    go test -test.v=true -race -coverprofile=profile.out $d
-    if [ -f profile.out ]; then
-        cat profile.out >> coverage.txt
-        rm profile.out
-    fi
-done
+go test -test.v=true -race -coverprofile=profile.out $(go list -e ./...)
+if [ -f profile.out ]; then
+    cat profile.out >> coverage.txt
+    rm profile.out
+fi
