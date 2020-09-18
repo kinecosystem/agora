@@ -34,6 +34,7 @@ const (
 
 	// Channels need more than 3 XLM + the 100 lumen fee to create an account with a balance of 2 XLM
 	minKin2ChannelBalance = 3e7 + 100
+	kin2ChannelFundAmount = "10000" // 100 XLM
 )
 
 var (
@@ -130,20 +131,6 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	var client horizon.ClientInterface
-	var rootKP *keypair.Full
-	var channelPool channel.Pool
-	switch kinVersion {
-	case version.KinVersion2:
-		client = s.kin2Client
-		rootKP = s.kin2RootKP
-		channelPool = s.kin2ChannelPool
-	default:
-		client = s.client
-		rootKP = s.rootKP
-		channelPool = s.channelPool
-	}
-
 	if s.config.CreateAccountGlobalLimit > 0 {
 		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.CreateAccountGlobalLimit))
 		if err != nil {
@@ -152,6 +139,24 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			createAccountRLCounter.Inc()
 			return nil, status.Error(codes.Unavailable, "rate limited")
 		}
+	}
+
+	var client horizon.ClientInterface
+	var rootKP *keypair.Full
+	var channelPool channel.Pool
+	var startingBalance string
+
+	switch kinVersion {
+	case version.KinVersion2:
+		client = s.kin2Client
+		rootKP = s.kin2RootKP
+		channelPool = s.kin2ChannelPool
+		startingBalance = "200" // 2 XLM, the minimum amount of XLM an account must hold
+	default:
+		client = s.client
+		rootKP = s.rootKP
+		channelPool = s.channelPool
+		startingBalance = "0"
 	}
 
 	// Check if account exists on the blockchain
@@ -190,8 +195,6 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			}
 		}()
 
-		var rootHorizonAccount horizon.Account
-
 		channelAccount, err := client.LoadAccount(c.KP.Address())
 		if err != nil {
 			horizonError, ok := err.(*horizon.Error)
@@ -200,15 +203,22 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 				return nil, status.Error(codes.Internal, "failed to create account")
 			}
 
-			rootHorizonAccount, err = client.LoadAccount(rootKP.Address())
+			rootHorizonAccount, err := client.LoadAccount(rootKP.Address())
 			if err != nil {
 				log.WithError(err).Warn("Failed to load root account")
 				return nil, status.Error(codes.Internal, err.Error())
 			}
 
+			var channelStartingBalance string
+			if kinVersion == 2 {
+				channelStartingBalance = kin2ChannelFundAmount
+			} else {
+				channelStartingBalance = "0"
+			}
+
 			_, err = retry.Retry(
 				func() error {
-					return s.createAccount(kinVersion, rootKP, rootHorizonAccount, nil, c.KP.Address())
+					return s.createAccount(kinVersion, rootKP, rootHorizonAccount, nil, c.KP.Address(), channelStartingBalance)
 				},
 				retry.Limit(3),
 				retry.BackoffWithJitter(backoff.BinaryExponential(500*time.Millisecond), 2200*time.Millisecond, 0.1),
@@ -235,9 +245,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 				log.WithError(err).Warn("Failed to load created/existing channel account")
 				return nil, status.Error(codes.Internal, "Failed to create account")
 			}
-		}
-
-		if kinVersion == 2 {
+		} else if kinVersion == 2 {
 			nativeBalance, err := channelAccount.GetNativeBalance()
 			if err != nil {
 				log.WithError(err).Warn("failed to get channel native balance")
@@ -250,13 +258,10 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			}
 
 			if channelBalance < minKin2ChannelBalance {
-				if rootHorizonAccount.AccountID == "" {
-					// load the root account, since we haven't already
-					rootHorizonAccount, err = client.LoadAccount(rootKP.Address())
-					if err != nil {
-						log.WithError(err).Warn("Failed to load root account")
-						return nil, status.Error(codes.Internal, err.Error())
-					}
+				rootHorizonAccount, err := client.LoadAccount(rootKP.Address())
+				if err != nil {
+					log.WithError(err).Warn("Failed to load root account")
+					return nil, status.Error(codes.Internal, err.Error())
 				}
 
 				err = s.fundKin2Channel(rootHorizonAccount, c.KP.Address())
@@ -292,7 +297,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		sourceKP = rootKP
 	}
 
-	err = s.createAccount(kinVersion, sourceKP, sourceAcc, rootKP, req.AccountId.Value)
+	err = s.createAccount(kinVersion, sourceKP, sourceAcc, rootKP, req.AccountId.Value, startingBalance)
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			resultXDR, envelopeXDR, err := parseXDRFromHorizonError(hErr)
@@ -575,7 +580,7 @@ func (s *server) getMetaAccountInfoOrLoad(client horizon.ClientInterface, kinVer
 	return accountInfo, accountRemoved, err
 }
 
-func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.Full, sourceAccount horizon.Account, whitelistingKP *keypair.Full, newAccountID string) (err error) {
+func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.Full, sourceAccount horizon.Account, whitelistingKP *keypair.Full, newAccountID string, startingBalance string) (err error) {
 	var network build.Network
 	var client horizon.ClientInterface
 	switch kinVersion {
@@ -598,21 +603,14 @@ func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.
 		build.SourceAccount{AddressOrSeed: sourceKP.Address()},
 		build.Sequence{Sequence: prevSeq + 1},
 		network,
+		build.CreateAccount(
+			build.Destination{AddressOrSeed: newAccountID},
+			build.NativeAmount{Amount: startingBalance},
+		),
 	}
 	if kinVersion == 2 {
 		mutators = append(mutators,
-			build.CreateAccount(
-				build.Destination{AddressOrSeed: newAccountID},
-				build.NativeAmount{Amount: "200"}, // 2 XLM, the minimum amount of XLM an account must hold
-			),
 			build.Trust(kin.KinAssetCode, s.kin2Issuer, build.SourceAccount{AddressOrSeed: newAccountID}),
-		)
-	} else {
-		mutators = append(mutators,
-			build.CreateAccount(
-				build.Destination{AddressOrSeed: newAccountID},
-				build.NativeAmount{Amount: "0"},
-			),
 		)
 	}
 
@@ -659,7 +657,7 @@ func (s *server) fundKin2Channel(rootAccount horizon.Account, channelAccountID s
 		s.kin2Network,
 		build.Payment(
 			build.Destination{AddressOrSeed: channelAccountID},
-			build.NativeAmount{Amount: "10000"}, // 100 XLM
+			build.NativeAmount{Amount: kin2ChannelFundAmount},
 		),
 	)
 	if err != nil {
