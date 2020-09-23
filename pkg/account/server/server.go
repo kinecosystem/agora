@@ -218,7 +218,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 			_, err = retry.Retry(
 				func() error {
-					return s.createAccount(kinVersion, rootKP, rootHorizonAccount, nil, c.KP.Address(), channelStartingBalance)
+					return s.createAccount(kinVersion, rootKP, rootHorizonAccount, c.KP.Address(), channelStartingBalance)
 				},
 				retry.Limit(3),
 				retry.BackoffWithJitter(backoff.BinaryExponential(500*time.Millisecond), 2200*time.Millisecond, 0.1),
@@ -297,7 +297,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		sourceKP = rootKP
 	}
 
-	err = s.createAccount(kinVersion, sourceKP, sourceAcc, rootKP, req.AccountId.Value, startingBalance)
+	err = s.createAccount(kinVersion, sourceKP, sourceAcc, req.AccountId.Value, startingBalance)
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			resultXDR, envelopeXDR, err := parseXDRFromHorizonError(hErr)
@@ -580,7 +580,7 @@ func (s *server) getMetaAccountInfoOrLoad(client horizon.ClientInterface, kinVer
 	return accountInfo, accountRemoved, err
 }
 
-func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.Full, sourceAccount horizon.Account, whitelistingKP *keypair.Full, newAccountID string, startingBalance string) (err error) {
+func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.Full, sourceAccount horizon.Account, newAccountID string, startingBalance string) (err error) {
 	var network build.Network
 	var client horizon.ClientInterface
 	switch kinVersion {
@@ -620,8 +620,10 @@ func (s *server) createAccount(kinVersion version.KinVersion, sourceKP *keypair.
 	}
 
 	signers := []string{sourceKP.Seed()}
-	if whitelistingKP != nil && whitelistingKP.Seed() != sourceKP.Seed() {
-		signers = append(signers, whitelistingKP.Seed())
+
+	// Kin 3 transactions should always be signed by the root account to remove fees
+	if kinVersion == 3 && sourceKP.Seed() != s.rootKP.Seed() {
+		signers = append(signers, s.rootKP.Seed())
 	}
 
 	err = signAndSubmitTransaction(client, tx, signers)
