@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	SDKVersion       = "0.2.0"
+	SDKVersion       = "0.2.1"
 	userAgentHeader  = "kin-user-agent"
 	kinVersionHeader = "kin-version"
 )
