@@ -443,19 +443,19 @@ func TestSubmitTransaction_SignTransaction403_InvoiceError(t *testing.T) {
 	assert.Equal(t, len(webhookResp.InvoiceErrors), len(resp.InvoiceErrors))
 
 	assert.Equal(t, uint32(0), resp.InvoiceErrors[0].OpIndex)
-	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID, resp.InvoiceErrors[0].Reason)
+	assert.Equal(t, commonpb.InvoiceError_ALREADY_PAID, resp.InvoiceErrors[0].Reason)
 	assert.True(t, proto.Equal(invoiceList.Invoices[0], resp.InvoiceErrors[0].Invoice))
 
 	assert.Equal(t, uint32(1), resp.InvoiceErrors[1].OpIndex)
-	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION, resp.InvoiceErrors[1].Reason)
+	assert.Equal(t, commonpb.InvoiceError_WRONG_DESTINATION, resp.InvoiceErrors[1].Reason)
 	assert.True(t, proto.Equal(invoiceList.Invoices[1], resp.InvoiceErrors[1].Invoice))
 
 	assert.Equal(t, uint32(2), resp.InvoiceErrors[2].OpIndex)
-	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND, resp.InvoiceErrors[2].Reason)
+	assert.Equal(t, commonpb.InvoiceError_SKU_NOT_FOUND, resp.InvoiceErrors[2].Reason)
 	assert.True(t, proto.Equal(invoiceList.Invoices[2], resp.InvoiceErrors[2].Invoice))
 
 	assert.Equal(t, uint32(3), resp.InvoiceErrors[3].OpIndex)
-	assert.Equal(t, transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN, resp.InvoiceErrors[3].Reason)
+	assert.Equal(t, commonpb.InvoiceError_UNKNOWN, resp.InvoiceErrors[3].Reason)
 	assert.True(t, proto.Equal(invoiceList.Invoices[3], resp.InvoiceErrors[3].Invoice))
 }
 

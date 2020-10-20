@@ -177,10 +177,10 @@ github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfV
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 h1:uC1QfSlInpQF+M0ao65imhwqKnz3Q2z/d8PWZRMQvDM=
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88/go.mod h1:3w7q1U84EfirKl04SVQ/s7nPm1ZPhiXd34z40TNz36k=
-github.com/kinecosystem/agora-api v0.19.0 h1:QZYukuKfldcs+oXkwIUrh+pk8b4rU9zzNAZ3ItjKFUw=
-github.com/kinecosystem/agora-api v0.19.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
-github.com/kinecosystem/agora-common v0.41.0 h1:f8elFmXRypXr1GLiuccnBTC8Rp0hiV7ptortxeyZsu0=
-github.com/kinecosystem/agora-common v0.41.0/go.mod h1:dHNqTJZcXZBOaIHdLEqkISczhstBhEJ9v9ZoBAwvDvs=
+github.com/kinecosystem/agora-api v0.20.0 h1:yp4Ni1EKadBK5J3Z3TWMq/H3DOY/da+0HqHELdfA+uc=
+github.com/kinecosystem/agora-api v0.20.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
+github.com/kinecosystem/agora-common v0.44.0 h1:UkUnFuN/MQZJTZvDMX/sgl1T0sspT6CGqmFtsT6f/bg=
+github.com/kinecosystem/agora-common v0.44.0/go.mod h1:8MY/Hqa4F/y0bB9Q+dJyFwItY/fdrY9Ho1HOxGDF7eo=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e h1:YP9l6K2VUnIc9SmT9irPeCrJ9JCWMQjOj0Pq2xSpEfs=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e/go.mod h1:25m9BWmQ2cj1bVnl4Axoxq8XNpODLSe01IA9HrhG4sA=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
@@ -369,6 +369,8 @@ github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/yalp/jsonpath v0.0.0-20150812003900-31a79c7593bb h1:06WAhQa+mYv7BiOk13B/ywyTlkoE/S7uu6TBKU6FHnE=
 github.com/yalp/jsonpath v0.0.0-20150812003900-31a79c7593bb/go.mod h1:/LWChgwKmvncFJFHJ7Gvn9wZArjbV5/FppcK2fKk/tI=
+github.com/ybbus/jsonrpc v2.1.2+incompatible h1:V4mkE9qhbDQ92/MLMIhlhMSbz8jNXdagC3xBR5NDwaQ=
+github.com/ybbus/jsonrpc v2.1.2+incompatible/go.mod h1:XJrh1eMSzdIYFbM08flv0wp5G35eRniyeGut1z+LSiE=
 github.com/yudai/gojsondiff v0.0.0-20170107030110-7b1b7adf999d h1:yJIizrfO599ot2kQ6Af1enICnwBD3XoxgX3MrMwot2M=
 github.com/yudai/gojsondiff v0.0.0-20170107030110-7b1b7adf999d/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20150405163532-d1c525dea8ce h1:888GrqRxabUce7lj4OaoShPxodm3kXOMpSa85wdYzfY=

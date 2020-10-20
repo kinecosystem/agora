@@ -276,11 +276,11 @@ func TestInternal_SubmitStellarTransaction(t *testing.T) {
 	assert.EqualValues(t, txHash[:], txData.Hash)
 	assert.Empty(t, txData.InvoiceErrors)
 
-	invoiceErrors := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, 3)
+	invoiceErrors := make([]*commonpb.InvoiceError, 3)
 	for i := 0; i < len(invoiceErrors); i++ {
-		invoiceErrors[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+		invoiceErrors[i] = &commonpb.InvoiceError{
 			OpIndex: 0,
-			Reason:  transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID,
+			Reason:  commonpb.InvoiceError_ALREADY_PAID,
 			Invoice: &commonpb.Invoice{
 				Items: []*commonpb.Invoice_LineItem{
 					{
@@ -384,11 +384,11 @@ func TestInternal_SubmitStellarTransctionKin2(t *testing.T) {
 	assert.EqualValues(t, txHash[:], txData.Hash)
 	assert.Empty(t, txData.InvoiceErrors)
 
-	invoiceErrors := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, 3)
+	invoiceErrors := make([]*commonpb.InvoiceError, 3)
 	for i := 0; i < len(invoiceErrors); i++ {
-		invoiceErrors[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+		invoiceErrors[i] = &commonpb.InvoiceError{
 			OpIndex: 0,
-			Reason:  transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID,
+			Reason:  commonpb.InvoiceError_ALREADY_PAID,
 			Invoice: &commonpb.Invoice{
 				Items: []*commonpb.Invoice_LineItem{
 					{

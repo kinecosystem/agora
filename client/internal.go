@@ -174,7 +174,7 @@ func (c *InternalClient) GetTransaction(ctx context.Context, txHash []byte) (dat
 type SubmitStellarTransactionResult struct {
 	Hash          []byte
 	Errors        TransactionErrors
-	InvoiceErrors []*transactionpb.SubmitTransactionResponse_InvoiceError
+	InvoiceErrors []*commonpb.InvoiceError
 }
 
 func (c *InternalClient) SubmitStellarTransaction(ctx context.Context, envelopeXDR []byte, invoiceList *commonpb.InvoiceList) (result SubmitStellarTransactionResult, err error) {

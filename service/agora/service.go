@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,16 +21,21 @@ import (
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/solana"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
 	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/go/strkey"
+	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+	airdroppb "github.com/kinecosystem/agora-api/genproto/airdrop/v4"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
+	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
 	appmapper "github.com/kinecosystem/agora/pkg/app/dynamodb/mapper"
 	"github.com/kinecosystem/agora/pkg/channel"
@@ -58,6 +64,12 @@ const (
 	rootKin2KeypairIDEnv = "ROOT_KIN_2_KEYPAIR_ID"
 	keystoreTypeEnv      = "KEYSTORE_TYPE"
 
+	// Solana config
+	solanaEndpointEnv      = "SOLANA_ENDPOINT"
+	kinTokenEnv            = "KIN_TOKEN"
+	airdropSourceEnv       = "AIRDROP_SOURCE"
+	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
+
 	// Rate Limit Configs
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
@@ -72,6 +84,7 @@ const (
 type app struct {
 	accountServer accountpb.AccountServer
 	txnServer     transactionpb.TransactionServer
+	airdropServer airdroppb.AirdropServer
 
 	streamCancelFunc context.CancelFunc
 
@@ -97,6 +110,33 @@ func (a *app) Init(_ agoraapp.Config) error {
 	kin2RootAccountKP, err := keystore.Get(context.Background(), os.Getenv(rootKin2KeypairIDEnv))
 	if err != nil {
 		return errors.Wrap(err, "failed to determine kin 2 root keypair")
+	}
+
+	kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
+	if err != nil {
+		return errors.Wrap(err, "failed to parse kin token address")
+	}
+
+	var subsidizer []byte
+	if os.Getenv(subsidizerKeypairIDEnv) != "" {
+		subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
+		if err != nil {
+			return errors.Wrap(err, "failed to determine subsidizer keypair")
+		}
+
+		rawSeed, err := strkey.Decode(strkey.VersionByteSeed, subsidizerKP.Seed())
+		if err != nil {
+			return errors.Wrap(err, "invalid subsidizer seed string")
+		}
+
+		subsidizer = ed25519.NewKeyFromSeed(rawSeed)
+	}
+	var airdropSource []byte
+	if os.Getenv(airdropSourceEnv) != "" {
+		airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	client, err := kin.GetClient()
@@ -137,6 +177,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	appMapper := appmapper.New(dynamoClient)
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
+	solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
 
 	createAccountRL, err := parseRateLimit(createAccountGlobalRLEnv)
 	if err != nil {
@@ -225,6 +266,10 @@ func (a *app) Init(_ agoraapp.Config) error {
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to init account server")
+	}
+
+	if len(subsidizer) > 0 && len(airdropSource) > 0 {
+		a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -342,6 +387,10 @@ func (a *app) Init(_ agoraapp.Config) error {
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
 	accountpb.RegisterAccountServer(server, a.accountServer)
 	transactionpb.RegisterTransactionServer(server, a.txnServer)
+
+	if a.airdropServer != nil {
+		airdroppb.RegisterAirdropServer(server, a.airdropServer)
+	}
 }
 
 // ShutdownChan implements agorapp.App.ShutdownChan.

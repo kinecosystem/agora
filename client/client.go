@@ -18,7 +18,6 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
-	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 
 	"github.com/kinecosystem/agora/pkg/transaction"
 )
@@ -394,11 +393,11 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 		}
 
 		switch result.InvoiceErrors[0].Reason {
-		case transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID:
+		case commonpb.InvoiceError_ALREADY_PAID:
 			return result.Hash, ErrAlreadyPaid
-		case transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION:
+		case commonpb.InvoiceError_WRONG_DESTINATION:
 			return result.Hash, ErrWrongDestination
-		case transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND:
+		case commonpb.InvoiceError_SKU_NOT_FOUND:
 			return result.Hash, ErrSKUNotFound
 		default:
 			return result.Hash, errors.Errorf("unknown invoice error: %v", result.InvoiceErrors[0].Reason)

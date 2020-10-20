@@ -8,3 +8,4 @@ vendor/
 coverage.txt
 coverage.out
 profile.out
+*.code-workspace

@@ -264,18 +264,18 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 							}, nil
 						}
 
-						invoiceErrs := make([]*transactionpb.SubmitTransactionResponse_InvoiceError, len(signTxErr.OperationErrors))
+						invoiceErrs := make([]*commonpb.InvoiceError, len(signTxErr.OperationErrors))
 						for i, opErr := range signTxErr.OperationErrors {
-							var reason transactionpb.SubmitTransactionResponse_InvoiceError_Reason
+							var reason commonpb.InvoiceError_Reason
 							switch opErr.Reason {
 							case signtransaction.AlreadyPaid:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID
+								reason = commonpb.InvoiceError_ALREADY_PAID
 							case signtransaction.WrongDestination:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION
+								reason = commonpb.InvoiceError_WRONG_DESTINATION
 							case signtransaction.SKUNotFound:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND
+								reason = commonpb.InvoiceError_SKU_NOT_FOUND
 							default:
-								reason = transactionpb.SubmitTransactionResponse_InvoiceError_UNKNOWN
+								reason = commonpb.InvoiceError_UNKNOWN
 							}
 
 							if int(opErr.OperationIndex) >= len(req.InvoiceList.GetInvoices()) {
@@ -286,7 +286,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 								continue
 							}
 
-							invoiceErrs[i] = &transactionpb.SubmitTransactionResponse_InvoiceError{
+							invoiceErrs[i] = &commonpb.InvoiceError{
 								OpIndex: opErr.OperationIndex,
 								Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
 								Reason:  reason,

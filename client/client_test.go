@@ -238,28 +238,28 @@ func TestClient_SubmitPayment(t *testing.T) {
 	env.server.blockchains[version.KinVersion3].submitResponses = []*transactionpb.SubmitTransactionResponse{
 		{
 			Result: transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
-			InvoiceErrors: []*transactionpb.SubmitTransactionResponse_InvoiceError{
+			InvoiceErrors: []*commonpb.InvoiceError{
 				{
 					Invoice: payments[3].Invoice,
-					Reason:  transactionpb.SubmitTransactionResponse_InvoiceError_ALREADY_PAID,
+					Reason:  commonpb.InvoiceError_ALREADY_PAID,
 				},
 			},
 		},
 		{
 			Result: transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
-			InvoiceErrors: []*transactionpb.SubmitTransactionResponse_InvoiceError{
+			InvoiceErrors: []*commonpb.InvoiceError{
 				{
 					Invoice: payments[3].Invoice,
-					Reason:  transactionpb.SubmitTransactionResponse_InvoiceError_WRONG_DESTINATION,
+					Reason:  commonpb.InvoiceError_WRONG_DESTINATION,
 				},
 			},
 		},
 		{
 			Result: transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
-			InvoiceErrors: []*transactionpb.SubmitTransactionResponse_InvoiceError{
+			InvoiceErrors: []*commonpb.InvoiceError{
 				{
 					Invoice: payments[3].Invoice,
-					Reason:  transactionpb.SubmitTransactionResponse_InvoiceError_SKU_NOT_FOUND,
+					Reason:  commonpb.InvoiceError_SKU_NOT_FOUND,
 				},
 			},
 		},
