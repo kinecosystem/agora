@@ -93,25 +93,25 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 		return errors.Wrap(err, "failed to unmarshal entry")
 	}
 
-	txHash, err := entry.GetTxHash()
+	txID, err := entry.GetTxID()
 	if err != nil {
 		log.WithError(err).Warn("Failed to get tx hash from entry")
 		return errors.Wrap(err, "failed to get tx hash from entry")
 	}
 
-	log = log.WithField("tx_hash", hex.EncodeToString(txHash))
+	log = log.WithField("tx_hash", hex.EncodeToString(txID))
 
-	il, err := p.invoiceStore.Get(ctx, txHash)
+	il, err := p.invoiceStore.Get(ctx, txID)
 	if err != nil && err != invoice.ErrNotFound {
 		log.WithError(err).Warn("Failed to get invoice list")
-		return errors.Wrapf(err, "failed to get invoice for tx: %x", txHash)
+		return errors.Wrapf(err, "failed to get invoice for tx: %x", txID)
 	}
 
 	appIndex := -1
 	event := Event{
 		TransactionEvent: &TransactionEvent{
 			KinVersion:  int(entry.Version),
-			TxHash:      txHash,
+			TxHash:      txID,
 			InvoiceList: il,
 		},
 	}
@@ -139,7 +139,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 	}
 
 	if appIndex < 0 {
-		log.WithField("tx_hash", hex.EncodeToString(txHash)).Trace("no app id present; dropping")
+		log.WithField("tx_hash", hex.EncodeToString(txID)).Trace("no app id present; dropping")
 		return nil
 	}
 

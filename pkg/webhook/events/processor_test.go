@@ -109,7 +109,7 @@ func TestRoundTrip(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
+	entry, txHash := historytestutil.GenerateStellarEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
@@ -165,7 +165,7 @@ func TestWebhook_None(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
+	entry, txHash := historytestutil.GenerateStellarEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
 	appConfig := &app.Config{
@@ -193,7 +193,7 @@ func TestWebhook_NonRetriableError(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
+	entry, txHash := historytestutil.GenerateStellarEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 
@@ -231,7 +231,7 @@ func TestWebhook_RetriableError(t *testing.T) {
 	ilHash := sha256.Sum224(ilBytes)
 
 	accountIDs := testutil.GenerateAccountIDs(t, 2)
-	entry, txHash := historytestutil.GenerateEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
+	entry, txHash := historytestutil.GenerateStellarEntry(t, 10, 10, accountIDs[0], accountIDs[1:], ilHash[:], nil)
 
 	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
 

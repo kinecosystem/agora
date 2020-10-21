@@ -1089,7 +1089,7 @@ func TestGetTransaction_Loader(t *testing.T) {
 	defer cleanup()
 
 	accounts := testutil.GenerateAccountIDs(t, 2)
-	generated, hash := historytestutil.GenerateEntry(t, 1, 2, accounts[0], accounts[1:], nil, nil)
+	generated, hash := historytestutil.GenerateStellarEntry(t, 1, 2, accounts[0], accounts[1:], nil, nil)
 	require.NoError(t, env.rw.Write(context.Background(), generated))
 
 	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), nil, historytestutil.GetOrderingKey(t, generated)))
@@ -1311,7 +1311,7 @@ func TestGetHistory_Query(t *testing.T) {
 	accounts := testutil.GenerateAccountIDs(t, 10)
 	generated := make([]*model.Entry, 20)
 	for i := 0; i < len(generated); i++ {
-		generated[i], _ = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil, nil)
+		generated[i], _ = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil, nil)
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
@@ -1444,7 +1444,7 @@ func TestGetHistory_WithInvoice(t *testing.T) {
 	generated := make([]*model.Entry, 20)
 	hashes := make([][]byte, 20)
 	for i := 0; i < len(generated); i++ {
-		generated[i], hashes[i] = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[i:i+1], ilHash[:], nil)
+		generated[i], hashes[i] = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, accounts[0], accounts[i:i+1], ilHash[:], nil)
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
@@ -1491,7 +1491,7 @@ func TestGetHistory_TextMemo(t *testing.T) {
 	hashes := make([][]byte, 20)
 	textMemo := "1-test"
 	for i := 0; i < len(generated); i++ {
-		generated[i], hashes[i] = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[i:i+1], nil, &textMemo)
+		generated[i], hashes[i] = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, accounts[0], accounts[i:i+1], nil, &textMemo)
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 

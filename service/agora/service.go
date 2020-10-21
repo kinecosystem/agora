@@ -47,7 +47,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	ingestioncommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
 	ingestionlock "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/locker"
-	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
+	solanaingestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
+	stellaringestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
 	"github.com/kinecosystem/agora/pkg/webhook"
@@ -298,8 +299,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 
 	committer := ingestioncommitter.New(dynamoClient)
-	historyIngestor := stellar.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
-	eventsIngestor := stellar.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
+	historyIngestor := stellaringestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
+	eventsIngestor := stellaringestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
 	historyLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin3", 10*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "failed to init history ingestion lock")
@@ -309,8 +310,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init events ingestion lock")
 	}
 
-	kin2HistoryIngestor := stellar.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
-	kin2EventsIngestor := stellar.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
+	kin2HistoryIngestor := stellaringestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
+	kin2EventsIngestor := stellaringestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
 	kin2HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin2", 10*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "failed to init kin 2 history ingestion lock")
@@ -318,6 +319,12 @@ func (a *app) Init(_ agoraapp.Config) error {
 	kin2EventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin2", 10*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "failed to init kin 2 events ingestion lock")
+	}
+
+	kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
+	kin4HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin4", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init kin 4 history ingestion lock")
 	}
 
 	historyRW := historyrw.New(dynamoClient)
@@ -341,6 +348,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init transaction server")
 	}
 
+	//
+	// Kin3 Ingestion and Streams
+	//
 	go func() {
 		transaction.StreamTransactions(ctx, clientV2, accountNotifier)
 	}()
@@ -360,6 +370,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 			log.WithError(err).Info("events ingestion loop terminated")
 		}
 	}()
+	//
+	// Kin2 Ingestion and Streams
+	//
 	go func() {
 		transaction.StreamTransactions(ctx, kin2ClientV2, kin2AccountNotifier)
 	}()
@@ -377,6 +390,17 @@ func (a *app) Init(_ agoraapp.Config) error {
 			log.WithError(err).Warn("kin 2 events ingestion loop terminated")
 		} else {
 			log.WithError(err).Info("kin 2 events ingestion loop terminated")
+		}
+	}()
+	//
+	// Kin4 Ingestion and Streams
+	//
+	go func() {
+		err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
+		if err != nil && err != context.Canceled {
+			log.WithError(err).Warn("kin 4 history ingestion loop terminated")
+		} else {
+			log.WithError(err).Info("kin 4 history ingestion loop terminated")
 		}
 	}()
 

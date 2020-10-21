@@ -171,12 +171,12 @@ func txDataFromEntry(entry *model.Entry) (data txData, err error) {
 		return data, errors.New("failed to get ordering key")
 	}
 
-	hash, err := entry.GetTxHash()
+	txID, err := entry.GetTxID()
 	if err != nil {
 		return data, errors.Wrap(err, "failed to get tx hash")
 	}
 
-	data.hash = hash
+	data.hash = txID
 	data.ledger = int64(e.Stellar.Ledger)
 	data.envelopeXDR = e.Stellar.EnvelopeXdr
 	data.resultXDR = e.Stellar.ResultXdr

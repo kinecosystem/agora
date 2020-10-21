@@ -2,9 +2,11 @@ package tests
 
 import (
 	"context"
+	"crypto/ed25519"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/kinecosystem/go/strkey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -18,7 +20,8 @@ func RunTests(t *testing.T, rw history.ReaderWriter, teardown func()) {
 	for _, tf := range []func(t *testing.T, rw history.ReaderWriter){
 		testRoundTrip_Stellar,
 		testOrdering,
-		testDoubleInsert,
+		testDoubleInsert_Stellar,
+		testDoubleInsert_Solana,
 	} {
 		tf(t, rw)
 		teardown()
@@ -29,7 +32,7 @@ func testRoundTrip_Stellar(t *testing.T, rw history.ReaderWriter) {
 	t.Run("TestRoundTrip_Stellar", func(t *testing.T) {
 		ctx := context.Background()
 		accounts := testutil.GenerateAccountIDs(t, 10)
-		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil, nil)
+		entry, hash := historytestutil.GenerateStellarEntry(t, 1, 1, accounts[0], accounts[1:], nil, nil)
 
 		// Assert no previous state
 		_, err := rw.GetTransaction(ctx, hash)
@@ -55,11 +58,11 @@ func testRoundTrip_Stellar(t *testing.T, rw history.ReaderWriter) {
 	})
 }
 
-func testDoubleInsert(t *testing.T, rw history.ReaderWriter) {
+func testDoubleInsert_Stellar(t *testing.T, rw history.ReaderWriter) {
 	t.Run("TestDoubleInsert", func(t *testing.T) {
 		ctx := context.Background()
 		accounts := testutil.GenerateAccountIDs(t, 10)
-		entry, hash := historytestutil.GenerateEntry(t, 1, 1, accounts[0], accounts[1:], nil, nil)
+		entry, hash := historytestutil.GenerateStellarEntry(t, 1, 1, accounts[0], accounts[1:], nil, nil)
 
 		// Writes should be idempotent, provided the entry is the same.
 		for i := 0; i < 2; i++ {
@@ -102,6 +105,63 @@ func testDoubleInsert(t *testing.T, rw history.ReaderWriter) {
 	})
 }
 
+func testDoubleInsert_Solana(t *testing.T, rw history.ReaderWriter) {
+	t.Run("TestDoubleInsert_Solana", func(t *testing.T) {
+		ctx := context.Background()
+		sender := testutil.GenerateSolanaKeypair(t)
+		accounts := testutil.GenerateSolanaKeys(t, 9)
+
+		// Entries in solana are allowed to "advance" in state, since
+		// we ingest before they are finalized. However, entries cannot go
+		// backwards. Notably:
+		//
+		//   1. Slot can go up, but not down
+		//   2. Confirmed can't be unconfirmed
+		//   3. Transaction cannot change
+		//   4. Error cannot be unset
+		//
+		// To simplify our test, we create an entry that's in the 'end state'
+		// for each condition, then attempt to roll back each parameter individually,
+		// ensuring it's not possible. Note: we cannot test (3), since the transaction
+		// is generated from the raw bytes.
+		entry, hash := historytestutil.GenerateSolanaEntry(t, 2, true, sender, accounts[1:], nil, nil)
+		entry.Kind.(*model.Entry_Solana).Solana.TransactionError = []byte("some error")
+		assert.NoError(t, rw.Write(ctx, entry))
+
+		mutated := make([]*model.Entry, 3)
+
+		// Slot cannot go down
+		mutated[0] = proto.Clone(entry).(*model.Entry)
+		mutated[0].Kind.(*model.Entry_Solana).Solana.Slot = 0
+
+		// Confirmed cannot be unconfirmed
+		mutated[1] = proto.Clone(entry).(*model.Entry)
+		mutated[1].Kind.(*model.Entry_Solana).Solana.Confirmed = false
+
+		// Error cannot be unset
+		mutated[2] = proto.Clone(entry).(*model.Entry)
+		mutated[2].Kind.(*model.Entry_Solana).Solana.TransactionError = nil
+
+		for i, m := range mutated {
+			assert.False(t, proto.Equal(entry, m))
+			require.NotNil(t, rw.Write(ctx, m), i)
+
+			// Ensure that the write did not go through
+			actual, err := rw.GetTransaction(ctx, hash)
+			require.NoError(t, err)
+			assert.True(t, proto.Equal(actual, entry))
+			assert.False(t, proto.Equal(actual, m))
+
+			addr := strkey.MustEncode(strkey.VersionByteAccountID, sender.Public().(ed25519.PublicKey))
+			entries, err := rw.GetAccountTransactions(ctx, addr, nil)
+			assert.NoError(t, err)
+			require.Len(t, entries, 1)
+			assert.True(t, proto.Equal(entry, entries[0]))
+			assert.False(t, proto.Equal(m, entries[0]))
+		}
+	})
+}
+
 func testOrdering(t *testing.T, rw history.ReaderWriter) {
 	t.Run("TestQuery", func(t *testing.T) {
 		ctx := context.Background()
@@ -112,7 +172,7 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 
 		generated := make([]*model.Entry, 100)
 		for i := 0; i < 100; i++ {
-			generated[i], _ = historytestutil.GenerateEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil, nil)
+			generated[i], _ = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil, nil)
 			require.NoError(t, rw.Write(ctx, generated[i]))
 		}
 

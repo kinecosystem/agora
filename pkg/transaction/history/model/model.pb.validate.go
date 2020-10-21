@@ -59,6 +59,18 @@ func (m *Entry) Validate() error {
 			}
 		}
 
+	case *Entry_Solana:
+
+		if v, ok := interface{}(m.GetSolana()).(interface{ Validate() error }); ok {
+			if err := v.Validate(); err != nil {
+				return EntryValidationError{
+					field:  "Solana",
+					reason: "embedded message failed validation",
+					cause:  err,
+				}
+			}
+		}
+
 	}
 
 	return nil
@@ -214,3 +226,86 @@ var _ interface {
 	Cause() error
 	ErrorName() string
 } = StellarEntryValidationError{}
+
+// Validate checks the field values on SolanaEntry with the rules defined in
+// the proto definition for this message. If any rules are violated, an error
+// is returned.
+func (m *SolanaEntry) Validate() error {
+	if m == nil {
+		return nil
+	}
+
+	// no validation rules for Slot
+
+	// no validation rules for Confirmed
+
+	if l := len(m.GetTransaction()); l < 1 || l > 1232 {
+		return SolanaEntryValidationError{
+			field:  "Transaction",
+			reason: "value length must be between 1 and 1232 bytes, inclusive",
+		}
+	}
+
+	if l := len(m.GetTransactionError()); l < 0 || l > 1024 {
+		return SolanaEntryValidationError{
+			field:  "TransactionError",
+			reason: "value length must be between 0 and 1024 bytes, inclusive",
+		}
+	}
+
+	return nil
+}
+
+// SolanaEntryValidationError is the validation error returned by
+// SolanaEntry.Validate if the designated constraints aren't met.
+type SolanaEntryValidationError struct {
+	field  string
+	reason string
+	cause  error
+	key    bool
+}
+
+// Field function returns field value.
+func (e SolanaEntryValidationError) Field() string { return e.field }
+
+// Reason function returns reason value.
+func (e SolanaEntryValidationError) Reason() string { return e.reason }
+
+// Cause function returns cause value.
+func (e SolanaEntryValidationError) Cause() error { return e.cause }
+
+// Key function returns key value.
+func (e SolanaEntryValidationError) Key() bool { return e.key }
+
+// ErrorName returns error name.
+func (e SolanaEntryValidationError) ErrorName() string { return "SolanaEntryValidationError" }
+
+// Error satisfies the builtin error interface
+func (e SolanaEntryValidationError) Error() string {
+	cause := ""
+	if e.cause != nil {
+		cause = fmt.Sprintf(" | caused by: %v", e.cause)
+	}
+
+	key := ""
+	if e.key {
+		key = "key for "
+	}
+
+	return fmt.Sprintf(
+		"invalid %sSolanaEntry.%s: %s%s",
+		key,
+		e.field,
+		e.reason,
+		cause)
+}
+
+var _ error = SolanaEntryValidationError{}
+
+var _ interface {
+	Field() string
+	Reason() string
+	Key() bool
+	Cause() error
+	ErrorName() string
+} = SolanaEntryValidationError{}

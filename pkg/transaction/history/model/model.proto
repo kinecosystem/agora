@@ -8,6 +8,7 @@ enum KinVersion {
     RESERVED = 1;
     KIN2     = 2;
     KIN3     = 3;
+    KIN4     = 4;
 }
 
 // Entry is a generalized history entry that contains a blockchain
@@ -20,6 +21,7 @@ message Entry {
 
     oneof kind {
         StellarEntry stellar = 2;
+        SolanaEntry solana = 3;
     }
 }
 
@@ -44,5 +46,27 @@ message StellarEntry {
     bytes result_xdr = 6 [(validate.rules).bytes = {
         min_len: 1
         max_len: 10240
+    }];
+}
+
+message SolanaEntry {
+    uint64 slot = 1;
+
+    bool confirmed = 2;
+
+    // Maximum size taken from: https://github.com/solana-labs/solana/blob/39b3ac6a8d29e14faa1de73d8b46d390ad41797b/sdk/src/packet.rs#L9-L13
+    bytes transaction = 3 [(validate.rules).bytes = {
+        min_len: 1
+        max_len: 1232
+    }];
+
+    // Optional value represented by 'TransactionError' type returned
+    // from the Solana RPCs.
+    //
+    // todo: replace? figure out what's a more specific raw format
+    // we can use.
+    bytes transaction_error = 4 [(validate.rules).bytes = {
+        min_len: 0
+        max_len: 1024
     }];
 }

@@ -1,9 +1,16 @@
 package model
 
 import (
+	"crypto/ed25519"
+	"encoding/binary"
+	"math/rand"
 	"strconv"
 	"testing"
 
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/kinecosystem/go/strkey"
+	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/network"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
@@ -56,8 +63,8 @@ func TestStellar(t *testing.T) {
 		assert.True(t, exists)
 	}
 
-	// Hash
-	actual, err := e.GetTxHash()
+	// ID
+	actual, err := e.GetTxID()
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected[:], actual)
 
@@ -84,4 +91,74 @@ func TestStellar(t *testing.T) {
 		assert.NoError(t, err)
 		assert.EqualValues(t, actual, k)
 	}
+}
+
+func TestSolana(t *testing.T) {
+	sender := testutil.GenerateSolanaKeypair(t)
+	dest := testutil.GenerateSolanaKeypair(t)
+	txn := solana.NewTransaction(
+		sender.Public().(ed25519.PublicKey),
+		token.Transfer(
+			sender.Public().(ed25519.PublicKey),
+			dest.Public().(ed25519.PublicKey),
+			sender.Public().(ed25519.PublicKey),
+			10,
+		),
+	)
+	assert.NoError(t, txn.Sign(sender))
+
+	entry := &Entry{
+		Version: KinVersion_KIN4,
+		Kind: &Entry_Solana{
+			Solana: &SolanaEntry{
+				Slot:        1,
+				Confirmed:   true,
+				Transaction: txn.Marshal(),
+			},
+		},
+	}
+
+	// Hash
+	txID, err := entry.GetTxID()
+	assert.NoError(t, err)
+	assert.Equal(t, txn.Signature(), txID)
+
+	// Accounts
+	txnAccounts, err := GetAccountsFromTransaction(txn)
+	assert.NoError(t, err)
+	assert.Len(t, txnAccounts, 2)
+	for _, account := range []ed25519.PrivateKey{sender, dest} {
+		a := strkey.MustEncode(strkey.VersionByteAccountID, account.Public().(ed25519.PublicKey))
+		_, exists := txnAccounts[a]
+		assert.True(t, exists)
+	}
+
+	accounts, err := entry.GetAccounts()
+	assert.NoError(t, err)
+	for _, account := range accounts {
+		_, exists := txnAccounts[account]
+		assert.True(t, exists)
+	}
+
+	// Ordering Key
+	k, err := entry.GetOrderingKey()
+	assert.NoError(t, err)
+
+	assert.EqualValues(t, KinVersion_KIN4, k[0])
+	assert.Equal(t, entry.Kind.(*Entry_Solana).Solana.Slot, binary.BigEndian.Uint64(k[1:]))
+	assert.Equal(t, txID[:8], k[9:])
+}
+
+func TestAccountFromRaw(t *testing.T) {
+	var seed [32]byte
+	_, err := rand.New(rand.NewSource(0)).Read(seed[:])
+	require.NoError(t, err)
+
+	rawKey := ed25519.NewKeyFromSeed(seed[:])
+	require.NoError(t, err)
+	kp, err := keypair.FromRawSeed(seed)
+	require.NoError(t, err)
+
+	actual := accountFromRaw(rawKey.Public().(ed25519.PublicKey))
+	assert.Equal(t, kp.Address(), actual)
 }

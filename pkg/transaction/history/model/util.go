@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/binary"
 	"strconv"
 
@@ -9,9 +10,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/network"
 	"github.com/stellar/go/xdr"
+
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/kinecosystem/go/strkey"
 )
 
-func (m *Entry) GetTxHash() ([]byte, error) {
+func (m *Entry) GetTxID() ([]byte, error) {
 	switch v := m.Kind.(type) {
 	case *Entry_Stellar:
 		var env xdr.TransactionEnvelope
@@ -21,6 +26,12 @@ func (m *Entry) GetTxHash() ([]byte, error) {
 
 		hash, err := network.HashTransaction(&env.Tx, v.Stellar.NetworkPassphrase)
 		return hash[:], err
+	case *Entry_Solana:
+		var txn solana.Transaction
+		if err := txn.Unmarshal(v.Solana.Transaction); err != nil {
+			return nil, errors.Wrap(err, "failed to parse solana transaction")
+		}
+		return txn.Signature(), nil
 	default:
 		return nil, errors.Errorf("unsupported entry version: %d", m.Version)
 	}
@@ -44,7 +55,21 @@ func (m *Entry) GetAccounts() ([]string, error) {
 			accountIDs = append(accountIDs, k)
 		}
 		return accountIDs, nil
+	case *Entry_Solana:
+		var txn solana.Transaction
+		if err := txn.Unmarshal(v.Solana.Transaction); err != nil {
+			return nil, errors.Wrap(err, "failed to parse solana transaction")
+		}
 
+		accounts, err := GetAccountsFromTransaction(txn)
+		if err != nil {
+			return nil, err
+		}
+		accountIDs := make([]string, 0, len(accounts))
+		for k := range accounts {
+			accountIDs = append(accountIDs, k)
+		}
+		return accountIDs, nil
 	default:
 		return nil, errors.Errorf("unsupported entry version: %d", m.Version)
 	}
@@ -56,6 +81,17 @@ func (m *Entry) GetOrderingKey() ([]byte, error) {
 		var b [9]byte
 		b[0] = byte(m.Version)
 		binary.BigEndian.PutUint64(b[1:], v.Stellar.PagingToken)
+		return b[:], nil
+	case *Entry_Solana:
+		h, err := m.GetTxID()
+		if err != nil {
+			return nil, err
+		}
+
+		var b [1 + 8 + 8]byte
+		b[0] = byte(m.Version)
+		binary.BigEndian.PutUint64(b[1:], v.Solana.Slot)
+		copy(b[9:], h[:8])
 		return b[:], nil
 	default:
 		return nil, errors.Errorf("unsupported entry version: %d", m.Version)
@@ -133,4 +169,26 @@ func GetAccountsFromEnvelope(env xdr.TransactionEnvelope) (map[string]struct{}, 
 	}
 
 	return idSet, nil
+}
+
+func GetAccountsFromTransaction(txn solana.Transaction) (map[string]struct{}, error) {
+	idSet := make(map[string]struct{})
+
+	for i := range txn.Message.Instructions {
+		transfer, err := token.DecompileTransferAccount(txn.Message, i)
+		if err == solana.ErrIncorrectProgram || err == solana.ErrIncorrectInstruction {
+			continue
+		} else if err != nil {
+			return nil, errors.Wrap(err, "failed to decompile transfer instruction")
+		}
+
+		idSet[accountFromRaw(transfer.Source)] = struct{}{}
+		idSet[accountFromRaw(transfer.Destination)] = struct{}{}
+	}
+
+	return idSet, nil
+}
+
+func accountFromRaw(raw ed25519.PublicKey) string {
+	return strkey.MustEncode(strkey.VersionByteAccountID, raw)
 }

@@ -1,6 +1,7 @@
 package dynamodb
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"time"
@@ -102,7 +103,7 @@ func (db *db) GetLatestForAccount(ctx context.Context, account string) (*model.E
 		TableName:              txByAccountTableStr,
 		KeyConditionExpression: getAccountLatestQueryStr,
 		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
-			":account": dynamodb.AttributeValue{S: aws.String(account)},
+			":account": {S: aws.String(account)},
 		},
 		Limit:            aws.Int64(1),
 		ScanIndexForward: aws.Bool(false),
@@ -124,7 +125,7 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 		return errors.New("missing entry")
 	}
 
-	txHash, err := entry.GetTxHash()
+	txHash, err := entry.GetTxID()
 	if err != nil {
 		return errors.Wrap(err, "failed to get tx hash")
 	}
@@ -196,7 +197,7 @@ func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *
 	//
 	// However, since we need to read back the existing item to verify that the two
 	// entries are identical in a separate request, there's the possibility that we
-	// won't observe the (first successful) write if the two writes occured close
+	// won't observe the (first successful) write if the two writes occurred close
 	// together in time.
 	//
 	// We use consistent reads to address this. However, consistent reads are more
@@ -238,9 +239,36 @@ func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *
 		return err
 	}
 
-	if proto.Equal(previous, entry) {
-		return nil
+	if previous.Version <= model.KinVersion_KIN3 {
+		if proto.Equal(previous, entry) {
+			return nil
+		}
+
+		return errors.New("double insert with different entries detected")
 	}
 
-	return errors.New("double insert with different entries detected")
+	prevSol := previous.GetSolana()
+	sol := entry.GetSolana()
+
+	// If a slot was already stored, it cannot be mutated.
+	if prevSol.Slot > 0 && prevSol.Slot != sol.Slot {
+		return errors.New("double insert with different entries detected")
+	}
+
+	// A confirmed block cannot be unconfirmed
+	if prevSol.Confirmed && !sol.Confirmed {
+		return errors.New("double insert with different entries detected")
+	}
+
+	if !bytes.Equal(prevSol.Transaction, sol.Transaction) {
+		return errors.New("double insert with different entries detected")
+	}
+
+	// In theory an error can occur after submission.
+	// Therefore, we only check equality if there's an error already set.
+	if len(prevSol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
+		return errors.New("double insert with different entries detected")
+	}
+
+	return nil
 }

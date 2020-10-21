@@ -53,7 +53,7 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 	rw.Lock()
 	defer rw.Unlock()
 
-	hash, err := e.GetTxHash()
+	hash, err := e.GetTxID()
 	if err != nil {
 		return err
 	}
@@ -64,8 +64,33 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 	}
 
 	if prev, ok := rw.txns[string(hash)]; ok {
-		if !proto.Equal(prev, e) {
-			return errors.New("double insert mismatch detected")
+		if prev.Version < model.KinVersion_KIN4 {
+			if !proto.Equal(prev, e) {
+				return errors.New("double insert mismatch detected")
+			}
+		} else {
+			prevSol := prev.GetSolana()
+			sol := e.GetSolana()
+
+			// If a slot was already stored, it cannot be mutated.
+			if prevSol.Slot > 0 && prevSol.Slot != sol.Slot {
+				return errors.New("double insert with different entries detected")
+			}
+
+			// A confirmed block cannot be unconfirmed
+			if prevSol.Confirmed && !sol.Confirmed {
+				return errors.New("double insert with different entries detected")
+			}
+
+			if !bytes.Equal(prevSol.Transaction, sol.Transaction) {
+				return errors.New("double insert with different entries detected")
+			}
+
+			// In theory an error can occur after submission.
+			// Therefore, we only check equality if there's an error already set.
+			if len(prevSol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
+				return errors.New("double insert with different entries detected")
+			}
 		}
 	} else {
 		rw.txns[string(hash)] = proto.Clone(e).(*model.Entry)
