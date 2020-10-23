@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
-	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 )
 
 func TestAccountNotifier_PaymentOperation(t *testing.T) {
@@ -38,7 +38,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 			},
 		},
 	})
-	xdrData := transaction.XDRData{
+	xdrData := stellar.XDRData{
 		Envelope: e,
 		Result:   r,
 		Meta:     m,
@@ -61,7 +61,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 			},
 		},
 	})
-	xdrData = transaction.XDRData{
+	xdrData = stellar.XDRData{
 		Envelope: e,
 		Result:   r,
 		Meta:     m,
@@ -96,7 +96,7 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 			},
 		},
 	})
-	xdrData := transaction.XDRData{
+	xdrData := stellar.XDRData{
 		Envelope: e,
 		Result:   r,
 		Meta:     m,
@@ -130,7 +130,7 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 			},
 		},
 	})
-	xdrData := transaction.XDRData{
+	xdrData := stellar.XDRData{
 		Envelope: e,
 		Result:   r,
 		Meta:     m,
@@ -141,7 +141,7 @@ func TestAccountNotifier_MergeOperation(t *testing.T) {
 	assertReceived(t, xdrData, s2)
 }
 
-func assertReceived(t *testing.T, data transaction.XDRData, s *eventStream) {
+func assertReceived(t *testing.T, data stellar.XDRData, s *eventStream) {
 	select {
 	case actualData, ok := <-s.streamCh:
 		assert.True(t, ok)

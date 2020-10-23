@@ -31,7 +31,7 @@ func GenerateSolanaEntry(t *testing.T, slot uint64, confirmed bool, sender ed255
 	}
 
 	for i := range receivers {
-		instructions = append(instructions, token.Transfer(sender.Public().(ed25519.PublicKey), receivers[i], receivers[i], 10))
+		instructions = append(instructions, token.Transfer(sender.Public().(ed25519.PublicKey), receivers[i], receivers[i], uint64(slot+uint64(i)+1)))
 	}
 
 	txn := solana.NewTransaction(

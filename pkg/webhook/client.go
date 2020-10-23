@@ -15,7 +15,6 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
-	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -56,7 +55,7 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 // SignTransaction submits a sign transaction request to an app webhook
-func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret string, req *signtransaction.RequestBody) (envelopeXDR *xdr.TransactionEnvelope, err error) {
+func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret string, req *signtransaction.RequestBody) (result *signtransaction.SuccessResponse, err error) {
 	signTxJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to marshal sign transaction request body")
@@ -108,12 +107,7 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to decode 200 response")
 		}
-		e, err := decodedResp.GetEnvelopeXDR()
-		if err != nil {
-			return nil, errors.Wrap(err, "received invalid response")
-		}
-
-		return e, nil
+		return decodedResp, nil
 	}
 
 	if resp.StatusCode == 400 {

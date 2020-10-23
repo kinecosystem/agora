@@ -43,8 +43,8 @@ func New(client dynamodbiface.ClientAPI) invoice.Store {
 
 // Put implements invoice.Store.Put.
 func (d *db) Put(ctx context.Context, txHash []byte, il *commonpb.InvoiceList) error {
-	if len(txHash) != 32 {
-		return errors.New("txHash not 32 bytes")
+	if len(txHash) != 32 && len(txHash) != 64 {
+		return errors.New("txHash not 32 or 64 bytes")
 	}
 
 	ilBytes, err := proto.Marshal(il)
@@ -73,8 +73,8 @@ func (d *db) Put(ctx context.Context, txHash []byte, il *commonpb.InvoiceList) e
 
 // Get implements invoice.Store.Get.
 func (d *db) Get(ctx context.Context, txHash []byte) (*commonpb.InvoiceList, error) {
-	if len(txHash) != 32 {
-		return nil, errors.New("txHash not 32 bytes")
+	if len(txHash) != 32 && len(txHash) != 64 {
+		return nil, errors.New("txHash not 32 or 64 bytes")
 	}
 
 	resp, err := d.db.GetItemRequest(&dynamodb.GetItemInput{

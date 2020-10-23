@@ -1,4 +1,4 @@
-package server
+package stellar
 
 import (
 	"bytes"
@@ -6,19 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"strconv"
-	"strings"
 
-	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/kin"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	kinnetwork "github.com/kinecosystem/go/network"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -28,28 +22,11 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
-	"github.com/kinecosystem/agora/pkg/webhook"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
-)
-
-const (
-	globalRateLimitKey    = "submit-transaction-rate-limit-global"
-	appRateLimitKeyFormat = "submit-transaction-rate-limit-app-%d"
-)
-
-var (
-	submitRLCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "submit_transaction_rate_limited_global",
-		Help:      "Number of globally rate limited create account requests",
-	})
-	submitRLAppCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "submit_transaction_rate_limited_app",
-		Help:      "Number of app rate limited create account requests",
-	}, []string{"app_index"})
 )
 
 type server struct {
@@ -57,30 +34,16 @@ type server struct {
 	network     build.Network
 	kin2Network build.Network
 
+	authorizer transaction.Authorizer
+
 	appConfigStore app.ConfigStore
 	appMapper      app.Mapper
 	invoiceStore   invoice.Store
 	loader         *historyLoader
 	kin2Loader     *historyLoader
 
-	client        horizon.ClientInterface
-	kin2Client    horizon.ClientInterface
-	webhookClient *webhook.Client
-
-	limiter *redis_rate.Limiter
-	config  *Config
-}
-
-type Config struct {
-	// SubmitTxGlobalLimit is the number of SubmitTransaction requests allowed globally per second.
-	//
-	// A value <= 0 indicates that no rate limit is to be applied.
-	SubmitTxGlobalLimit int
-
-	// SubmitTxAppLimit is the number of SubmitTransaction requests allowed per app per second.
-	//
-	// A value <= 0 indicates that no rate limit is to be applied.
-	SubmitTxAppLimit int
+	client     horizon.ClientInterface
+	kin2Client horizon.ClientInterface
 }
 
 // New returns a new transactionpb.TransactionServer.
@@ -90,11 +53,9 @@ func New(
 	invoiceStore invoice.Store,
 	reader history.Reader,
 	committer ingestion.Committer,
+	authorizer transaction.Authorizer,
 	client horizon.ClientInterface,
 	kin2Client horizon.ClientInterface,
-	webhookClient *webhook.Client,
-	limiter *redis_rate.Limiter,
-	config *Config,
 ) (transactionpb.TransactionServer, error) {
 	network, err := kin.GetNetwork()
 	if err != nil {
@@ -106,14 +67,12 @@ func New(
 		return nil, errors.Wrap(err, "failed to get kin 2 network")
 	}
 
-	if err = registerMetrics(); err != nil {
-		return nil, err
-	}
-
 	return &server{
-		log:         logrus.StandardLogger().WithField("type", "transaction/server"),
+		log:         logrus.StandardLogger().WithField("type", "transaction/stellar/server"),
 		network:     network,
 		kin2Network: kin2Network,
+
+		authorizer: authorizer,
 
 		appConfigStore: appConfigStore,
 		appMapper:      appMapper,
@@ -121,12 +80,8 @@ func New(
 		loader:         newLoader(client, reader, committer),
 		kin2Loader:     newLoader(kin2Client, reader, committer),
 
-		client:        client,
-		kin2Client:    kin2Client,
-		webhookClient: webhookClient,
-
-		limiter: limiter,
-		config:  config,
+		client:     client,
+		kin2Client: kin2Client,
 	}, nil
 }
 
@@ -150,24 +105,21 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		network = s.network
 	}
 
-	if s.config.SubmitTxGlobalLimit > 0 {
-		result, err := s.limiter.Allow(globalRateLimitKey, redis_rate.PerSecond(s.config.SubmitTxGlobalLimit))
-		if err != nil {
-			log.WithError(err).Warn("failed to check global rate limit")
-		} else if !result.Allowed {
-			submitRLCounter.Inc()
-			return nil, status.Error(codes.Unavailable, "rate limited")
-		}
-	}
-
 	e := &xdr.TransactionEnvelope{}
 	if _, err := xdr.Unmarshal(bytes.NewBuffer(req.EnvelopeXdr), e); err != nil {
 		log.WithError(err).Debug("invalid xdr, dropping")
 		return nil, status.Error(codes.InvalidArgument, "invalid xdr")
 	}
-
 	if len(e.Signatures) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "missing transaction signature")
+	}
+
+	//
+	// Construct the transaction.Transaction
+	//
+	tx := transaction.Transaction{
+		InvoiceList: req.InvoiceList,
+		OpCount:     len(e.Tx.Operations),
 	}
 
 	rawHash, err := kinnetwork.HashTransaction(&e.Tx, network.Passphrase)
@@ -175,160 +127,76 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		log.WithError(err).Warn("failed to compute hash of submitted transaction")
 		return nil, status.Error(codes.Internal, "failed to compute tx hash")
 	}
-	txHash := commonpb.TransactionHash{
-		Value: rawHash[:],
-	}
 
-	// The only way a transaction can be an earn is if it's using the binary memo
-	// format, with a transaction type Earn. Otherwise, all transactions are considered
-	// "something else".
-	//
-	// Note: we can't differentiate earns from spends using text memos.
-	var isEarn bool
-
-	var appIndex uint16
-	var memo kin.Memo
+	tx.ID = rawHash[:]
 	if e.Tx.Memo.Hash != nil && kin.IsValidMemoStrict(kin.Memo(*e.Tx.Memo.Hash)) {
-		memo = kin.Memo(*e.Tx.Memo.Hash)
-		appIndex = memo.AppIndex()
-		isEarn = memo.TransactionType() == kin.TransactionTypeEarn
-
-		if req.InvoiceList != nil {
-			if len(req.InvoiceList.Invoices) != len(e.Tx.Operations) {
-				return nil, status.Error(codes.InvalidArgument, "invoice list size does not match op count")
-			}
-
-			expectedFK, err := invoice.GetSHA224Hash(req.InvoiceList)
-			if err != nil {
-				log.WithError(err).Warn("failed to get invoice list hash")
-				return nil, status.Error(codes.Internal, "failed to validate invoice list hash")
-			}
-
-			fk := memo.ForeignKey()
-			if !(bytes.Equal(fk[:28], expectedFK)) || fk[28] != byte(0) {
-				return nil, status.Error(codes.InvalidArgument, "invalid memo: fk did not match invoice list hash")
-			}
-		}
-	} else if req.InvoiceList != nil {
-		return nil, status.Error(codes.InvalidArgument, "transaction must contain valid kin binary memo to use invoices")
+		m := kin.Memo(*e.Tx.Memo.Hash)
+		tx.Memo.Memo = &m
 	} else if e.Tx.Memo.Text != nil {
-		if appID, ok := appIDFromTextMemo(*e.Tx.Memo.Text); ok {
-			appIndex, err = s.appMapper.GetAppIndex(ctx, appID)
-			if err != nil && err != app.ErrMappingNotFound {
-				log.WithError(err).Warn("failed to get app id mapping")
-				return nil, status.Error(codes.Internal, "failed to get app id mapping")
-			}
-		}
+		tx.Memo.Text = e.Tx.Memo.Text
 	}
 
-	if appIndex > 0 {
-		if s.config.SubmitTxAppLimit > 0 {
-			result, err := s.limiter.Allow(fmt.Sprintf(appRateLimitKeyFormat, appIndex), redis_rate.PerSecond(s.config.SubmitTxAppLimit))
-			if err != nil {
-				log.WithError(err).Warn("failed to check per app rate limit")
-			} else if !result.Allowed {
-				submitRLAppCounter.WithLabelValues(strconv.Itoa(int(appIndex)))
-				return nil, status.Error(codes.Unavailable, "rate limited")
-			}
-		}
-
-		config, err := s.appConfigStore.Get(ctx, appIndex)
-		if err == app.ErrNotFound {
-			return nil, status.Error(codes.InvalidArgument, "app index not found")
-		}
-		if err != nil {
-			log.WithError(err).Warn("failed to get app config")
-			return nil, status.Error(codes.Internal, "failed to get app config")
-		}
-
-		log = log.WithField("appIndex", appIndex)
-
-		reqBody, err := signtransaction.CreateRequestBody(kinVersion, req)
-		if err != nil {
-			log.WithError(err).Warn("failed to convert request for signing")
-			return nil, status.Error(codes.Internal, "failed to submit transaction")
-		}
-
-		if !isEarn && config.SignTransactionURL != nil {
-			log = log.WithField("url", *config.SignTransactionURL)
-			e, err = s.webhookClient.SignTransaction(ctx, *config.SignTransactionURL, config.WebhookSecret, reqBody)
-			if err != nil {
-				if signTxErr, ok := err.(*webhook.SignTransactionError); ok {
-					log = log.WithField("status", signTxErr.StatusCode)
-					switch signTxErr.StatusCode {
-					case 403:
-						if len(signTxErr.OperationErrors) == 0 || len(req.InvoiceList.GetInvoices()) == 0 {
-							return &transactionpb.SubmitTransactionResponse{
-								Hash:   &txHash,
-								Result: transactionpb.SubmitTransactionResponse_REJECTED,
-							}, nil
-						}
-
-						invoiceErrs := make([]*commonpb.InvoiceError, len(signTxErr.OperationErrors))
-						for i, opErr := range signTxErr.OperationErrors {
-							var reason commonpb.InvoiceError_Reason
-							switch opErr.Reason {
-							case signtransaction.AlreadyPaid:
-								reason = commonpb.InvoiceError_ALREADY_PAID
-							case signtransaction.WrongDestination:
-								reason = commonpb.InvoiceError_WRONG_DESTINATION
-							case signtransaction.SKUNotFound:
-								reason = commonpb.InvoiceError_SKU_NOT_FOUND
-							default:
-								reason = commonpb.InvoiceError_UNKNOWN
-							}
-
-							if int(opErr.OperationIndex) >= len(req.InvoiceList.GetInvoices()) {
-								log.WithFields(logrus.Fields{
-									"index":  opErr.OperationIndex,
-									"reason": reason,
-								}).Info("out of range index error, ignoring")
-								continue
-							}
-
-							invoiceErrs[i] = &commonpb.InvoiceError{
-								OpIndex: opErr.OperationIndex,
-								Invoice: req.InvoiceList.Invoices[opErr.OperationIndex],
-								Reason:  reason,
-							}
-						}
-						return &transactionpb.SubmitTransactionResponse{
-							Hash:          &txHash,
-							Result:        transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
-							InvoiceErrors: invoiceErrs,
-						}, nil
-					default:
-						log.WithError(signTxErr).Warn("Received unexpected error from app server")
-						return nil, status.Error(codes.Internal, "failed to verify transaction with webhook")
-					}
-				}
-
-				log.WithError(err).Warn("failed to call sign transaction webhook")
-				return nil, status.Error(codes.Internal, "failed to verify transaction with webhook")
-			}
-		}
-
-		if req.InvoiceList != nil {
-			txHash, err := kinnetwork.HashTransaction(&e.Tx, network.Passphrase)
-			if err != nil {
-				return nil, status.Error(codes.Internal, "failed to hash transaction")
-			}
-
-			err = s.invoiceStore.Put(ctx, txHash[:], req.InvoiceList)
-			if err != nil && err != invoice.ErrExists {
-				log.WithError(err).Warn("failed to store invoice")
-				return nil, status.Error(codes.Internal, "failed to store invoice")
-			}
-		}
-	}
-	envelopeBytes, err := e.MarshalBinary()
+	tx.SignRequest, err = signtransaction.CreateStellarRequest(kinVersion, req)
 	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
+		log.WithError(err).Warn("failed to convert request for signing")
+		return nil, status.Error(codes.Internal, "failed to submit transaction")
 	}
-	encodedXDR := base64.StdEncoding.EncodeToString(envelopeBytes)
 
-	// todo: timeout on txn send?
-	resp, err := client.SubmitTransaction(encodedXDR)
+	//
+	// Authorize and run all preflight checks
+	//
+	result, err := s.authorizer.Authorize(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	switch result.Result {
+	case transaction.AuthorizationResultOK:
+	case transaction.AuthorizationResultInvoiceError:
+		return &transactionpb.SubmitTransactionResponse{
+			Result: transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
+			Hash: &commonpb.TransactionHash{
+				Value: tx.ID,
+			},
+			InvoiceErrors: result.InvoiceErrors,
+		}, nil
+	case transaction.AuthorizationResultRejected:
+		return &transactionpb.SubmitTransactionResponse{
+			Result: transactionpb.SubmitTransactionResponse_REJECTED,
+			Hash: &commonpb.TransactionHash{
+				Value: tx.ID,
+			},
+		}, nil
+	default:
+		log.WithField("result", result.Result).Warn("unexpected authorization result")
+		return nil, status.Error(codes.Internal, "unhandled authorization error")
+	}
+
+	var envelopeBytes []byte
+	if result.SignResponse != nil {
+		envelopeBytes = result.SignResponse.EnvelopeXDR
+
+		// Ensure the returned XDR is valid.
+		if err := e.UnmarshalBinary(result.SignResponse.EnvelopeXDR); err != nil {
+			return nil, status.Error(codes.Internal, "webhook returned an invalid response")
+		}
+	} else {
+		envelopeBytes, err = e.MarshalBinary()
+		if err != nil {
+			return nil, status.Error(codes.Internal, "failed to marshal transaction envelope")
+		}
+	}
+
+	if tx.InvoiceList != nil {
+		if err := s.invoiceStore.Put(ctx, tx.ID, tx.InvoiceList); err != nil && err != invoice.ErrExists {
+			return nil, status.Errorf(codes.Internal, "failed to store invoice list")
+		}
+	}
+
+	//
+	// Perform actual submission
+	//
+	resp, err := client.SubmitTransaction(base64.StdEncoding.EncodeToString(envelopeBytes))
 	if err != nil {
 		if hErr, ok := err.(*horizon.Error); ok {
 			log.WithField("problem", hErr.Problem).Warn("Failed to submit txn")
@@ -346,7 +214,9 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			}
 
 			return &transactionpb.SubmitTransactionResponse{
-				Hash:      &txHash,
+				Hash: &commonpb.TransactionHash{
+					Value: tx.ID,
+				},
 				Result:    transactionpb.SubmitTransactionResponse_FAILED,
 				ResultXdr: resultXDR,
 			}, nil
@@ -362,7 +232,9 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	return &transactionpb.SubmitTransactionResponse{
-		Hash:      &txHash,
+		Hash: &commonpb.TransactionHash{
+			Value: tx.ID,
+		},
 		Ledger:    int64(resp.Ledger),
 		ResultXdr: resultXDR,
 	}, nil
@@ -520,47 +392,9 @@ func (s *server) appIndexFromTxData(ctx context.Context, tx txData) (appIndex ui
 		return tx.memo.AppIndex(), nil
 	}
 
-	if appID, ok := appIDFromTextMemo(tx.textMemo); ok {
+	if appID, ok := transaction.AppIDFromTextMemo(tx.textMemo); ok {
 		return s.appMapper.GetAppIndex(ctx, appID)
 	}
 
 	return 0, nil
-}
-
-func appIDFromTextMemo(memo string) (appID string, ok bool) {
-	parts := strings.Split(memo, "-")
-	if len(parts) < 2 {
-		return "", false
-	}
-
-	// Only one supported version of text memos exist
-	if parts[0] != "1" {
-		return "", false
-	}
-
-	// App IDs are expected to be 3 or 4 characters
-	if !app.IsValidAppID(parts[1]) {
-		return "", false
-	}
-
-	return parts[1], true
-}
-
-func registerMetrics() (err error) {
-	if err := prometheus.Register(submitRLCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			submitRLCounter = e.ExistingCollector.(prometheus.Counter)
-			return nil
-		}
-		return errors.Wrap(err, "failed to register submit tx global rate limit counter")
-	}
-	if err := prometheus.Register(submitRLAppCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); !ok {
-			submitRLAppCounter = e.ExistingCollector.(*prometheus.CounterVec)
-			return nil
-		}
-		return errors.Wrap(err, "failed to register submit tx app rate limit counter")
-	}
-
-	return nil
 }

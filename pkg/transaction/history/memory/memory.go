@@ -199,7 +199,7 @@ func (rw *RW) GetAccountTransactions(_ context.Context, account string, opts *hi
 	return results, nil
 }
 
-// Reeset resets the recored writes.
+// Reset resets the recorded writes.
 func (rw *RW) Reset() {
 	rw.Lock()
 	defer rw.Unlock()

@@ -1,11 +1,13 @@
-package server
+package stellar
 
 import (
 	"testing"
 
-	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
-	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/stretchr/testify/assert"
+
+	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+
+	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
 func TestStartFromCursor(t *testing.T) {

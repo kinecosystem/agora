@@ -4,9 +4,8 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 	"github.com/sirupsen/logrus"
-
-	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 type eventStream struct {
@@ -15,17 +14,17 @@ type eventStream struct {
 	log *logrus.Entry
 
 	closed   bool
-	streamCh chan transaction.XDRData
+	streamCh chan stellar.XDRData
 }
 
 func newEventStream(bufferSize int) *eventStream {
 	return &eventStream{
 		log:      logrus.StandardLogger().WithField("type", "account/server/stream"),
-		streamCh: make(chan transaction.XDRData, bufferSize),
+		streamCh: make(chan stellar.XDRData, bufferSize),
 	}
 }
 
-func (s *eventStream) notify(xdrData transaction.XDRData) error {
+func (s *eventStream) notify(xdrData stellar.XDRData) error {
 	s.Lock()
 
 	if s.closed {

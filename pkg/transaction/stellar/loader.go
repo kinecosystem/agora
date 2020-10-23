@@ -1,4 +1,4 @@
-package server
+package stellar
 
 import (
 	"bytes"
@@ -41,7 +41,7 @@ type historyLoader struct {
 
 func newLoader(client horizon.ClientInterface, reader history.Reader, committer ingestion.Committer) *historyLoader {
 	return &historyLoader{
-		log:    logrus.StandardLogger().WithField("type", "transaction/server/historyLoader"),
+		log:    logrus.StandardLogger().WithField("type", "transaction/stellar/historyLoader"),
 		client: client,
 
 		reader:    reader,
@@ -264,7 +264,7 @@ func startFromCursor(c *transactionpb.Cursor) ([]byte, error) {
 		return c.Value, nil
 	}
 
-	// todo(kin2,kin4): need context as to which blockchain we loaded from.
+	// todo(kin2): need context as to which blockchain we loaded from.
 	orderKey, err := model.OrderingKeyFromCursor(model.KinVersion_KIN3, string(c.Value))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get ordering key from transactionpb.Cursor")

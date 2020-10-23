@@ -61,7 +61,7 @@ func TestRequest(t *testing.T) {
 		},
 	}
 
-	actual, err := CreateRequestBody(version.KinVersion3, req)
+	actual, err := CreateStellarRequest(version.KinVersion3, req)
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, actual.KinVersion)
 	assert.Equal(t, envelopeXDR, actual.EnvelopeXDR)

@@ -20,7 +20,10 @@ require (
 	github.com/sirupsen/logrus v1.4.2
 	github.com/stellar/go v0.0.0-20191211203732-552e507ffa37
 	github.com/stretchr/testify v1.5.1
+	golang.org/x/crypto v0.0.0-20191112222119-e1110fd1c708
 	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e // indirect
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 	google.golang.org/grpc v1.28.1
 )
 

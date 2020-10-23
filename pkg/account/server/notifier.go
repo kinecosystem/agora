@@ -6,8 +6,8 @@ import (
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/sirupsen/logrus"
 
-	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
+	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 )
 
 type AccountNotifier struct {
@@ -28,7 +28,7 @@ func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
 }
 
 // OnTransaction implements transaction.Notifier.OnTransaction
-func (a *AccountNotifier) OnTransaction(xdrData transaction.XDRData) {
+func (a *AccountNotifier) OnTransaction(xdrData stellar.XDRData) {
 	log := a.log.WithField("method", "OnTransaction")
 
 	accountIDs, err := model.GetAccountsFromEnvelope(xdrData.Envelope)

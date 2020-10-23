@@ -1,4 +1,4 @@
-package server
+package stellar
 
 import (
 	"context"
@@ -16,15 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis/v7"
-	"github.com/go-redis/redis_rate/v8"
 	"github.com/golang/protobuf/proto"
 	agoraenv "github.com/kinecosystem/agora-common/env"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
-	redistest "github.com/kinecosystem/agora-common/redis/test"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -32,11 +28,10 @@ import (
 	horizonprotocols "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/kinecosystem/go/xdr"
-	"github.com/ory/dockertest"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	xrate "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,6 +44,7 @@ import (
 	appmapper "github.com/kinecosystem/agora/pkg/app/memory/mapper"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -57,13 +53,12 @@ import (
 	historymemory "github.com/kinecosystem/agora/pkg/transaction/history/memory"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	historytestutil "github.com/kinecosystem/agora/pkg/transaction/history/model/testutil"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 var (
-	redisConnString string
-
 	il = &commonpb.InvoiceList{
 		Invoices: []*commonpb.Invoice{
 			{
@@ -90,27 +85,7 @@ type testEnv struct {
 	invoiceStore   invoice.Store
 	rw             history.ReaderWriter
 	committer      ingestion.Committer
-}
-
-func TestMain(m *testing.M) {
-	log := logrus.StandardLogger()
-
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.WithError(err).Error("Error creating docker pool")
-		os.Exit(1)
-	}
-
-	var cleanUpFunc func()
-	redisConnString, cleanUpFunc, err = redistest.StartRedis(context.Background(), pool)
-	if err != nil {
-		log.WithError(err).Error("Error starting redis connection")
-		os.Exit(1)
-	}
-
-	code := m.Run()
-	cleanUpFunc()
-	os.Exit(code)
+	authorizer     transaction.Authorizer
 }
 
 func setup(t *testing.T, submitTxGlobalRL, submitTxAppRL int) (env testEnv, cleanup func()) {
@@ -133,18 +108,23 @@ func setup(t *testing.T, submitTxGlobalRL, submitTxAppRL int) (env testEnv, clea
 	env.rw = historymemory.New()
 	env.committer = ingestionmemory.New()
 
-	ring := redis.NewRing(&redis.RingOptions{
-		Addrs: map[string]string{
-			"server1": redisConnString,
-		},
-	})
-	limiter := redis_rate.NewLimiter(ring)
-	// reset global & app rate limits (the key format is hardcoded inside redis_rate/rate.go)
-	ring.Del(
-		fmt.Sprintf("rate:%s", globalRateLimitKey),
-		fmt.Sprintf("rate:%s", fmt.Sprintf(appRateLimitKeyFormat, 0)),
-		fmt.Sprintf("rate:%s", fmt.Sprintf(appRateLimitKeyFormat, 1)),
+	env.authorizer, err = transaction.NewAuthorizer(
+		env.appMapper,
+		env.appConfigStore,
+		webhook.NewClient(http.DefaultClient),
+		transaction.NewLimiter(
+			func(limit int) rate.Limiter {
+				if limit >= 0 {
+					return rate.NewLocalRateLimiter(xrate.Limit(limit))
+				}
+
+				return &rate.NoLimiter{}
+			},
+			submitTxGlobalRL,
+			submitTxAppRL,
+		),
 	)
+	require.NoError(t, err)
 
 	s, err := New(
 		env.appConfigStore,
@@ -152,14 +132,9 @@ func setup(t *testing.T, submitTxGlobalRL, submitTxAppRL int) (env testEnv, clea
 		env.invoiceStore,
 		env.rw,
 		env.committer,
+		env.authorizer,
 		env.hClient,
 		env.kin2HClient,
-		webhook.NewClient(http.DefaultClient),
-		limiter,
-		&Config{
-			SubmitTxGlobalLimit: submitTxGlobalRL,
-			SubmitTxAppLimit:    submitTxAppRL,
-		},
 	)
 	require.NoError(t, err)
 	serv.RegisterService(func(server *grpc.Server) {
@@ -774,7 +749,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 		EnvelopeXdr: envelopeBytes,
 	})
 
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 
 	// wait until the rate limit resets
 	time.Sleep(1 * time.Second)
@@ -799,7 +774,7 @@ func TestSubmitTransaction_GlobalRateLimited(t *testing.T) {
 		EnvelopeXdr: envelopeBytes,
 	})
 
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 	env.hClient.AssertExpectations(t)
 }
 
@@ -858,7 +833,7 @@ func TestSubmitTransaction_AppRateLimited(t *testing.T) {
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
 	})
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 
 	// wait until the rate limit resets
 	time.Sleep(1 * time.Second)
@@ -873,7 +848,7 @@ func TestSubmitTransaction_AppRateLimited(t *testing.T) {
 	_, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		EnvelopeXdr: envelopeBytes,
 	})
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 
 	env.hClient.AssertExpectations(t)
 }

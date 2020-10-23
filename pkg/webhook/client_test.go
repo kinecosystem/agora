@@ -106,9 +106,11 @@ func TestSendSignTransactionRequest_200Valid(t *testing.T) {
 	signURL, err := url.Parse(testServer.URL)
 	require.NoError(t, err)
 
-	actualEnvelope, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
+	resp, err := env.client.SignTransaction(ctxWithHeaders, *signURL, env.secretKey, basicReq)
 	require.NoError(t, err)
-	assert.EqualValues(t, emptyEnvelope, *actualEnvelope)
+	var actualEnvelope xdr.TransactionEnvelope
+	require.NoError(t, actualEnvelope.UnmarshalBinary(resp.EnvelopeXDR))
+	assert.EqualValues(t, emptyEnvelope, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
@@ -247,9 +249,11 @@ func TestSendSignTransactionRequest_NoAuthHeaders(t *testing.T) {
 		headers.Headers{},
 	)
 
-	actualEnvelope, err := env.client.SignTransaction(ctxWithEmptyHeaders, *signURL, env.secretKey, basicReq)
+	resp, err := env.client.SignTransaction(ctxWithEmptyHeaders, *signURL, env.secretKey, basicReq)
 	require.NoError(t, err)
-	assert.Equal(t, emptyEnvelope, *actualEnvelope)
+	var actualEnvelope xdr.TransactionEnvelope
+	require.NoError(t, actualEnvelope.UnmarshalBinary(resp.EnvelopeXDR))
+	assert.Equal(t, emptyEnvelope, actualEnvelope)
 }
 
 func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {

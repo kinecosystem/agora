@@ -1,4 +1,4 @@
-package transaction
+package stellar
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ type Notifier interface {
 // StreamTransactions streams transactions from horizon, notifying the provided notifiers with received transactions.
 func StreamTransactions(ctx context.Context, hClient horizonclient.ClientInterface, notifiers ...Notifier) {
 	log := logrus.StandardLogger().WithFields(logrus.Fields{
-		"type":   "transaction/stream",
+		"type":   "transaction/stellar/stream",
 		"method": "StreamTransactions",
 	})
 	req := horizonclient.TransactionRequest{

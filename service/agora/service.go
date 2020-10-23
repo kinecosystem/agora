@@ -23,6 +23,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/mr-tron/base58"
@@ -32,7 +33,8 @@ import (
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	airdroppb "github.com/kinecosystem/agora-api/genproto/airdrop/v4"
-	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+	transactionpbv3 "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
 	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
@@ -50,7 +52,8 @@ import (
 	solanaingestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	stellaringestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	transactionserver "github.com/kinecosystem/agora/pkg/transaction/server"
+	transactionsolana "github.com/kinecosystem/agora/pkg/transaction/solana"
+	transactionstellar "github.com/kinecosystem/agora/pkg/transaction/stellar"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/events"
 
@@ -84,7 +87,8 @@ const (
 
 type app struct {
 	accountServer accountpb.AccountServer
-	txnServer     transactionpb.TransactionServer
+	txnStellar    transactionpbv3.TransactionServer
+	txnSolana     transactionpbv4.TransactionServer
 	airdropServer airdroppb.AirdropServer
 
 	streamCancelFunc context.CancelFunc
@@ -328,31 +332,51 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 
 	historyRW := historyrw.New(dynamoClient)
+	txLimiter := transaction.NewLimiter(
+		func(limit int) rate.Limiter {
+			return rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(limit))
+		},
+		submitTxGlobalRL,
+		submitTxAppRL,
+	)
+	authorizer, err := transaction.NewAuthorizer(
+		appMapper,
+		appConfigStore,
+		webhookClient,
+		txLimiter,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize authorizer")
+	}
 
-	a.txnServer, err = transactionserver.New(
+	a.txnStellar, err = transactionstellar.New(
 		appConfigStore,
 		appMapper,
 		invoiceStore,
 		historyRW,
 		committer,
+		authorizer,
 		client,
 		kin2Client,
-		webhookClient,
-		limiter,
-		&transactionserver.Config{
-			SubmitTxGlobalLimit: submitTxGlobalRL,
-			SubmitTxAppLimit:    submitTxAppRL,
-		},
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to init transaction server")
 	}
+	a.txnSolana = transactionsolana.New(
+		solanaClient,
+		invoiceStore,
+		historyRW,
+		committer,
+		authorizer,
+		kinToken,
+		subsidizer,
+	)
 
 	//
 	// Kin3 Ingestion and Streams
 	//
 	go func() {
-		transaction.StreamTransactions(ctx, clientV2, accountNotifier)
+		transactionstellar.StreamTransactions(ctx, clientV2, accountNotifier)
 	}()
 	go func() {
 		err := ingestion.Run(ctx, historyLock, committer, historyRW, historyIngestor)
@@ -374,7 +398,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	// Kin2 Ingestion and Streams
 	//
 	go func() {
-		transaction.StreamTransactions(ctx, kin2ClientV2, kin2AccountNotifier)
+		transactionstellar.StreamTransactions(ctx, kin2ClientV2, kin2AccountNotifier)
 	}()
 	go func() {
 		err := ingestion.Run(ctx, kin2HistoryLock, committer, historyRW, kin2HistoryIngestor)
@@ -396,6 +420,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 	// Kin4 Ingestion and Streams
 	//
 	go func() {
+		transactionsolana.StreamTransactions(ctx, solanaClient)
+	}()
+	go func() {
 		err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
 		if err != nil && err != context.Canceled {
 			log.WithError(err).Warn("kin 4 history ingestion loop terminated")
@@ -410,7 +437,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 // RegisterWithGRPC implements agorapp.App.RegisterWithGRPC.
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
 	accountpb.RegisterAccountServer(server, a.accountServer)
-	transactionpb.RegisterTransactionServer(server, a.txnServer)
+	transactionpbv3.RegisterTransactionServer(server, a.txnStellar)
+	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 
 	if a.airdropServer != nil {
 		airdroppb.RegisterAirdropServer(server, a.airdropServer)

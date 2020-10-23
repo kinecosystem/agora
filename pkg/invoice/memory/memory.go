@@ -32,8 +32,8 @@ func (m *memory) reset() {
 
 // Add implements invoice.Store.Add.
 func (m *memory) Put(_ context.Context, txHash []byte, il *commonpb.InvoiceList) error {
-	if len(txHash) != 32 {
-		return errors.New("txHash not 32 bytes")
+	if len(txHash) != 32 && len(txHash) != 64 {
+		return errors.New("txHash not 32 or 64 bytes")
 	}
 
 	k := string(txHash)
@@ -51,8 +51,8 @@ func (m *memory) Put(_ context.Context, txHash []byte, il *commonpb.InvoiceList)
 
 // Get implements invoice.Store.Get.
 func (m *memory) Get(_ context.Context, txHash []byte) (*commonpb.InvoiceList, error) {
-	if len(txHash) != 32 {
-		return nil, errors.New("txHash not 32 bytes")
+	if len(txHash) != 32 && len(txHash) != 64 {
+		return nil, errors.New("txHash not 32 or 64 bytes")
 	}
 
 	m.Lock()

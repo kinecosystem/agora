@@ -13,6 +13,7 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	redistest "github.com/kinecosystem/agora-common/redis/test"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
+	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -33,7 +34,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/channel"
 	channelpool "github.com/kinecosystem/agora/pkg/channel/memory"
 	"github.com/kinecosystem/agora/pkg/testutil"
-	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 const (
@@ -490,7 +490,7 @@ func TestGetEvents_HappyPath(t *testing.T) {
 	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
-	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+	env.accountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -542,7 +542,7 @@ func TestGetEvents_Batched(t *testing.T) {
 
 	// Two events gets sent for each transaction
 	for i := 0; i < 64; i++ {
-		env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+		env.accountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 	}
 
 	resp, err = stream.Recv()
@@ -561,7 +561,7 @@ func TestGetEvents_Batched(t *testing.T) {
 		assert.Equal(t, int64(2), resp.Events[i+1].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 	}
 
-	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+	env.accountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -607,7 +607,7 @@ func TestGetEvents_LoadAccount(t *testing.T) {
 	// Successfully obtain account info; both the transaction and account events should get sent
 	env.hClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateHorizonAccount(kp1.Address(), "9", "2"), nil).Once()
 
-	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+	env.accountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -654,7 +654,7 @@ func TestGetEvents_LoadAccountFailure(t *testing.T) {
 	horizonErr := &horizon.Error{Problem: horizon.Problem{Status: 500}}
 	env.hClient.On("LoadAccount", kp1.Address()).Return(hProtocol.Account{}, horizonErr).Once()
 
-	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+	env.accountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -700,7 +700,7 @@ func TestGetEvents_AccountRemoved(t *testing.T) {
 	assert.Equal(t, int64(10*1e5), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetBalance())
 	assert.Equal(t, int64(1), resp.Events[0].GetAccountUpdateEvent().GetAccountInfo().GetSequenceNumber())
 
-	env.accountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+	env.accountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
@@ -801,7 +801,7 @@ func TestGetEvents_Kin2(t *testing.T) {
 	// Successfully obtain account info; both the transaction and account events should get sent
 	env.kin2HClient.On("LoadAccount", kp1.Address()).Return(*testutil.GenerateKin2HorizonAccount(kp1.Address(), "9", "2"), nil).Once()
 
-	env.kin2AccountNotifier.OnTransaction(transaction.XDRData{Envelope: e, Result: r, Meta: m})
+	env.kin2AccountNotifier.OnTransaction(stellar.XDRData{Envelope: e, Result: r, Meta: m})
 
 	resp, err = stream.Recv()
 	require.NoError(t, err)
