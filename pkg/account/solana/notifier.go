@@ -1,13 +1,12 @@
-package server
+package solana
 
 import (
 	"sync"
 
-	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/kinecosystem/agora-common/solana"
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 )
 
 type AccountNotifier struct {
@@ -15,25 +14,22 @@ type AccountNotifier struct {
 
 	streamsMu sync.Mutex
 	streams   map[string][]*eventStream
-
-	hClient horizon.ClientInterface
 }
 
-func NewAccountNotifier(hClient horizon.ClientInterface) *AccountNotifier {
+func NewAccountNotifier() *AccountNotifier {
 	return &AccountNotifier{
-		log:     logrus.StandardLogger().WithField("type", "account/server/notifier"),
+		log:     logrus.StandardLogger().WithField("type", "account/solana/notifier"),
 		streams: make(map[string][]*eventStream),
-		hClient: hClient,
 	}
 }
 
 // OnTransaction implements transaction.Notifier.OnTransaction
-func (a *AccountNotifier) OnTransaction(xdrData stellar.XDRData) {
+func (a *AccountNotifier) OnTransaction(txn solana.BlockTransaction) {
 	log := a.log.WithField("method", "OnTransaction")
 
-	accountIDs, err := model.GetAccountsFromEnvelope(xdrData.Envelope)
+	accountIDs, err := model.GetAccountsFromTransaction(txn.Transaction)
 	if err != nil {
-		log.WithError(err).Warn("Failed to get accounts from envelope, dropping notification")
+		log.WithError(err).Warn("failed to get accounts from transaction; dropping notification")
 		return
 	}
 
@@ -41,19 +37,19 @@ func (a *AccountNotifier) OnTransaction(xdrData stellar.XDRData) {
 		a.streamsMu.Lock()
 		streams := a.streams[accountID]
 
-		if len(streams) == 0 {
+		if len(a.streams) == 0 {
 			a.streamsMu.Unlock()
 			continue
 		}
 
 		for _, s := range streams {
 			if s != nil {
-				err := s.notify(xdrData)
-				if err != nil {
+				if err := s.notify(txn); err != nil {
 					log.WithError(err).Warn("failed to notify stream")
 				}
 			}
 		}
+
 		a.streamsMu.Unlock()
 	}
 }

@@ -66,3 +66,14 @@ func MapTransactionError(txError solana.TransactionError) (*commonpb.Transaction
 
 	return result, nil
 }
+
+func IsAccountAlreadyExistsError(err *solana.TransactionError) bool {
+	if err.InstructionError() == nil {
+		return false
+	}
+
+	ie := err.InstructionError()
+
+	// todo: perhaps we want to formalize the error codes in the system library?
+	return ie.Index == 0 && ie.CustomError() != nil && *ie.CustomError() == 0
+}

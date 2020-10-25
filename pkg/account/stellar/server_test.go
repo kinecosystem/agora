@@ -2,28 +2,21 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis/v7"
-	"github.com/go-redis/redis_rate/v8"
 	"github.com/kinecosystem/agora-common/headers"
-	redistest "github.com/kinecosystem/agora-common/redis/test"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
-	"github.com/kinecosystem/agora/pkg/transaction/stellar"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
 	hProtocol "github.com/kinecosystem/go/protocols/horizon"
-	"github.com/ory/dockertest"
-	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	xrate "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,17 +24,17 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 
+	"github.com/kinecosystem/agora/pkg/account"
 	"github.com/kinecosystem/agora/pkg/channel"
 	channelpool "github.com/kinecosystem/agora/pkg/channel/memory"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
+	"github.com/kinecosystem/agora/pkg/transaction/stellar"
+	"github.com/kinecosystem/agora/pkg/version"
 )
 
 const (
 	channelSalt = "somesalt"
-)
-
-var (
-	redisConnString string
 )
 
 type testEnv struct {
@@ -57,28 +50,7 @@ type testEnv struct {
 	kin2Channels        []*keypair.Full
 }
 
-func TestMain(m *testing.M) {
-	log := logrus.StandardLogger()
-
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.WithError(err).Error("Error creating docker pool")
-		os.Exit(1)
-	}
-
-	var cleanUpFunc func()
-	redisConnString, cleanUpFunc, err = redistest.StartRedis(context.Background(), pool)
-	if err != nil {
-		log.WithError(err).Error("Error starting redis connection")
-		os.Exit(1)
-	}
-
-	code := m.Run()
-	cleanUpFunc()
-	os.Exit(code)
-}
-
-func setup(t *testing.T, createAccGlobalRL int, maxChannels int) (env testEnv, cleanup func()) {
+func setup(t *testing.T, createAccGlobalRL xrate.Limit, maxChannels int) (env testEnv, cleanup func()) {
 	err := os.Setenv("AGORA_ENVIRONMENT", "test")
 	require.NoError(t, err)
 
@@ -122,17 +94,8 @@ func setup(t *testing.T, createAccGlobalRL int, maxChannels int) (env testEnv, c
 		require.NoError(t, err)
 	}
 
-	env.accountNotifier = NewAccountNotifier(env.hClient)
-	env.kin2AccountNotifier = NewAccountNotifier(env.hClient)
-
-	ring := redis.NewRing(&redis.RingOptions{
-		Addrs: map[string]string{
-			"server1": redisConnString,
-		},
-	})
-	limiter := redis_rate.NewLimiter(ring)
-	// reset the global rate limit (the key format is hardcoded inside redis_rate/rate.go)
-	ring.Del(fmt.Sprintf("rate:%s", globalRateLimitKey))
+	env.accountNotifier = NewAccountNotifier()
+	env.kin2AccountNotifier = NewAccountNotifier()
 
 	s, err := New(
 		env.rootKP,
@@ -143,10 +106,7 @@ func setup(t *testing.T, createAccGlobalRL int, maxChannels int) (env testEnv, c
 		env.kin2HClient,
 		env.kin2AccountNotifier,
 		kin2ChannelPool,
-		limiter,
-		&Config{
-			CreateAccountGlobalLimit: createAccGlobalRL,
-		},
+		account.NewLimiter(rate.NewLocalRateLimiter(createAccGlobalRL)),
 	)
 	require.NoError(t, err)
 
@@ -380,7 +340,7 @@ func TestCreateAccount_RateLimited(t *testing.T) {
 }
 
 func TestCreateAccount_NoRateLimit(t *testing.T) {
-	env, cleanup := setup(t, -1, 0)
+	env, cleanup := setup(t, xrate.Inf, 0)
 	defer cleanup()
 
 	kp, err := keypair.Random()

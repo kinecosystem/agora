@@ -4,8 +4,9 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 	"github.com/sirupsen/logrus"
+
+	"github.com/kinecosystem/agora/pkg/transaction/stellar"
 )
 
 type eventStream struct {

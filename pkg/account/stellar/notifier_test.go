@@ -3,7 +3,6 @@ package server
 import (
 	"testing"
 
-	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 
@@ -12,8 +11,7 @@ import (
 )
 
 func TestAccountNotifier_PaymentOperation(t *testing.T) {
-	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient)
+	accountNotifier := NewAccountNotifier()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	s1 := newEventStream(5)
@@ -74,8 +72,7 @@ func TestAccountNotifier_PaymentOperation(t *testing.T) {
 }
 
 func TestAccountNotifier_CreateOperation(t *testing.T) {
-	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient)
+	accountNotifier := NewAccountNotifier()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	s1 := newEventStream(5)
@@ -108,8 +105,7 @@ func TestAccountNotifier_CreateOperation(t *testing.T) {
 }
 
 func TestAccountNotifier_MergeOperation(t *testing.T) {
-	horizonClient := &horizon.MockClient{}
-	accountNotifier := NewAccountNotifier(horizonClient)
+	accountNotifier := NewAccountNotifier()
 
 	kp1, acc1 := testutil.GenerateAccountID(t)
 	s1 := newEventStream(5)
@@ -145,8 +141,6 @@ func assertReceived(t *testing.T, data stellar.XDRData, s *eventStream) {
 	select {
 	case actualData, ok := <-s.streamCh:
 		assert.True(t, ok)
-		assert.Equal(t, data, actualData)
-		assert.Equal(t, data, actualData)
 		assert.Equal(t, data, actualData)
 	default:
 		t.Fatalf("should have received a value")

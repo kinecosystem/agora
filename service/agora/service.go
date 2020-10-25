@@ -23,6 +23,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
+	"github.com/kinecosystem/agora/pkg/account"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/strkey"
@@ -31,12 +32,14 @@ import (
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	accountpb "github.com/kinecosystem/agora-api/genproto/account/v3"
+	accountpbv3 "github.com/kinecosystem/agora-api/genproto/account/v3"
+	accountpbv4 "github.com/kinecosystem/agora-api/genproto/account/v4"
 	airdroppb "github.com/kinecosystem/agora-api/genproto/airdrop/v4"
 	transactionpbv3 "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
-	accountserver "github.com/kinecosystem/agora/pkg/account/server"
+	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
+	accountstellar "github.com/kinecosystem/agora/pkg/account/stellar"
 	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
 	appmapper "github.com/kinecosystem/agora/pkg/app/dynamodb/mapper"
@@ -86,10 +89,11 @@ const (
 )
 
 type app struct {
-	accountServer accountpb.AccountServer
-	txnStellar    transactionpbv3.TransactionServer
-	txnSolana     transactionpbv4.TransactionServer
-	airdropServer airdroppb.AirdropServer
+	accountStellar accountpbv3.AccountServer
+	accountSolana  accountpbv4.AccountServer
+	txnStellar     transactionpbv3.TransactionServer
+	txnSolana      transactionpbv4.TransactionServer
+	airdropServer  airdroppb.AirdropServer
 
 	streamCancelFunc context.CancelFunc
 
@@ -174,8 +178,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 	dynamoV1Client := dynamodbv1.New(sess)
 
-	accountNotifier := accountserver.NewAccountNotifier(client)
-	kin2AccountNotifier := accountserver.NewAccountNotifier(kin2Client)
+	accountNotifier := accountstellar.NewAccountNotifier()
+	kin2AccountNotifier := accountstellar.NewAccountNotifier()
+	kin4AccountNotifier := accountsolana.NewAccountNotifier()
 
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
@@ -255,7 +260,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 	}
 
-	a.accountServer, err = accountserver.New(
+	accountLimiter := account.NewLimiter(rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(createAccountRL)))
+	a.accountStellar, err = accountstellar.New(
 		rootAccountKP,
 		client,
 		accountNotifier,
@@ -264,13 +270,15 @@ func (a *app) Init(_ agoraapp.Config) error {
 		kin2Client,
 		kin2AccountNotifier,
 		kin2ChannelPool,
-		limiter,
-		&accountserver.Config{
-			CreateAccountGlobalLimit: createAccountRL,
-		},
+		accountLimiter,
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to init account server")
+	}
+
+	a.accountSolana, err = accountsolana.New(solanaClient, accountLimiter, kin4AccountNotifier, kinToken, subsidizer)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize v4 account serve")
 	}
 
 	if len(subsidizer) > 0 && len(airdropSource) > 0 {
@@ -420,7 +428,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	// Kin4 Ingestion and Streams
 	//
 	go func() {
-		transactionsolana.StreamTransactions(ctx, solanaClient)
+		transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier)
 	}()
 	go func() {
 		err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
@@ -436,7 +444,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 // RegisterWithGRPC implements agorapp.App.RegisterWithGRPC.
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
-	accountpb.RegisterAccountServer(server, a.accountServer)
+	accountpbv3.RegisterAccountServer(server, a.accountStellar)
+	accountpbv4.RegisterAccountServer(server, a.accountSolana)
 	transactionpbv3.RegisterTransactionServer(server, a.txnStellar)
 	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 
