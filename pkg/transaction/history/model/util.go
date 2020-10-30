@@ -122,6 +122,8 @@ func GetAccountsFromEnvelope(env xdr.TransactionEnvelope) (map[string]struct{}, 
 
 				idSet[addr] = struct{}{}
 			}
+		case xdr.OperationTypeChangeTrust:
+			// No action; op has no account
 		default:
 			logrus.StandardLogger().WithFields(logrus.Fields{
 				"type":   "transaction/history/ingestion/stellar",
