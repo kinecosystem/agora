@@ -305,6 +305,7 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 		Commitment: common.Commitment_ROOT,
 	})
 	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
 	assert.Equal(t, sig[:], resp.Signature.Value)
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
@@ -320,6 +321,79 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
 	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+}
+
+func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+
+	var authTx transaction.Transaction
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+	}
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
+		authTx = args.Get(1).(transaction.Transaction)
+	})
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	sigStatus := &solana.SignatureStatus{
+		ErrorResult: solana.NewTransactionError(solana.TransactionErrorDuplicateSignature),
+	}
+
+	var submitted solana.Transaction
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).
+		Run(func(args mock.Arguments) {
+			submitted = args.Get(0).(solana.Transaction)
+		}).
+		Return(sig, sigStatus, nil)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED, resp.Result)
+	assert.Equal(t, sig[:], resp.Signature.Value)
+	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
+	assert.Len(t, env.rw.Writes, 1)
+
+	assert.EqualValues(t, 4, authTx.Version)
+	assert.EqualValues(t, 1, authTx.OpCount)
+	assert.EqualValues(t, sig[:], authTx.ID)
+	assert.Nil(t, authTx.InvoiceList)
+	assert.Nil(t, authTx.Memo.Memo)
+	assert.Nil(t, authTx.Memo.Text)
+
+	assert.NotNil(t, authTx.SignRequest)
+	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
+	assert.Nil(t, authTx.SignRequest.InvoiceList)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+
+	// Update the entry information, and then submit again.
+	//
+	// This tests the history.ErrInvalidUpdate handling
+	entry, err := env.rw.GetTransaction(context.Background(), resp.Signature.Value)
+	assert.NoError(t, err)
+	entry.GetSolana().Slot = 10
+	assert.NoError(t, env.rw.Write(context.Background(), entry))
+
+	resp, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED, resp.Result)
+	assert.Equal(t, sig[:], resp.Signature.Value)
+	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
+	assert.Len(t, env.rw.Writes, 2)
 }
 
 func TestSubmitTransaction_Plain_Batch(t *testing.T) {

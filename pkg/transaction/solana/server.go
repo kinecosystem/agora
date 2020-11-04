@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
@@ -270,33 +271,41 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Errorf(codes.Internal, "failed to store invoice list")
 		}
 	}
+
+	var submitResult transactionpb.SubmitTransactionResponse_Result
 	sig, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		log.WithError(err).Warn("unhandled SubmitTransaction")
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
 	}
 	if stat.ErrorResult != nil {
-		// todo: do we want to persist failed transactions at this stage?
-		//       if it's not in the simulation stage (which maybe we can disable),
-		//       then it will show up in history anyway.
-		resp := &transactionpb.SubmitTransactionResponse{
-			Result: transactionpb.SubmitTransactionResponse_FAILED,
-			Signature: &commonpb.TransactionSignature{
-				Value: sig[:],
-			},
-		}
-
-		txError, err := solanautil.MapTransactionError(*stat.ErrorResult)
-		if err != nil {
-			log.WithError(err).Warn("failed to map transaction error")
-			resp.TransactionError = &commonpb.TransactionError{
-				Reason: commonpb.TransactionError_UNKNOWN,
-			}
+		// If it's a duplicate signature, we still want to process the Write()
+		// in case that's what failed on an earlier call.
+		if stat.ErrorResult.ErrorKey() == solana.TransactionErrorDuplicateSignature {
+			submitResult = transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED
 		} else {
-			resp.TransactionError = txError
-		}
+			// todo: do we want to persist failed transactions at this stage?
+			//       if it's not in the simulation stage (which maybe we can disable),
+			//       then it will show up in history anyway.
+			resp := &transactionpb.SubmitTransactionResponse{
+				Result: transactionpb.SubmitTransactionResponse_FAILED,
+				Signature: &commonpb.TransactionSignature{
+					Value: sig[:],
+				},
+			}
 
-		return resp, nil
+			txError, err := solanautil.MapTransactionError(*stat.ErrorResult)
+			if err != nil {
+				log.WithError(err).Warn("failed to map transaction error")
+				resp.TransactionError = &commonpb.TransactionError{
+					Reason: commonpb.TransactionError_UNKNOWN,
+				}
+			} else {
+				resp.TransactionError = txError
+			}
+
+			return resp, nil
+		}
 	}
 
 	entry := &model.Entry{
@@ -310,11 +319,20 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	if err := s.history.Write(ctx, entry); err != nil {
-		log.WithError(err).Warn("failed to history persist entry")
-		return nil, status.Error(codes.Internal, "failed to persist transaction data")
+		// If we're processing an ALREADY_SUBMITTED, then it's possible we've
+		// also already written the entry to history. In this case, we may
+		// receive a histor.ErrInvalidUpdate, since we don't have any slot
+		// information yet.
+		//
+		// This is ok to ignore, since the stored entry is already up to date.
+		if submitResult != transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED || !errors.Is(err, history.ErrInvalidUpdate) {
+			log.WithError(err).Warn("failed to history persist entry")
+			return nil, status.Error(codes.Internal, "failed to persist transaction data")
+		}
 	}
 
 	return &transactionpb.SubmitTransactionResponse{
+		Result: submitResult,
 		Signature: &commonpb.TransactionSignature{
 			Value: sig[:],
 		},

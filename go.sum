@@ -177,8 +177,8 @@ github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfV
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88 h1:uC1QfSlInpQF+M0ao65imhwqKnz3Q2z/d8PWZRMQvDM=
 github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88/go.mod h1:3w7q1U84EfirKl04SVQ/s7nPm1ZPhiXd34z40TNz36k=
-github.com/kinecosystem/agora-api v0.20.0 h1:yp4Ni1EKadBK5J3Z3TWMq/H3DOY/da+0HqHELdfA+uc=
-github.com/kinecosystem/agora-api v0.20.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
+github.com/kinecosystem/agora-api v0.21.0 h1:NaaGGEFD2/R6dpoR9mDw1f27LkGfTXHa/RIFwd1tvmE=
+github.com/kinecosystem/agora-api v0.21.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
 github.com/kinecosystem/agora-common v0.44.0 h1:UkUnFuN/MQZJTZvDMX/sgl1T0sspT6CGqmFtsT6f/bg=
 github.com/kinecosystem/agora-common v0.44.0/go.mod h1:8MY/Hqa4F/y0bB9Q+dJyFwItY/fdrY9Ho1HOxGDF7eo=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e h1:YP9l6K2VUnIc9SmT9irPeCrJ9JCWMQjOj0Pq2xSpEfs=
