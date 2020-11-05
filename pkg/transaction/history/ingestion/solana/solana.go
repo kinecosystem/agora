@@ -67,7 +67,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 					//
 					// Note: the number here is currently arbitrary. The real limiter
 					// is the number of concurrent processors (which perform an rpc call
-					// for each block), which contributes can impact the RPC node.
+					// for each block), which impacts the solana RPC node.
 					blocks, err := i.client.GetConfirmedBlocksWithLimit(start, 1024)
 					if err != nil {
 						return err
@@ -146,7 +146,7 @@ func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 				// token transfer instruction.
 				//
 				// In either case, we don't really have enough information to infer which mint
-				// the transfer was for. We can only infer wether or not it was an RPC error, or
+				// the transfer was for. We can only infer whether or not it was an RPC error, or
 				// a transaction error.
 				//
 				// Note: we could likely check the destination account as well, but it is generally

@@ -51,7 +51,6 @@ func TestInitialParams(t *testing.T) {
 	for _, tc := range testCases {
 		env.client.Calls = nil
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 
 		env.client.On("GetConfirmedBlocksWithLimit", mock.Anything, mock.Anything).Return([]uint64{}, nil)
 

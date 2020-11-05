@@ -60,7 +60,7 @@ func (KinVersion) EnumDescriptor() ([]byte, []int) {
 // transaction, as well as the KinVersion the transaction is for.
 //
 // This allows for the generalization of a history store, which allows
-// for a continuous view of history accross blockchains.
+// for a continuous view of history across blockchains.
 type Entry struct {
 	Version KinVersion `protobuf:"varint,1,opt,name=version,proto3,enum=KinVersion" json:"version,omitempty"`
 	// Types that are valid to be assigned to Kind:
@@ -235,9 +235,6 @@ type SolanaEntry struct {
 	Transaction []byte `protobuf:"bytes,3,opt,name=transaction,proto3" json:"transaction,omitempty"`
 	// Optional value represented by 'TransactionError' type returned
 	// from the Solana RPCs.
-	//
-	// todo: replace? figure out what's a more specific raw format
-	// we can use.
 	TransactionError     []byte   `protobuf:"bytes,4,opt,name=transaction_error,json=transactionError,proto3" json:"transaction_error,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`

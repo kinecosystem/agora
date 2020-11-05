@@ -15,7 +15,7 @@ enum KinVersion {
 // transaction, as well as the KinVersion the transaction is for.
 //
 // This allows for the generalization of a history store, which allows
-// for a continuous view of history accross blockchains.
+// for a continuous view of history across blockchains.
 message Entry {
     KinVersion version = 1;
 
@@ -62,9 +62,6 @@ message SolanaEntry {
 
     // Optional value represented by 'TransactionError' type returned
     // from the Solana RPCs.
-    //
-    // todo: replace? figure out what's a more specific raw format
-    // we can use.
     bytes transaction_error = 4 [(validate.rules).bytes = {
         min_len: 0
         max_len: 1024
