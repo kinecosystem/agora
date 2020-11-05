@@ -66,7 +66,7 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 	if prev, ok := rw.txns[string(hash)]; ok {
 		if prev.Version < model.KinVersion_KIN4 {
 			if !proto.Equal(prev, e) {
-				return errors.New("double insert mismatch detected")
+				return errors.Wrap(history.ErrInvalidUpdate, "double insert mismatch detected")
 			}
 		} else {
 			prevSol := prev.GetSolana()
@@ -74,22 +74,22 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 
 			// If a slot was already stored, it cannot be mutated.
 			if prevSol.Slot > 0 && prevSol.Slot != sol.Slot {
-				return errors.New("double insert with different entries detected")
+				return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (slot)")
 			}
 
 			// A confirmed block cannot be unconfirmed
 			if prevSol.Confirmed && !sol.Confirmed {
-				return errors.New("double insert with different entries detected")
+				return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (confirmation status)")
 			}
 
 			if !bytes.Equal(prevSol.Transaction, sol.Transaction) {
-				return errors.New("double insert with different entries detected")
+				return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (transaction)")
 			}
 
 			// In theory an error can occur after submission.
 			// Therefore, we only check equality if there's an error already set.
 			if len(prevSol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
-				return errors.New("double insert with different entries detected")
+				return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (transaction error)")
 			}
 		}
 	} else {

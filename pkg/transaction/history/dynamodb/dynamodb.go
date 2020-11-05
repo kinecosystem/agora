@@ -244,30 +244,36 @@ func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *
 			return nil
 		}
 
-		return errors.New("double insert with different entries detected")
+		return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected")
 	}
 
 	prevSol := previous.GetSolana()
 	sol := entry.GetSolana()
 
-	// If a slot was already stored, it cannot be mutated.
-	if prevSol.Slot > 0 && prevSol.Slot != sol.Slot {
-		return errors.New("double insert with different entries detected")
+	// The only time a slot is immutable is after the transaction has
+	// reached max lockout. However, we don't have access to that information
+	// at this layer. Therefore, the best protection we can offer for slot is
+	// to ensure we don't completely reset it.
+	//
+	// If we are comparing two non-zero slots, we assume that the caller has
+	// provided us with a more up-to-date slot.
+	if prevSol.Slot > 0 && sol.Slot == 0 {
+		return errors.Wrapf(history.ErrInvalidUpdate, "double insert with different entries detected (slot, old: %d, new: 0)", prevSol.Slot)
 	}
 
 	// A confirmed block cannot be unconfirmed
 	if prevSol.Confirmed && !sol.Confirmed {
-		return errors.New("double insert with different entries detected")
+		return errors.Wrapf(history.ErrInvalidUpdate, "double insert with different entries detected (confirmation status, old: %v", prevSol.Confirmed)
 	}
 
 	if !bytes.Equal(prevSol.Transaction, sol.Transaction) {
-		return errors.New("double insert with different entries detected")
+		return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (transaction)")
 	}
 
 	// In theory an error can occur after submission.
 	// Therefore, we only check equality if there's an error already set.
 	if len(prevSol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
-		return errors.New("double insert with different entries detected")
+		return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (transaction error)")
 	}
 
 	return nil

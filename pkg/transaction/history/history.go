@@ -8,11 +8,16 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("not found")
+	ErrNotFound      = errors.New("not found")
+	ErrInvalidUpdate = errors.New("invalid update")
 )
 
 type Writer interface {
 	// Write writes a model.Entry to a history store.
+	//
+	// ErrInvalidUpdate is returned if the entry would overwrite
+	// an existing entry in an invalid way. For example, revert the
+	// transaction state to an earlier one.
 	Write(context.Context, *model.Entry) error
 }
 

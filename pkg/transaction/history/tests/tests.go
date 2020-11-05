@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -88,7 +89,9 @@ func testDoubleInsert_Stellar(t *testing.T, rw history.ReaderWriter) {
 		// entries are deterministically generated from transactions
 		// is incorrect. Therefore, we expect an error from the writer
 		// for safety.
-		require.NotNil(t, rw.Write(ctx, mutated))
+		err := rw.Write(ctx, mutated)
+		require.NotNil(t, err)
+		assert.True(t, errors.Is(err, history.ErrInvalidUpdate), err)
 
 		// Ensure that the write did not go through
 

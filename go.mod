@@ -15,7 +15,7 @@ require (
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/mr-tron/base58 v1.2.0
 	github.com/ory/dockertest v3.3.5+incompatible
-	github.com/pkg/errors v0.8.1
+	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
 	github.com/sirupsen/logrus v1.4.2
 	github.com/stellar/go v0.0.0-20191211203732-552e507ffa37
