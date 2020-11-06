@@ -68,7 +68,7 @@ func TestLocalRateLimiter(t *testing.T) {
 		assert.True(t, allowed)
 	}
 
-	allowed, err = l.Allow("a")
+	allowed, err = l.Allow("b")
 	assert.NoError(t, err)
 	assert.False(t, allowed)
 }
@@ -98,7 +98,7 @@ func TestRedisRateLimiter(t *testing.T) {
 		assert.True(t, allowed)
 	}
 
-	allowed, err = l.Allow("a")
+	allowed, err = l.Allow("b")
 	assert.NoError(t, err)
 	assert.False(t, allowed)
 }
