@@ -24,7 +24,7 @@ const (
 )
 
 const (
-	kinVersionHeader        = "kin-version"
+	KinVersionHeader        = "kin-version"
 	desiredKinVersionHeader = "desired-kin-version"
 	minVersion              = KinVersion2
 	maxVersion              = KinVersion4
@@ -33,7 +33,7 @@ const (
 
 // GetCtxKinVersion determines which version of Kin to use based on the headers in the provided context.
 func GetCtxKinVersion(ctx context.Context) (version KinVersion, err error) {
-	val, err := headers.GetASCIIHeaderByName(ctx, kinVersionHeader)
+	val, err := headers.GetASCIIHeaderByName(ctx, KinVersionHeader)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to get kin version header")
 	}

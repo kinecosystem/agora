@@ -28,6 +28,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
+	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type loader struct {
@@ -195,7 +196,7 @@ func (l *loader) getItems(ctx context.Context, accountID []byte, cursor *transac
 		Descending: order == transactionpb.GetHistoryRequest_DESC,
 	}
 	if cursor != nil {
-		start, err := startFromCursor(cursor)
+		start, err := startFromCursor(ctx, cursor)
 		if err != nil {
 			log.WithError(err).Warn("failed to get start from cursor, ignoring")
 		} else {
@@ -562,7 +563,7 @@ func publicKeyFromStellarXDR(id xdr.AccountId) ([]byte, error) {
 	return pub, nil
 }
 
-func startFromCursor(c *transactionpb.Cursor) ([]byte, error) {
+func startFromCursor(ctx context.Context, c *transactionpb.Cursor) ([]byte, error) {
 	if c == nil || len(c.Value) == 0 {
 		return nil, nil
 	}
@@ -578,9 +579,33 @@ func startFromCursor(c *transactionpb.Cursor) ([]byte, error) {
 		return c.Value, nil
 	}
 
-	orderKey, err := model.OrderingKeyFromCursor(model.KinVersion(c.Value[0]), string(c.Value))
+	// In order to determine if we should use a kin2 or kin3 version
+	// for the translated cursor, we try to infer the version of the caller.
+	callerVersion, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to infer caller kin version for cursor decoding")
+	}
+
+	// If the version is kin4, then we no longer have information as to which
+	// version the client was when it obtained the horizon cursor. To be safe,
+	// we default to kin2 in order to avoid gaps in history on the client.
+	//
+	// This can result in duplicate history entries being returned to the client,
+	// but clients should be de-duping anyway. Since we never return horizon cursors,
+	// the version encoding will be correct after the first history flush.
+	//
+	// Note: this case only occurs when a client is coming from an old version of
+	// the sdk (in order to get the horizon cursor), and has never requested history
+	// before.
+	v := model.KinVersion(callerVersion)
+	if callerVersion > version.KinVersion3 {
+		v = model.KinVersion_KIN2
+	}
+
+	orderKey, err := model.OrderingKeyFromCursor(v, string(c.Value))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get ordering key from transactionpb.Cursor")
 	}
+
 	return orderKey, nil
 }
