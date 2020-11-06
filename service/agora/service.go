@@ -121,33 +121,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to determine kin 2 root keypair")
 	}
 
-	kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
-	if err != nil {
-		return errors.Wrap(err, "failed to parse kin token address")
-	}
-
-	var subsidizer []byte
-	if os.Getenv(subsidizerKeypairIDEnv) != "" {
-		subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
-		if err != nil {
-			return errors.Wrap(err, "failed to determine subsidizer keypair")
-		}
-
-		rawSeed, err := strkey.Decode(strkey.VersionByteSeed, subsidizerKP.Seed())
-		if err != nil {
-			return errors.Wrap(err, "invalid subsidizer seed string")
-		}
-
-		subsidizer = ed25519.NewKeyFromSeed(rawSeed)
-	}
-	var airdropSource []byte
-	if os.Getenv(airdropSourceEnv) != "" {
-		airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
 	client, err := kin.GetClient()
 	if err != nil {
 		return errors.Wrap(err, "failed to get kin client")
@@ -180,14 +153,12 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 	accountNotifier := accountstellar.NewAccountNotifier()
 	kin2AccountNotifier := accountstellar.NewAccountNotifier()
-	kin4AccountNotifier := accountsolana.NewAccountNotifier()
 
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
 	appMapper := appmapper.New(dynamoClient)
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
-	solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
 
 	createAccountRL, err := parseRateLimit(createAccountGlobalRLEnv)
 	if err != nil {
@@ -276,15 +247,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init account server")
 	}
 
-	a.accountSolana, err = accountsolana.New(solanaClient, accountLimiter, kin4AccountNotifier, kinToken, subsidizer)
-	if err != nil {
-		return errors.Wrap(err, "failed to initialize v4 account serve")
-	}
-
-	if len(subsidizer) > 0 && len(airdropSource) > 0 {
-		a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	a.streamCancelFunc = cancel
 
@@ -334,12 +296,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init kin 2 events ingestion lock")
 	}
 
-	kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
-	kin4HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin4", 10*time.Second)
-	if err != nil {
-		return errors.Wrap(err, "failed to init kin 4 history ingestion lock")
-	}
-
 	historyRW := historyrw.New(dynamoClient)
 	txLimiter := transaction.NewLimiter(
 		func(limit int) rate.Limiter {
@@ -371,15 +327,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to init transaction server")
 	}
-	a.txnSolana = transactionsolana.New(
-		solanaClient,
-		invoiceStore,
-		historyRW,
-		committer,
-		authorizer,
-		kinToken,
-		subsidizer,
-	)
 
 	//
 	// Kin3 Ingestion and Streams
@@ -425,20 +372,79 @@ func (a *app) Init(_ agoraapp.Config) error {
 			log.WithError(err).Info("kin 2 events ingestion loop terminated")
 		}
 	}()
-	//
-	// Kin4 Ingestion and Streams
-	//
-	go func() {
-		transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier)
-	}()
-	go func() {
-		err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
-		if err != nil && err != context.Canceled {
-			log.WithError(err).Warn("kin 4 history ingestion loop terminated")
-		} else {
-			log.WithError(err).Info("kin 4 history ingestion loop terminated")
+
+	if os.Getenv(solanaEndpointEnv) != "" {
+		solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
+
+		kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
+		if err != nil {
+			return errors.Wrap(err, "failed to parse kin token address")
 		}
-	}()
+
+		var subsidizer []byte
+		if os.Getenv(subsidizerKeypairIDEnv) != "" {
+			subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
+			if err != nil {
+				return errors.Wrap(err, "failed to determine subsidizer keypair")
+			}
+
+			rawSeed, err := strkey.Decode(strkey.VersionByteSeed, subsidizerKP.Seed())
+			if err != nil {
+				return errors.Wrap(err, "invalid subsidizer seed string")
+			}
+
+			subsidizer = ed25519.NewKeyFromSeed(rawSeed)
+		}
+		var airdropSource []byte
+		if os.Getenv(airdropSourceEnv) != "" {
+			airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		if len(subsidizer) > 0 && len(airdropSource) > 0 {
+			a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
+		}
+
+		kin4AccountNotifier := accountsolana.NewAccountNotifier()
+		a.accountSolana, err = accountsolana.New(solanaClient, accountLimiter, kin4AccountNotifier, kinToken, subsidizer)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize v4 account serve")
+		}
+		a.txnSolana = transactionsolana.New(
+			solanaClient,
+			invoiceStore,
+			historyRW,
+			committer,
+			authorizer,
+			kinToken,
+			subsidizer,
+		)
+
+		kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
+		kin4HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin4", 10*time.Second)
+		if err != nil {
+			return errors.Wrap(err, "failed to init kin 4 history ingestion lock")
+		}
+
+		//
+		// Kin4 Ingestion and Streams
+		//
+		go func() {
+			transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier)
+		}()
+		go func() {
+			err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
+			if err != nil && err != context.Canceled {
+				log.WithError(err).Warn("kin 4 history ingestion loop terminated")
+			} else {
+				log.WithError(err).Info("kin 4 history ingestion loop terminated")
+			}
+		}()
+	} else {
+		a.txnSolana = transactionsolana.NewNoopServer()
+	}
 
 	return nil
 }
@@ -446,13 +452,16 @@ func (a *app) Init(_ agoraapp.Config) error {
 // RegisterWithGRPC implements agorapp.App.RegisterWithGRPC.
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
 	accountpbv3.RegisterAccountServer(server, a.accountStellar)
-	accountpbv4.RegisterAccountServer(server, a.accountSolana)
 	transactionpbv3.RegisterTransactionServer(server, a.txnStellar)
-	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 
 	if a.airdropServer != nil {
 		airdroppb.RegisterAirdropServer(server, a.airdropServer)
 	}
+	if a.accountSolana != nil {
+		accountpbv4.RegisterAccountServer(server, a.accountSolana)
+	}
+
+	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 }
 
 // ShutdownChan implements agorapp.App.ShutdownChan.
