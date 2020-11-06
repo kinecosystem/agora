@@ -224,10 +224,7 @@ func TestSubmitTransaction_SignTransaction400(t *testing.T) {
 	defer cleanup()
 
 	// Set up test server with 400 response
-	webhookResp := &signtransaction.BadRequestResponse{Message: "some message"}
-	b, err := json.Marshal(webhookResp)
-	require.NoError(t, err)
-	testServer := newTestServerWithJSONResponse(t, 400, b)
+	testServer := newTestServerWithJSONResponse(t, 400, []byte{})
 
 	// Set test server URL to app config
 	signURL, err := url.Parse(testServer.URL)

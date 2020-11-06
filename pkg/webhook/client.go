@@ -110,16 +110,6 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 		return decodedResp, nil
 	}
 
-	if resp.StatusCode == 400 {
-		decodedResp := &signtransaction.BadRequestResponse{}
-		err := json.NewDecoder(resp.Body).Decode(decodedResp)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to decode 400 response")
-		}
-
-		return nil, &SignTransactionError{Message: decodedResp.Message, StatusCode: 400}
-	}
-
 	if resp.StatusCode == 403 {
 		decodedResp := &signtransaction.ForbiddenResponse{}
 		err := json.NewDecoder(resp.Body).Decode(decodedResp)

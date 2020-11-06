@@ -131,12 +131,7 @@ func TestSendSignTransactionRequest_200Invalid(t *testing.T) {
 func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 	env := setup(t)
 
-	webhookResp := &signtransaction.BadRequestResponse{Message: "some message"}
-	b, err := json.Marshal(webhookResp)
-
-	require.NoError(t, err)
-
-	testServer := newTestServerWithJSONResponse(t, env, 400, b, appUserID, appUserPasskey, basicReqBody)
+	testServer := newTestServerWithJSONResponse(t, env, 400, []byte{}, appUserID, appUserPasskey, basicReqBody)
 	defer func() { testServer.Close() }()
 
 	signURL, err := url.Parse(testServer.URL)
@@ -147,7 +142,6 @@ func TestSendSignTransactionRequest_400Valid(t *testing.T) {
 	signTxErr, ok := err.(*SignTransactionError)
 	assert.True(t, ok)
 	assert.Equal(t, 400, signTxErr.StatusCode)
-	assert.Equal(t, webhookResp.Message, signTxErr.Message)
 	assert.Nil(t, actualEnvelope)
 }
 

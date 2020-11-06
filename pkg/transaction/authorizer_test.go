@@ -121,7 +121,7 @@ func TestAuthorizer_SignTransaction200_WithInvoice(t *testing.T) {
 	assert.Equal(t, AuthorizationResultOK, result.Result)
 }
 
-func TestAthorizer_EarnNoWebhook(t *testing.T) {
+func TestAuthorizer_EarnNoWebhook(t *testing.T) {
 	env := setup(t)
 
 	// Set up test server that fails all responses.
@@ -158,10 +158,7 @@ func TestAuthorizer_SignTransaction400(t *testing.T) {
 	env := setup(t)
 
 	// Set up test server with 400 response
-	webhookResp := &signtransaction.BadRequestResponse{Message: "some message"}
-	b, err := json.Marshal(webhookResp)
-	require.NoError(t, err)
-	testServer := newTestServerWithJSONResponse(t, 400, b)
+	testServer := newTestServerWithJSONResponse(t, 400, []byte{})
 
 	// Set test server URL to app config
 	signURL, err := url.Parse(testServer.URL)

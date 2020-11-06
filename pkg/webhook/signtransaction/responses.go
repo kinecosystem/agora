@@ -19,12 +19,7 @@ type SuccessResponse struct {
 	EnvelopeXDR []byte `json:"envelope_xdr"`
 }
 
-// BadRequestResponse represents a 400 Bad Request response to a sign transaction request.
-type BadRequestResponse struct {
-	Message string `json:"message"`
-}
-
-// BadRequestResponse represents a 403 Forbidden response to a sign transaction request.
+// ForbiddenResponse represents a 403 Forbidden response to a sign transaction request.
 type ForbiddenResponse struct {
 	Message       string         `json:"message"`
 	InvoiceErrors []InvoiceError `json:"invoice_errors"`
