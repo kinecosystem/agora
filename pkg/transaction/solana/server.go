@@ -84,15 +84,15 @@ func (s *server) GetServiceConfig(_ context.Context, _ *transactionpb.GetService
 	}, nil
 }
 
-func (s *server) GetMiniumumKinVersion(ctx context.Context, _ *transactionpb.GetMiniumumKinVersionRequest) (*transactionpb.GetMiniumumKinVersionResponse, error) {
+func (s *server) GetMinimumKinVersion(ctx context.Context, _ *transactionpb.GetMinimumKinVersionRequest) (*transactionpb.GetMinimumKinVersionResponse, error) {
 	desired, err := version.GetCtxDesiredVersion(ctx)
 	if err == nil {
-		return &transactionpb.GetMiniumumKinVersionResponse{
+		return &transactionpb.GetMinimumKinVersionResponse{
 			Version: uint32(desired),
 		}, nil
 	}
 
-	return &transactionpb.GetMiniumumKinVersionResponse{
+	return &transactionpb.GetMinimumKinVersionResponse{
 		Version: 2,
 	}, nil
 }
@@ -321,7 +321,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if err := s.history.Write(ctx, entry); err != nil {
 		// If we're processing an ALREADY_SUBMITTED, then it's possible we've
 		// also already written the entry to history. In this case, we may
-		// receive a histor.ErrInvalidUpdate, since we don't have any slot
+		// receive a history.ErrInvalidUpdate, since we don't have any slot
 		// information yet.
 		//
 		// This is ok to ignore, since the stored entry is already up to date.

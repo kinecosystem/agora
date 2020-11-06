@@ -117,7 +117,7 @@ func TestGetMinimumKinVersion(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	resp, err := env.client.GetMiniumumKinVersion(context.Background(), &transactionpb.GetMiniumumKinVersionRequest{})
+	resp, err := env.client.GetMinimumKinVersion(context.Background(), &transactionpb.GetMinimumKinVersionRequest{})
 	assert.NoError(t, err)
 	assert.EqualValues(t, 3, resp.Version)
 
@@ -125,7 +125,7 @@ func TestGetMinimumKinVersion(t *testing.T) {
 		"desired-kin-version": "2",
 	}
 	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(md))
-	resp, err = env.client.GetMiniumumKinVersion(ctx, &transactionpb.GetMiniumumKinVersionRequest{})
+	resp, err = env.client.GetMinimumKinVersion(ctx, &transactionpb.GetMinimumKinVersionRequest{})
 	assert.NoError(t, err)
 	assert.EqualValues(t, 2, resp.Version)
 }
