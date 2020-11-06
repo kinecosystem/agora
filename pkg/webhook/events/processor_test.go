@@ -27,6 +27,7 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	appmemory "github.com/kinecosystem/agora/pkg/app/memory"
+	appmapper "github.com/kinecosystem/agora/pkg/app/memory/mapper"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicememory "github.com/kinecosystem/agora/pkg/invoice/memory"
 	"github.com/kinecosystem/agora/pkg/testutil"
@@ -57,6 +58,7 @@ type testEnv struct {
 	processor      *Processor
 	invoiceStore   invoice.Store
 	appConfigStore app.ConfigStore
+	appMapper      app.Mapper
 }
 
 func TestMain(m *testing.M) {
@@ -79,6 +81,7 @@ func TestMain(m *testing.M) {
 func setup(t *testing.T) (env testEnv, teardown func()) {
 	env.invoiceStore = invoicememory.New()
 	env.appConfigStore = appmemory.New()
+	env.appMapper = appmapper.New()
 
 	setupQueue(t, IngestionQueueName)
 	teardown = func() { deleteQueue(t, IngestionQueueName) }
@@ -92,6 +95,7 @@ func setup(t *testing.T) (env testEnv, teardown func()) {
 		queueCtor,
 		env.invoiceStore,
 		env.appConfigStore,
+		env.appMapper,
 		webhook.NewClient(http.DefaultClient),
 	)
 	require.NoError(t, err)
@@ -147,6 +151,59 @@ func TestRoundTrip(t *testing.T) {
 	}
 	err = env.appConfigStore.Add(context.Background(), 1, appConfig)
 	require.NoError(t, err)
+
+	require.NoError(t, env.processor.Write(context.Background(), entry))
+	select {
+	case <-called:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for webhook call")
+	}
+}
+
+func TestRoundTrip_WithAppID(t *testing.T) {
+	env, teardown := setup(t)
+	defer teardown()
+
+	memo := "1-test"
+	accountIDs := testutil.GenerateAccountIDs(t, 2)
+	entry, txHash := historytestutil.GenerateStellarEntry(t, 10, 10, accountIDs[0], accountIDs[1:], nil, &memo)
+
+	require.NoError(t, env.invoiceStore.Put(context.Background(), txHash, il))
+
+	called := make(chan struct{})
+	testServer := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		b, err := ioutil.ReadAll(req.Body)
+		defer req.Body.Close()
+		require.NoError(t, err)
+
+		var events []Event
+		require.NoError(t, json.Unmarshal(b, &events))
+
+		assert.Len(t, events, 1)
+
+		txEvent := events[0].TransactionEvent
+		assert.NotNil(t, txEvent)
+		assert.EqualValues(t, model.KinVersion_KIN3, txEvent.KinVersion)
+		assert.EqualValues(t, txHash, txEvent.TxHash)
+		assert.True(t, proto.Equal(il, txEvent.InvoiceList))
+
+		assert.NotNil(t, txEvent.StellarEvent)
+		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.EnvelopeXdr, txEvent.StellarEvent.EnvelopeXDR)
+		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.ResultXdr, txEvent.StellarEvent.ResultXDR)
+
+		close(called)
+	}))
+
+	eventsURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+
+	appConfig := &app.Config{
+		AppName:       "kin",
+		EventsURL:     eventsURL,
+		WebhookSecret: "secret",
+	}
+	require.NoError(t, env.appConfigStore.Add(context.Background(), 1, appConfig))
+	require.NoError(t, env.appMapper.Add(context.Background(), "test", 1))
 
 	require.NoError(t, env.processor.Write(context.Background(), entry))
 	select {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/agora/pkg/webhook"
 )
@@ -33,6 +34,7 @@ type Processor struct {
 
 	invoiceStore  invoice.Store
 	configStore   app.ConfigStore
+	appMapper     app.Mapper
 	webhookClient *webhook.Client
 }
 
@@ -40,12 +42,14 @@ func NewProcessor(
 	eventsQueueCtor taskqueue.ProcessorCtor,
 	invoiceStore invoice.Store,
 	configStore app.ConfigStore,
+	appMapper app.Mapper,
 	webhookClient *webhook.Client,
 ) (p *Processor, err error) {
 	p = &Processor{
 		log:           logrus.StandardLogger().WithField("type", "events/Processor"),
 		invoiceStore:  invoiceStore,
 		configStore:   configStore,
+		appMapper:     appMapper,
 		webhookClient: webhookClient,
 	}
 
@@ -129,9 +133,20 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 			return errors.Wrap(err, "failed to unmarshal envelope")
 		}
 
-		memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
-		if ok {
-			appIndex = int(memo.AppIndex())
+		if envelope.Tx.Memo.Text != nil {
+			if appID, ok := transaction.AppIDFromTextMemo(*envelope.Tx.Memo.Text); ok {
+				index, err := p.appMapper.GetAppIndex(ctx, appID)
+				if err != nil && err != app.ErrMappingNotFound {
+					log.WithError(err).Warn("failed to lookup app id mapping")
+					return errors.Wrap(err, "failed to lookup app id mapping")
+				}
+				appIndex = int(index)
+			}
+		} else {
+			memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
+			if ok {
+				appIndex = int(memo.AppIndex())
+			}
 		}
 	default:
 		log.Warn("unsupported entry type, ignoring")

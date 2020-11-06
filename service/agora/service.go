@@ -295,6 +295,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		),
 		invoiceStore,
 		appConfigStore,
+		appMapper,
 		webhookClient,
 	)
 	if err != nil {
