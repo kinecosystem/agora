@@ -55,13 +55,13 @@ func setup(t *testing.T) (env testEnv) {
 func TestLoadTransaction_Stellar(t *testing.T) {
 	env := setup(t)
 
-	invoice, _, _ := generateInvoice(t, 1)
+	il, _, _ := generateInvoice(t, 1)
 
 	accounts := testutil.GenerateAccountIDs(t, 2)
 	entry, hash := historytestutil.GenerateStellarEntry(t, 1, 2, accounts[0], accounts[1:], nil, nil)
 
 	require.NoError(t, env.rw.Write(context.Background(), entry))
-	require.NoError(t, env.invoiceStore.Put(context.Background(), hash, invoice))
+	require.NoError(t, env.invoiceStore.Put(context.Background(), hash, il))
 
 	resp, err := env.loader.loadTransaction(context.Background(), hash)
 	assert.NoError(t, err)
@@ -69,7 +69,7 @@ func TestLoadTransaction_Stellar(t *testing.T) {
 	assert.EqualValues(t, 0, resp.Slot)
 	assert.EqualValues(t, 0, resp.Confirmations)
 
-	assert.True(t, proto.Equal(invoice, resp.Item.InvoiceList))
+	assert.True(t, proto.Equal(il, resp.Item.InvoiceList))
 	assert.Equal(t, entry.GetStellar().EnvelopeXdr, resp.Item.GetStellarTransaction().EnvelopeXdr)
 	assert.Equal(t, entry.GetStellar().ResultXdr, resp.Item.GetStellarTransaction().ResultXdr)
 	assert.Nil(t, resp.Item.TransactionError)
@@ -431,8 +431,8 @@ func TestGetItems_Invoices(t *testing.T) {
 	for i := range entries {
 		var expected *transactionpb.HistoryItem
 		expected, err = historyItemFromEntry(generated[i])
-		expected.InvoiceList = invoices[i]
 		require.NoError(t, err)
+		expected.InvoiceList = invoices[i]
 
 		assert.True(t, proto.Equal(expected, entries[i]))
 	}

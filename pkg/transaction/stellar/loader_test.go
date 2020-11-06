@@ -19,12 +19,12 @@ func TestStartFromCursor(t *testing.T) {
 		{input: []byte("10"), expected: []byte{byte(model.KinVersion_KIN3), 0, 0, 0, 0, 0, 0, 0, 10}},
 		{input: []byte{byte(model.KinVersion_KIN3), 10}, expected: []byte{byte(model.KinVersion_KIN3), 10}},
 	}
-	for _, tc := range valid {
+	for i, tc := range valid {
 		actual, err := startFromCursor(&transactionpb.Cursor{
 			Value: tc.input,
 		})
 		assert.NoError(t, err)
-		assert.EqualValues(t, tc.expected, actual)
+		assert.EqualValues(t, tc.expected, actual, i)
 	}
 
 	invalid := [][]byte{

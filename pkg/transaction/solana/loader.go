@@ -93,12 +93,13 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 		writeback = true
 
 		txn, err := l.sc.GetConfirmedTransaction(sig)
-		if err != nil && err != solana.ErrSignatureNotFound {
-			return nil, errors.Wrap(err, "failed to check confirmed transactions")
-		} else if err == solana.ErrSignatureNotFound {
+		if err == solana.ErrSignatureNotFound {
 			return &transactionpb.GetTransactionResponse{
 				State: transactionpb.GetTransactionResponse_UNKNOWN,
 			}, nil
+		}
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to check confirmed transactions")
 		}
 
 		var rawTxError []byte
@@ -136,11 +137,11 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 
 		// no signature status simply means there is no entry in Solana's
 		// signature status cache. This either means the transaction does not exist,
-		// or is old enough to be eviced. Since we already have an entry, we know it's
+		// or is old enough to be evicted. Since we already have an entry, we know it's
 		// the latter.
 		//
 		// Alternatively, if we have the status, and confirmations isn't set, it
-		// means the transaction was rooted, and therefor confirmed.
+		// means the transaction was rooted, and therefore confirmed.
 		if err == solana.ErrSignatureNotFound || stat.Confirmations == nil {
 			writeback = true
 			entry.GetSolana().Confirmed = true
@@ -436,7 +437,6 @@ func historyItemFromEntry(entry *model.Entry) (*transactionpb.HistoryItem, error
 		return &transactionpb.HistoryItem{
 			TransactionId: id,
 			Cursor:        cursor,
-			InvoiceList:   nil, // let caller do this?
 			Payments:      payments,
 			RawTransaction: &transactionpb.HistoryItem_StellarTransaction{
 				StellarTransaction: &commonpbv4.StellarTransaction{
@@ -578,7 +578,6 @@ func startFromCursor(c *transactionpb.Cursor) ([]byte, error) {
 		return c.Value, nil
 	}
 
-	// todo(kin2): need context as to which blockchain we loaded this from.
 	orderKey, err := model.OrderingKeyFromCursor(model.KinVersion(c.Value[0]), string(c.Value))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get ordering key from transactionpb.Cursor")
