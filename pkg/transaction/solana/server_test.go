@@ -320,7 +320,7 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
@@ -373,7 +373,7 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 
 	// Update the entry information, and then submit again.
 	//
@@ -441,7 +441,7 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Invoice(t *testing.T) {
@@ -487,7 +487,7 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Equal(t, invoiceBytes, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
@@ -533,7 +533,7 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Equal(t, invoiceBytes, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Invoice_InvalidBatch(t *testing.T) {
@@ -599,7 +599,7 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Text_NotB64(t *testing.T) {
@@ -648,7 +648,7 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.Transaction)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Rejected(t *testing.T) {

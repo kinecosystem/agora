@@ -15,8 +15,8 @@ type RequestBody struct {
 	KinVersion int `json:"kin_version"`
 	// EnvelopeXDR is a base64-encoded transaction envelope XDR
 	EnvelopeXDR []byte `json:"envelope_xdr"`
-	// Transaction is a base64-encoded Solana transaction
-	Transaction []byte `json:"transaction"`
+	// SolanaTransaction is a base64-encoded Solana transaction
+	SolanaTransaction []byte `json:"solana_transaction"`
 	// InvoiceList is a base64-encoded protobuf InvoiceList
 	InvoiceList []byte `json:"invoice_list,omitempty"`
 }
@@ -40,8 +40,8 @@ func CreateStellarRequest(v version.KinVersion, req *transactionpb.SubmitTransac
 
 func CreateSolanaRequest(req *transactionv4pb.SubmitTransactionRequest) (*RequestBody, error) {
 	reqBody := &RequestBody{
-		KinVersion:  int(version.KinVersion4),
-		Transaction: req.Transaction.Value,
+		KinVersion:        int(version.KinVersion4),
+		SolanaTransaction: req.Transaction.Value,
 	}
 
 	if req.InvoiceList != nil {

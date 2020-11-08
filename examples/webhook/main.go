@@ -21,7 +21,7 @@ func eventsHandler(events []events.Event) error {
 			continue
 		}
 
-		log.Printf("transaction completed: %x", e.TransactionEvent.TxHash)
+		log.Printf("transaction completed: %x", e.TransactionEvent.TxID)
 	}
 
 	return nil

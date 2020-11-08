@@ -116,13 +116,14 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 		TransactionEvent: &TransactionEvent{
 			KinVersion:  int(entry.Version),
 			TxHash:      txID,
+			TxID:        txID,
 			InvoiceList: il,
 		},
 	}
 
 	switch t := entry.Kind.(type) {
 	case *model.Entry_Stellar:
-		event.TransactionEvent.StellarEvent = &StellarData{
+		event.TransactionEvent.StellarData = &StellarData{
 			ResultXDR:   t.Stellar.ResultXdr,
 			EnvelopeXDR: t.Stellar.EnvelopeXdr,
 		}

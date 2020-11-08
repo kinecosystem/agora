@@ -31,6 +31,7 @@ func TestEventsHandler(t *testing.T) {
 			TransactionEvent: &events.TransactionEvent{
 				KinVersion: 1,
 				TxHash:     []byte("hash"),
+				TxID:       []byte("hash"),
 				InvoiceList: &commonpb.InvoiceList{
 					Invoices: []*commonpb.Invoice{
 						{
@@ -42,7 +43,7 @@ func TestEventsHandler(t *testing.T) {
 						},
 					},
 				},
-				StellarEvent: &events.StellarData{
+				StellarData: &events.StellarData{
 					EnvelopeXDR: []byte("envelope"),
 					ResultXDR:   []byte("result"),
 				},
