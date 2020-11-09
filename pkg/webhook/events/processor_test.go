@@ -134,9 +134,9 @@ func TestRoundTrip(t *testing.T) {
 		assert.EqualValues(t, txHash, txEvent.TxHash)
 		assert.True(t, proto.Equal(il, txEvent.InvoiceList))
 
-		assert.NotNil(t, txEvent.StellarData)
-		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.EnvelopeXdr, txEvent.StellarData.EnvelopeXDR)
-		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.ResultXdr, txEvent.StellarData.ResultXDR)
+		assert.NotNil(t, txEvent.StellarEvent)
+		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.EnvelopeXdr, txEvent.StellarEvent.EnvelopeXDR)
+		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.ResultXdr, txEvent.StellarEvent.ResultXDR)
 
 		close(called)
 	}))
@@ -187,9 +187,9 @@ func TestRoundTrip_WithAppID(t *testing.T) {
 		assert.EqualValues(t, txHash, txEvent.TxHash)
 		assert.True(t, proto.Equal(il, txEvent.InvoiceList))
 
-		assert.NotNil(t, txEvent.StellarData)
-		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.EnvelopeXdr, txEvent.StellarData.EnvelopeXDR)
-		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.ResultXdr, txEvent.StellarData.ResultXDR)
+		assert.NotNil(t, txEvent.StellarEvent)
+		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.EnvelopeXdr, txEvent.StellarEvent.EnvelopeXDR)
+		assert.NotNil(t, entry.Kind.(*model.Entry_Stellar).Stellar.ResultXdr, txEvent.StellarEvent.ResultXDR)
 
 		close(called)
 	}))

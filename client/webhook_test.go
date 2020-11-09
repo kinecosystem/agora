@@ -43,7 +43,7 @@ func TestEventsHandler(t *testing.T) {
 						},
 					},
 				},
-				StellarData: &events.StellarData{
+				StellarEvent: &events.StellarEvent{
 					EnvelopeXDR: []byte("envelope"),
 					ResultXDR:   []byte("result"),
 				},

@@ -123,7 +123,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 
 	switch t := entry.Kind.(type) {
 	case *model.Entry_Stellar:
-		event.TransactionEvent.StellarData = &StellarData{
+		event.TransactionEvent.StellarEvent = &StellarEvent{
 			ResultXDR:   t.Stellar.ResultXdr,
 			EnvelopeXDR: t.Stellar.EnvelopeXdr,
 		}

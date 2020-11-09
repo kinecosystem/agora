@@ -16,20 +16,20 @@ type TransactionEvent struct {
 	TxID        []byte                `json:"tx_id"`
 	InvoiceList *commonpb.InvoiceList `json:"invoice_list"`
 
-	StellarData *StellarData `json:"stellar_data"`
-	SolanaData  *SolanaData  `json:"solana_data"`
+	StellarEvent *StellarEvent `json:"stellar_event"`
+	SolanaEvent  *SolanaEvent  `json:"solana_event"`
 }
 
-// StellarData is stellar specific data related to
+// StellarEvent is stellar specific data related to
 // a transaction.
-type StellarData struct {
+type StellarEvent struct {
 	EnvelopeXDR []byte `json:"envelope_xdr"`
 	ResultXDR   []byte `json:"result_xdr"`
 }
 
-// SolanaData is stellar specific data related to
+// SolanaEvent is stellar specific data related to
 // a transaction.
-type SolanaData struct {
+type SolanaEvent struct {
 	Transaction         []byte `json:"transaction"`
 	TransactionError    string `json:"transaction_error"`
 	TransactionErrorRaw []byte `json:"transaction_error_raw"`
