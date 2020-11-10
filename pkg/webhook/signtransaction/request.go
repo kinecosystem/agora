@@ -2,10 +2,11 @@ package signtransaction
 
 import (
 	"github.com/golang/protobuf/proto"
+	"github.com/kinecosystem/agora-common/solana"
 	"github.com/pkg/errors"
 
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
-	transactionv4pb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/version"
 )
@@ -38,14 +39,14 @@ func CreateStellarRequest(v version.KinVersion, req *transactionpb.SubmitTransac
 	return reqBody, nil
 }
 
-func CreateSolanaRequest(req *transactionv4pb.SubmitTransactionRequest) (*RequestBody, error) {
+func CreateSolanaRequest(txn solana.Transaction, invoiceList *commonpb.InvoiceList) (*RequestBody, error) {
 	reqBody := &RequestBody{
 		KinVersion:        int(version.KinVersion4),
-		SolanaTransaction: req.Transaction.Value,
+		SolanaTransaction: txn.Marshal(),
 	}
 
-	if req.InvoiceList != nil {
-		b, err := proto.Marshal(req.InvoiceList)
+	if invoiceList != nil {
+		b, err := proto.Marshal(invoiceList)
 		if err != nil {
 			return nil, errors.New("failed to marshal invoice list")
 		}

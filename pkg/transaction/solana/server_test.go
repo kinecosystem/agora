@@ -317,6 +317,8 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.Nil(t, authTx.Memo.Memo)
 	assert.Nil(t, authTx.Memo.Text)
 
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
@@ -369,6 +371,8 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	assert.Nil(t, authTx.InvoiceList)
 	assert.Nil(t, authTx.Memo.Memo)
 	assert.Nil(t, authTx.Memo.Text)
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
 
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
@@ -438,6 +442,8 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	assert.Nil(t, authTx.Memo.Memo)
 	assert.Nil(t, authTx.Memo.Text)
 
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
@@ -484,6 +490,8 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	assert.Nil(t, authTx.Memo.Text)
 	assert.Equal(t, invoiceHash, authTx.Memo.Memo.ForeignKey()[:28])
 
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Equal(t, invoiceBytes, authTx.SignRequest.InvoiceList)
@@ -529,6 +537,8 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	assert.True(t, proto.Equal(authTx.InvoiceList, invoice))
 	assert.Nil(t, authTx.Memo.Text)
 	assert.Equal(t, invoiceHash, authTx.Memo.Memo.ForeignKey()[:28])
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
 
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
@@ -596,6 +606,8 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	assert.NotNil(t, memo, *authTx.Memo.Text)
 	assert.Nil(t, authTx.Memo.Memo)
 
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
@@ -644,6 +656,8 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	assert.Nil(t, authTx.InvoiceList)
 	assert.NotNil(t, memo, *authTx.Memo.Text)
 	assert.Nil(t, authTx.Memo.Memo)
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
 
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)

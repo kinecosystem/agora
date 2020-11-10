@@ -208,7 +208,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		OpCount:     len(transfers),
 		SignRequest: nil,
 	}
-	tx.SignRequest, err = signtransaction.CreateSolanaRequest(req)
+	tx.SignRequest, err = signtransaction.CreateSolanaRequest(txn, req.InvoiceList)
 	if err != nil {
 		log.WithError(err).Warn("failed to convert request for signing")
 		return nil, status.Error(codes.Internal, "failed to submit transaction")
