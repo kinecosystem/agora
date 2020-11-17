@@ -20,12 +20,22 @@ func (k PublicKey) StellarAddress() string {
 	return strkey.MustEncode(strkey.VersionByteAccountID, k)
 }
 
+// Base58 returns the base58-encoded public key
+func (k PublicKey) Base58() string {
+	return base58.Encode(k)
+}
+
 // PrivateKey is an ed25519.PrivateKey.
 type PrivateKey ed25519.PrivateKey
 
 // Public returns the corresponding PublicKey.
 func (k PrivateKey) Public() PublicKey {
 	return PublicKey(ed25519.PrivateKey(k).Public().(ed25519.PublicKey))
+}
+
+// Base58 returns the base58-encoded private key
+func (k PrivateKey) Base58() string {
+	return base58.Encode(k)
 }
 
 func (k PrivateKey) stellarSeed() string {

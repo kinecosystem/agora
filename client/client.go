@@ -7,19 +7,17 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
+	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-
-	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
-
-	"github.com/kinecosystem/agora/pkg/transaction"
 )
 
 // Environment specifies the desired Kin environment to use.
@@ -237,7 +235,7 @@ func New(env Environment, opts ...ClientOption) (Client, error) {
 		retry.NonRetriableErrors(nonRetriableErrors...),
 	)
 
-	c.internal = NewInternalClient(c.opts.cc, retrier, c.opts.kinVersion)
+	c.internal = NewInternalClient(c.opts.cc, retrier, c.opts.kinVersion, version.KinVersionUnknown)
 
 	return c, nil
 }
@@ -273,7 +271,7 @@ func (c *client) GetBalance(ctx context.Context, account PublicKey) (int64, erro
 //
 // ErrTransactionNotFound is returned if no transaction exists for the hash.
 func (c *client) GetTransaction(ctx context.Context, txHash []byte) (TransactionData, error) {
-	return c.internal.GetTransaction(ctx, txHash)
+	return c.internal.GetStellarTransaction(ctx, txHash)
 }
 
 // SubmitPayment sends a single payment to a specified kin account.
@@ -374,37 +372,37 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment) ([]byte, er
 
 	result, err := c.signAndSubmitXDR(ctx, signers, envelope, invoiceList)
 	if err != nil {
-		return result.Hash, err
+		return result.ID, err
 	}
 
 	if len(result.Errors.OpErrors) > 0 {
 		if len(result.Errors.OpErrors) != 1 {
-			return result.Hash, errors.Errorf("invalid number of operation errors. expected 0 or 1, got %d", len(result.Errors.OpErrors))
+			return result.ID, errors.Errorf("invalid number of operation errors. expected 0 or 1, got %d", len(result.Errors.OpErrors))
 		}
 
-		return result.Hash, result.Errors.OpErrors[0]
+		return result.ID, result.Errors.OpErrors[0]
 	}
 	if result.Errors.TxError != nil {
-		return result.Hash, result.Errors.TxError
+		return result.ID, result.Errors.TxError
 	}
 	if len(result.InvoiceErrors) > 0 {
 		if len(result.InvoiceErrors) != 1 {
-			return result.Hash, errors.Errorf("invalid number of invoice errors. expected 0 or 1, got %d", len(result.InvoiceErrors))
+			return result.ID, errors.Errorf("invalid number of invoice errors. expected 0 or 1, got %d", len(result.InvoiceErrors))
 		}
 
 		switch result.InvoiceErrors[0].Reason {
 		case commonpb.InvoiceError_ALREADY_PAID:
-			return result.Hash, ErrAlreadyPaid
+			return result.ID, ErrAlreadyPaid
 		case commonpb.InvoiceError_WRONG_DESTINATION:
-			return result.Hash, ErrWrongDestination
+			return result.ID, ErrWrongDestination
 		case commonpb.InvoiceError_SKU_NOT_FOUND:
-			return result.Hash, ErrSKUNotFound
+			return result.ID, ErrSKUNotFound
 		default:
-			return result.Hash, errors.Errorf("unknown invoice error: %v", result.InvoiceErrors[0].Reason)
+			return result.ID, errors.Errorf("unknown invoice error: %v", result.InvoiceErrors[0].Reason)
 		}
 	}
 
-	return result.Hash, nil
+	return result.ID, nil
 }
 
 // SubmitEarnBatch submits a batch of earn payments.
@@ -473,7 +471,7 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 		// will be handled (processed).
 		lastProcessedBatch = i
 
-		var submitResult SubmitStellarTransactionResult
+		var submitResult SubmitTransactionResult
 		submitResult, err = c.submitEarnBatch(ctx, b)
 		if err != nil {
 			for j := range b.Earns {
@@ -489,7 +487,7 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 		if submitResult.Errors.TxError == nil {
 			for _, r := range b.Earns {
 				result.Succeeded = append(result.Succeeded, EarnResult{
-					TxHash: submitResult.Hash,
+					TxHash: submitResult.ID,
 					Earn:   r,
 				})
 			}
@@ -505,7 +503,7 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 		if len(submitResult.Errors.OpErrors) > 0 {
 			for j, e := range submitResult.Errors.OpErrors {
 				result.Failed = append(result.Failed, EarnResult{
-					TxHash: submitResult.Hash,
+					TxHash: submitResult.ID,
 					Earn:   b.Earns[j],
 					Error:  e,
 				})
@@ -513,7 +511,7 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 		} else {
 			for j := range b.Earns {
 				result.Failed = append(result.Failed, EarnResult{
-					TxHash: submitResult.Hash,
+					TxHash: submitResult.ID,
 					Earn:   b.Earns[j],
 					Error:  err,
 				})
@@ -535,7 +533,7 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch) (result E
 	return result, err
 }
 
-func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitStellarTransactionResult, err error) {
+func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitTransactionResult, err error) {
 	var signers []PrivateKey
 	if batch.Channel != nil {
 		signers = []PrivateKey{
@@ -648,8 +646,8 @@ func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result S
 	return result, err
 }
 
-func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, envelope xdr.TransactionEnvelope, invoiceList *commonpb.InvoiceList) (SubmitStellarTransactionResult, error) {
-	var result SubmitStellarTransactionResult
+func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, envelope xdr.TransactionEnvelope, invoiceList *commonpb.InvoiceList) (SubmitTransactionResult, error) {
+	var result SubmitTransactionResult
 
 	senderInfo, err := c.internal.GetStellarAccountInfo(ctx, signers[0].Public())
 	if err != nil {

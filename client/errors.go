@@ -3,6 +3,8 @@ package client
 import (
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
+
+	commonpbv4 "github.com/kinecosystem/agora-api/genproto/common/v4"
 )
 
 var (
@@ -25,6 +27,11 @@ var (
 	ErrWrongDestination = errors.New("wrong destination")
 	ErrSKUNotFound      = errors.New("sku not found")
 
+	ErrNoSubsidizer        = errors.New("no subsidizer available")
+	ErrPayerRequired       = errors.New("payer required")
+	ErrTransactionRejected = errors.New("transaction rejected")
+	ErrAlreadySubmitted    = errors.New("transaction already submitted")
+
 	errUnexpectedResult = errors.New("unexpected result from agora")
 
 	// nonRetriableErrors contains the set of errors that
@@ -39,6 +46,10 @@ var (
 		ErrAlreadyPaid,
 		ErrWrongDestination,
 		ErrSKUNotFound,
+		ErrNoSubsidizer,
+		ErrPayerRequired,
+		ErrTransactionRejected,
+		ErrAlreadySubmitted,
 	}
 )
 
@@ -133,6 +144,31 @@ func errorFromXDRBytes(resultXDR []byte) (txErrors TransactionErrors, err error)
 		default:
 			txErrors.OpErrors[i] = errors.Errorf("operation[%d] failed", i)
 		}
+	}
+
+	return txErrors, nil
+}
+
+func errorFromProto(protoError *commonpbv4.TransactionError) (txErrors TransactionErrors, err error) {
+	if protoError == nil {
+		return txErrors, nil
+	}
+
+	switch protoError.Reason {
+	case commonpbv4.TransactionError_NONE:
+		return txErrors, nil
+	case commonpbv4.TransactionError_UNKNOWN:
+		txErrors.TxError = errors.New("unknown error")
+	case commonpbv4.TransactionError_UNAUTHORIZED:
+		txErrors.TxError = ErrInvalidSignature
+	case commonpbv4.TransactionError_BAD_NONCE:
+		txErrors.TxError = ErrBadNonce
+	case commonpbv4.TransactionError_INSUFFICIENT_FUNDS:
+		txErrors.TxError = ErrInsufficientBalance
+	case commonpbv4.TransactionError_INVALID_ACCOUNT:
+		txErrors.TxError = ErrAccountDoesNotExist
+	default:
+		return txErrors, errors.Errorf("unknown error reason: %d", protoError.Reason)
 	}
 
 	return txErrors, nil

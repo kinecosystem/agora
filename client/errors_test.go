@@ -6,6 +6,8 @@ import (
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	commonpbv4 "github.com/kinecosystem/agora-api/genproto/common/v4"
 )
 
 func TestErrors_BadParseTransaction(t *testing.T) {
@@ -284,4 +286,41 @@ func TestErrors_OpErrors(t *testing.T) {
 
 	require.Len(t, errors.OpErrors, len(cases))
 
+}
+
+func TestErrors_FromProto(t *testing.T) {
+	for _, tc := range []struct {
+		reason  commonpbv4.TransactionError_Reason
+		txError error
+	}{
+		{
+			reason:  commonpbv4.TransactionError_NONE,
+			txError: nil,
+		},
+		{
+			reason:  commonpbv4.TransactionError_UNAUTHORIZED,
+			txError: ErrInvalidSignature,
+		},
+		{
+			reason:  commonpbv4.TransactionError_BAD_NONCE,
+			txError: ErrBadNonce,
+		},
+		{
+			reason:  commonpbv4.TransactionError_INSUFFICIENT_FUNDS,
+			txError: ErrInsufficientBalance,
+		},
+		{
+			reason:  commonpbv4.TransactionError_INVALID_ACCOUNT,
+			txError: ErrAccountDoesNotExist,
+		},
+	} {
+		txErrors, err := errorFromProto(&commonpbv4.TransactionError{Reason: tc.reason})
+		require.NoError(t, err)
+		assert.Equal(t, tc.txError, txErrors.TxError)
+	}
+
+	// Unknown error
+	txErrors, err := errorFromProto(&commonpbv4.TransactionError{Reason: commonpbv4.TransactionError_UNKNOWN})
+	require.NoError(t, err)
+	require.NotNil(t, txErrors.TxError)
 }

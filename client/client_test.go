@@ -503,7 +503,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 			txBytes, err := envelope.Tx.MarshalBinary()
 			assert.NoError(t, err)
 			txHash := sha256.Sum256(txBytes)
-			assert.EqualValues(t, txHash[:], result.Hash)
+			assert.EqualValues(t, txHash[:], result.ID)
 
 			assert.EqualValues(t, 100*len(b.Earns), envelope.Tx.Fee)
 			assert.EqualValues(t, initSeq+1, envelope.Tx.SeqNum)
@@ -618,7 +618,7 @@ func TestClient_SubmitEarnBatchInternalKin2(t *testing.T) {
 		txBytes, err := envelope.Tx.MarshalBinary()
 		assert.NoError(t, err)
 		txHash := sha256.Sum256(txBytes)
-		assert.EqualValues(t, txHash[:], result.Hash)
+		assert.EqualValues(t, txHash[:], result.ID)
 
 		assert.EqualValues(t, 100*len(b.Earns), envelope.Tx.Fee)
 		assert.EqualValues(t, initSeq+1, envelope.Tx.SeqNum)

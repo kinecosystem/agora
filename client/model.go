@@ -1,16 +1,22 @@
 package client
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/kinecosystem/agora-common/kin"
-	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
+	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
+
+	"github.com/kinecosystem/agora/pkg/version"
 )
 
 // KinToQuarks converts a string representation of kin
@@ -175,12 +181,102 @@ func parsePaymentsFromEnvelope(envelope xdr.TransactionEnvelope, txType kin.Tran
 	return payments, nil
 }
 
+func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPayment, error) {
+	if item.InvoiceList != nil && len(item.InvoiceList.Invoices) != len(item.Payments) {
+		return nil, errors.Errorf(
+			"provided invoice count (%d) does not match payment count (%d)",
+			len(item.InvoiceList.Invoices),
+			len(item.Payments),
+		)
+	}
+
+	var textMemo string
+	var txType kin.TransactionType
+
+	switch t := item.RawTransaction.(type) {
+	case *transactionpbv4.HistoryItem_SolanaTransaction:
+		tx := &solana.Transaction{}
+		err := tx.Unmarshal(t.SolanaTransaction.Value)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to unmarshal test transaction")
+		}
+
+		if bytes.Equal(tx.Message.Accounts[tx.Message.Instructions[0].ProgramIndex], memo.ProgramKey) {
+			m, err := memo.DecompileMemo(tx.Message, 0)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to decompile memo instruction")
+			}
+			decoded := [32]byte{}
+			_, err = base64.StdEncoding.Decode(decoded[:], m.Data)
+			if err == nil && kin.IsValidMemoStrict(decoded) {
+				txType = kin.Memo(decoded).TransactionType()
+			} else {
+				textMemo = string(m.Data)
+			}
+		}
+	case *transactionpbv4.HistoryItem_StellarTransaction:
+		var envelope xdr.TransactionEnvelope
+		if err := envelope.UnmarshalBinary(t.StellarTransaction.EnvelopeXdr); err != nil {
+			return nil, errors.Wrap(err, "failed to unmarshal xdr")
+		}
+
+		kinMemo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
+		if ok {
+			txType = kinMemo.TransactionType()
+		} else if envelope.Tx.Memo.Text != nil {
+			textMemo = *envelope.Tx.Memo.Text
+		}
+	}
+
+	payments := make([]ReadOnlyPayment, len(item.Payments))
+	for i, payment := range item.Payments {
+		p := ReadOnlyPayment{
+			Sender:      payment.Source.Value,
+			Destination: payment.Destination.Value,
+			Type:        txType,
+			Quarks:      payment.Amount,
+		}
+		if item.InvoiceList != nil {
+			p.Invoice = item.InvoiceList.Invoices[i]
+		} else if textMemo != "" {
+			p.Memo = textMemo
+		}
+		payments[i] = p
+	}
+
+	return payments, nil
+
+}
+
 // TransactionData contains high level metadata and payments
 // contained in a transaction.
 type TransactionData struct {
-	TxHash   []byte
+	TxID     []byte
+	TxState  TransactionState
 	Payments []ReadOnlyPayment
 	Errors   TransactionErrors
+}
+
+type TransactionState int
+
+const (
+	TransactionStateUnknown TransactionState = iota
+	TransactionStateSuccess
+	TransactionStateFailed
+	TransactionStatePending
+)
+
+func txStateFromProto(state transactionpbv4.GetTransactionResponse_State) TransactionState {
+	switch state {
+	case transactionpbv4.GetTransactionResponse_SUCCESS:
+		return TransactionStateSuccess
+	case transactionpbv4.GetTransactionResponse_FAILED:
+		return TransactionStateFailed
+	case transactionpbv4.GetTransactionResponse_PENDING:
+		return TransactionStatePending
+	default:
+		return TransactionStateUnknown
+	}
 }
 
 // EarnBatch is a batch of Earn payments coming from a single
