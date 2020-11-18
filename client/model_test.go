@@ -12,10 +12,18 @@ func TestKinToQuarks(t *testing.T) {
 	validCases := map[string]int64{
 		"0.00001": 1,
 		"0.00002": 2,
+		"0.00020": 20,
+		"0.00200": 200,
+		"0.02000": 2000,
+		"0.20000": 20000,
+		"1.00000": 1e5,
+		"1.50000": 1e5 + 1e5/2,
 		"1":       1e5,
 		"2":       2e5,
-		// 10 trillion, more than what's in cicrulation
+		// 10 trillion, which is what's in circulation
 		"10000000000000": 1e13 * 1e5,
+		// Encountered an imprecise error
+		"9974.99900": 997499900,
 	}
 	for in, expected := range validCases {
 		actual, err := KinToQuarks(in)
@@ -31,6 +39,12 @@ func TestKinToQuarks(t *testing.T) {
 	invalidCases := []string{
 		"0.000001",
 		"0.000015",
+		// 1000 trillion-1, ~100x more than what's in circulation
+		"999999999999999",
+		"abc",
+		"10.-1",
+		"10.0.0",
+		".0",
 	}
 	for _, in := range invalidCases {
 		actual, err := KinToQuarks(in)

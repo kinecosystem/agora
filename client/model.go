@@ -1,7 +1,9 @@
 package client
 
 import (
-	"math/big"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora/pkg/version"
@@ -9,10 +11,6 @@ import (
 	"github.com/pkg/errors"
 
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
-)
-
-var (
-	quarkCoeff = big.NewFloat(1e5)
 )
 
 // KinToQuarks converts a string representation of kin
@@ -23,17 +21,33 @@ var (
 // a value smaller than quarks, or a value _far_ greater than
 // the supply.
 func KinToQuarks(val string) (int64, error) {
-	x, _, err := big.ParseFloat(val, 10, 64, big.ToZero)
+	parts := strings.Split(val, ".")
+	if len(parts) > 2 {
+		return 0, errors.New("invalid kin value")
+	}
+
+	if len(parts[0]) > 14 {
+		return 0, errors.New("value cannot be represented")
+	}
+
+	kin, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		return 0, err
 	}
 
-	r, accuracy := new(big.Float).Mul(x, quarkCoeff).Int64()
-	if accuracy != big.Exact {
-		return 0, errors.New("value cannot be represented with quarks")
+	var quarks uint64
+	if len(parts) == 2 {
+		if len(parts[1]) > 5 {
+			return 0, errors.New("value cannot be represented")
+		}
+
+		quarks, err = strconv.ParseUint(parts[1], 10, 64)
+		if err != nil {
+			return 0, errors.Wrap(err, "invalid decimal component")
+		}
 	}
 
-	return r, nil
+	return kin*1e5 + int64(quarks), nil
 }
 
 // MustKinToQuarks calls KinToQuarks, panicking if there's an error.
@@ -51,10 +65,11 @@ func MustKinToQuarks(val string) int64 {
 // QuarksToKin converts an int64 amount of quarks to the
 // string representation of kin.
 func QuarksToKin(amount int64) string {
-	quarks := big.NewFloat(0)
-	quarks.SetInt64(amount)
+	if amount < 1e5 {
+		return fmt.Sprintf("0.%05d", amount)
+	}
 
-	return new(big.Float).Quo(quarks, quarkCoeff).Text('f', 5)
+	return fmt.Sprintf("%d.%05d", amount/1e5, amount%1e5)
 }
 
 // Payment represents a kin payment.
