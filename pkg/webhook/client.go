@@ -144,7 +144,7 @@ func (c *Client) Events(ctx context.Context, eventsURL url.URL, webhookSecret st
 			resp, err = c.httpClient.Do(req)
 			return err
 		},
-		retry.Limit(5),
+		retry.Limit(10),
 		retry.BackoffWithJitter(backoff.BinaryExponential(100*time.Millisecond), 5*time.Second, 0.1),
 	)
 	if err != nil {

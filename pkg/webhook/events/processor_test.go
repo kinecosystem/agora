@@ -315,7 +315,9 @@ func TestWebhook_RetriableError(t *testing.T) {
 		TypeName: proto.MessageName(entry),
 		RawValue: b,
 	}
-	assert.Error(t, env.processor.queueHandler(context.Background(), msg))
+
+	// Currently we don't propagate an error up so we don't backup the queue.
+	assert.NoError(t, env.processor.queueHandler(context.Background(), msg))
 }
 
 func setupQueue(t *testing.T, queueName string) string {

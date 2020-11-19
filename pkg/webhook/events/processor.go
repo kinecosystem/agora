@@ -181,9 +181,11 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 		return errors.Wrap(err, "failed to marshal events body")
 	}
 
+	// note: we don't return an error so the processor will clear the task.
+	//       ideally we can send it to a DQL, or use some other shuffle technique
+	//       to allow for longer retries.
 	if err := p.webhookClient.Events(ctx, *conf.EventsURL, conf.WebhookSecret, body); err != nil {
 		log.WithError(err).Warn("Failed to call events webhook")
-		return err
 	}
 
 	return nil
