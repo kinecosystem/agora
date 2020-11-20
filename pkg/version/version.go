@@ -62,7 +62,7 @@ func GetCtxDesiredVersion(ctx context.Context) (version KinVersion, err error) {
 	}
 
 	if len(val) == 0 {
-		return defaultVersion, nil
+		return GetCtxKinVersion(ctx)
 	}
 
 	i, err := strconv.Atoi(val)
@@ -130,7 +130,7 @@ func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 
 		switch desired {
 		case KinVersion2, KinVersion3:
-			actual, err := GetCtxDesiredVersion(ss.Context())
+			actual, err := GetCtxKinVersion(ss.Context())
 			if err != nil {
 				log.WithError(err).Warn("failed to get kin version; ignoring")
 				return handler(srv, stream)
