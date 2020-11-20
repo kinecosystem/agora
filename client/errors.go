@@ -32,6 +32,7 @@ var (
 	ErrTransactionRejected = errors.New("transaction rejected")
 	ErrAlreadySubmitted    = errors.New("transaction already submitted")
 
+	errNoTokenAccounts  = errors.New("no token accounts")
 	errUnexpectedResult = errors.New("unexpected result from agora")
 
 	// nonRetriableErrors contains the set of errors that

@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/network"
 	"github.com/kinecosystem/go/xdr"
@@ -97,13 +98,38 @@ type SignTransactionRequest struct {
 	//
 	// It will only be set on stellar based transactions, and is _not_ a stable API.
 	Envelope *xdr.TransactionEnvelope
-	network  build.Network
+
+	network build.Network
+
+	// SolanaTransaction is included _only_ for further validation by SDK consumers,
+	// which is optional.
+	//
+	// It will only be set on Solana-based transactions, and is _not_ a stable API.
+	SolanaTransaction *solana.Transaction
 }
 
+// Deprecated: TxHash() is deprecated. Use TxId() instead.
 // TxHash returns the transaction hash of the transaction being signed.
 func (s *SignTransactionRequest) TxHash() ([]byte, error) {
-	hash, err := network.HashTransaction(&s.Envelope.Tx, s.network.Passphrase)
-	return hash[:], err
+	if s.Envelope != nil {
+		hash, err := network.HashTransaction(&s.Envelope.Tx, s.network.Passphrase)
+		return hash[:], err
+	}
+	return nil, errors.New("this transaction has no hash")
+}
+
+// TxID returns the ID of the transaction in this request.
+//
+// It will either be a 32-byte Stellar transaction hash or a 64-byte Solana transaction signature.
+func (s *SignTransactionRequest) TxID() ([]byte, error) {
+	if s.SolanaTransaction != nil {
+		return s.SolanaTransaction.Signature(), nil
+	}
+	if s.Envelope != nil {
+		hash, err := network.HashTransaction(&s.Envelope.Tx, s.network.Passphrase)
+		return hash[:], err
+	}
+	return nil, errors.New("this request has no transaction")
 }
 
 // SignTransactionResponse contains the response information related to a request.
@@ -118,9 +144,11 @@ type SignTransactionResponse struct {
 	errors   []signtransaction.InvoiceError
 }
 
-// Sign signs the underlying transaction with the specified private key.
+// Sign signs the underlying transaction with the specified private key. No-op on Kin 4 transactions.
 func (r *SignTransactionResponse) Sign(priv PrivateKey) (err error) {
-	r.envelope, err = transaction.SignEnvelope(r.envelope, r.network, priv.stellarSeed())
+	if r.envelope != nil {
+		r.envelope, err = transaction.SignEnvelope(r.envelope, r.network, priv.stellarSeed())
+	}
 	return err
 }
 
@@ -212,14 +240,8 @@ func SignTransactionHandler(env Environment, secret string, f SignTransactionFun
 			signRequest.KinVersion = 3
 		}
 
-		if signRequest.KinVersion != 2 && signRequest.KinVersion != 3 {
+		if signRequest.KinVersion < 2 || signRequest.KinVersion > 4 {
 			http.Error(w, "invalid kin version", http.StatusBadRequest)
-			return
-		}
-
-		var envelope xdr.TransactionEnvelope
-		if err = envelope.UnmarshalBinary(signRequest.EnvelopeXDR); err != nil {
-			http.Error(w, "invalid xdr body", http.StatusBadRequest)
 			return
 		}
 
@@ -236,17 +258,39 @@ func SignTransactionHandler(env Environment, secret string, f SignTransactionFun
 			UserID:      r.Header.Get(webhook.AppUserIDHeader),
 			UserPasskey: r.Header.Get(webhook.AppUserPasskeyHeader),
 			network:     network,
-			Envelope:    &envelope,
-		}
-		req.Payments, err = parsePaymentsFromEnvelope(envelope, kin.TransactionTypeSpend, invoiceList, version.KinVersion(signRequest.KinVersion))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
 		}
 
 		resp := &SignTransactionResponse{
-			network:  network,
-			envelope: &envelope,
+			network: network,
+		}
+
+		if signRequest.KinVersion == 4 {
+			var tx solana.Transaction
+			if err = tx.Unmarshal(signRequest.SolanaTransaction); err != nil {
+				http.Error(w, "invalid solana tx", http.StatusBadRequest)
+				return
+			}
+
+			req.SolanaTransaction = &tx
+			req.Payments, err = parsePaymentsFromTransaction(tx, invoiceList)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			var envelope xdr.TransactionEnvelope
+			if err = envelope.UnmarshalBinary(signRequest.EnvelopeXDR); err != nil {
+				http.Error(w, "invalid xdr body", http.StatusBadRequest)
+				return
+			}
+
+			req.Envelope = &envelope
+			resp.envelope = &envelope
+			req.Payments, err = parsePaymentsFromEnvelope(envelope, kin.TransactionTypeSpend, invoiceList, version.KinVersion(signRequest.KinVersion))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 
 		if err := f(req, resp); err != nil {
@@ -271,14 +315,16 @@ func SignTransactionHandler(env Environment, secret string, f SignTransactionFun
 			return
 		}
 
-		b, err := resp.envelope.MarshalBinary()
-		if err != nil {
-			http.Error(w, "failed to marshal envelope", http.StatusInternalServerError)
-			return
-		}
+		successResp := signtransaction.SuccessResponse{}
 
-		successResp := signtransaction.SuccessResponse{
-			EnvelopeXDR: b,
+		if resp.envelope != nil {
+			b, err := resp.envelope.MarshalBinary()
+			if err != nil {
+				http.Error(w, "failed to marshal envelope", http.StatusInternalServerError)
+				return
+			}
+
+			successResp.EnvelopeXDR = b
 		}
 
 		if err = encoder.Encode(&successResp); err != nil {

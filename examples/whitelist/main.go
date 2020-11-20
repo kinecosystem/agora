@@ -25,12 +25,12 @@ func signHandler(req client.SignTransactionRequest, resp *client.SignTransaction
 		}
 	}
 
-	txHash, err := req.TxHash()
+	txID, err := req.TxID()
 	if err != nil {
 		return err
 	}
 
-	log.Println("whitelisting transaction:", hex.EncodeToString(txHash))
+	log.Println("whitelisting transaction:", hex.EncodeToString(txID))
 	return resp.Sign(whitelistKey)
 }
 

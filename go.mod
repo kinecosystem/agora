@@ -10,6 +10,7 @@ require (
 	github.com/go-redis/redis/v7 v7.0.0
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.2
+	github.com/hashicorp/golang-lru v0.5.0
 	github.com/kinecosystem/agora-api v0.23.0
 	github.com/kinecosystem/agora-common v0.47.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e

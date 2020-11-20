@@ -10,6 +10,7 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
+	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 
@@ -181,6 +182,71 @@ func parsePaymentsFromEnvelope(envelope xdr.TransactionEnvelope, txType kin.Tran
 	return payments, nil
 }
 
+func parsePaymentsFromTransaction(tx solana.Transaction, invoiceList *commonpb.InvoiceList) ([]ReadOnlyPayment, error) {
+	transferStart := 0
+
+	txType := kin.TransactionTypeUnknown
+	var textMemo string
+	programIdx := tx.Message.Instructions[0].ProgramIndex
+	if bytes.Equal(tx.Message.Accounts[programIdx], memo.ProgramKey) {
+		transferStart = 1
+		memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to decompile memo")
+		}
+
+		m, err := kin.MemoFromBase64String(string(memoInstr.Data), false)
+		if err != nil {
+			textMemo = string(memoInstr.Data)
+		} else {
+			txType = m.TransactionType()
+		}
+	}
+
+	transferCount := len(tx.Message.Instructions) - transferStart
+	if invoiceList != nil && len(invoiceList.Invoices) != transferCount {
+		return nil, errors.Errorf(
+			"provided invoice count (%d) does not match payment count (%d)",
+			len(invoiceList.Invoices),
+			transferCount,
+		)
+	}
+
+	payments := make([]ReadOnlyPayment, 0, transferCount)
+	for i := range tx.Message.Instructions[transferStart:] {
+		transferInst, err := token.DecompileTransferAccount(tx.Message, i+transferStart)
+		if err == solana.ErrIncorrectProgram || err == solana.ErrIncorrectInstruction {
+			continue
+		} else if err != nil {
+			return nil, errors.Wrap(err, "failed to decompile transfer")
+		}
+
+		p := ReadOnlyPayment{
+			Sender:      PublicKey(transferInst.Source),
+			Destination: PublicKey(transferInst.Destination),
+			Quarks:      int64(transferInst.Amount),
+			Type:        txType,
+		}
+
+		if invoiceList != nil {
+			// This indexing is 'safe', as agora validates on ingestion that
+			// the amount of operations in a transaction matches the amount
+			// of invoices submitted, such that there is a direct mapping
+			// between the transaction Operations and the InvoiceList.
+			//
+			// Additionally, we check they're the same above as an extra
+			// safety measure.
+			p.Invoice = invoiceList.Invoices[i]
+		} else if textMemo != "" {
+			p.Memo = textMemo
+		}
+
+		payments = append(payments, p)
+	}
+
+	return payments, nil
+}
+
 func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPayment, error) {
 	if item.InvoiceList != nil && len(item.InvoiceList.Invoices) != len(item.Payments) {
 		return nil, errors.Errorf(
@@ -308,7 +374,29 @@ type EarnBatchResult struct {
 // EarnResult contains the result of a single earn within an
 // earn batch.
 type EarnResult struct {
-	TxHash []byte
-	Earn   Earn
-	Error  error
+	TxID  []byte
+	Earn  Earn
+	Error error
 }
+
+// AccountResolution is used to indicate which type of account resolution should be used if a transaction on Kin 4 fails
+// due to an account being unavailable.
+//
+type AccountResolution int
+
+const (
+	// AccountResolutionExact indicates no account resolution will be used.
+	AccountResolutionExact AccountResolution = iota
+
+	// AccountResolutionPreferred indicates that in the case an account is not found, the client will reattempt
+	// submission with any resolved token accounts.
+	//
+	// When used for a sender key in a payment or earn request, if Agora is able to resolve the original sender public
+	// key to a set of token accounts, the original sender will be used as the owner in the Solana transfer
+	// instruction and the first resolved token account will be used as the sender.
+	//
+	// When used for a destination key in a payment or earn request, if Agora is able to resolve the destination key to
+	// a set of token accounts, the first resolved token account will be used as the destination in the Solana transfer
+	// instruction.
+	AccountResolutionPreferred
+)

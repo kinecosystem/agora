@@ -3,6 +3,7 @@ package testserver
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"strings"
 	"sync"
 
@@ -37,6 +38,7 @@ type V4Server struct {
 
 	ServiceConfigReqs []*transactionpbv4.GetServiceConfigRequest
 	ServiceConfig     *transactionpbv4.GetServiceConfigResponse
+	Subsidizer        ed25519.PrivateKey
 
 	Gets            map[string]transactionpbv4.GetTransactionResponse
 	Submits         []*transactionpbv4.SubmitTransactionRequest
@@ -210,6 +212,13 @@ func (t *V4Server) SubmitTransaction(ctx context.Context, req *transactionpbv4.S
 				Value: tx.Signature(),
 			}
 			return r, nil
+		}
+	}
+
+	if t.ServiceConfig != nil && t.ServiceConfig.GetSubsidizerAccount() != nil && t.Subsidizer != nil && bytes.Equal(tx.Signatures[0][:], make([]byte, ed25519.SignatureSize)) {
+		err := tx.Sign(t.Subsidizer)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "failed to sign transaction with subsidizer")
 		}
 	}
 

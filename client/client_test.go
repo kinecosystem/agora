@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"math"
 	"strings"
 	"testing"
@@ -10,14 +12,21 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/kin"
-	"github.com/kinecosystem/agora/pkg/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/memo"
+	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	accountpbv4 "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
+	commonpbv4 "github.com/kinecosystem/agora-api/genproto/common/v4"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
+	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
+
+	"github.com/kinecosystem/agora/pkg/testutil"
+	"github.com/kinecosystem/agora/pkg/version"
 )
 
 func TestClient_AccountManagement(t *testing.T) {
@@ -736,7 +745,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 
 			txHashes := make(map[string]struct{})
 			for i, r := range result.Succeeded {
-				txHashes[string(r.TxHash)] = struct{}{}
+				txHashes[string(r.TxID)] = struct{}{}
 				assert.NoError(t, r.Error)
 				assert.Equal(t, b.Earns[i], r.Earn)
 			}
@@ -840,7 +849,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	assert.Len(t, result.Failed, 102)
 	for i := 0; i < len(result.Succeeded); i++ {
 		assert.NoError(t, result.Succeeded[i].Error)
-		assert.NotNil(t, result.Succeeded[i].TxHash)
+		assert.NotNil(t, result.Succeeded[i].TxID)
 		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
 	}
 	for i := 0; i < 100; i++ {
@@ -890,7 +899,7 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	assert.Len(t, result.Failed, 102)
 	for i := 0; i < len(result.Succeeded); i++ {
 		assert.NoError(t, result.Succeeded[i].Error)
-		assert.NotNil(t, result.Succeeded[i].TxHash)
+		assert.NotNil(t, result.Succeeded[i].TxID)
 		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
 	}
 	for i := 0; i < 100; i++ {
@@ -900,5 +909,1020 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	for i := 100; i < 102; i++ {
 		assert.NoError(t, result.Failed[i].Error)
 		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
+	}
+}
+
+func TestClient_CreateAccountInvalidKinVersion(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(1))
+	defer cleanup()
+
+	priv, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	err = env.client.CreateAccount(context.Background(), priv)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "version")
+}
+
+func TestClient_SubmitPaymentInvalidKinVersion(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(1))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	txID, err := env.client.SubmitPayment(context.Background(), Payment{
+		Sender:      sender,
+		Destination: dest.Public(),
+		Type:        kin.TransactionTypeNone,
+		Quarks:      1,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "version")
+	assert.Nil(t, txID)
+}
+
+func TestClient_Kin4AccountManagement(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	setServiceConfigResp(t, env.v4Server, true)
+
+	priv, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	balance, err := env.client.GetBalance(context.Background(), priv.Public())
+	assert.Equal(t, ErrAccountDoesNotExist, err)
+	assert.Zero(t, balance)
+
+	err = env.client.CreateAccount(context.Background(), PrivateKey(priv))
+	assert.NoError(t, err)
+
+	err = env.client.CreateAccount(context.Background(), PrivateKey(priv))
+	assert.Equal(t, ErrAccountExists, err)
+
+	balance, err = env.client.GetBalance(context.Background(), priv.Public())
+	assert.NoError(t, err)
+	assert.EqualValues(t, 10, balance)
+}
+
+func TestClient_Kin4SubmitPayment(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	setServiceConfigResp(t, env.v4Server, true)
+
+	for _, acc := range [][]byte{sender, dest} {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	payments := []Payment{
+		{
+			Sender:      sender,
+			Destination: dest.Public(),
+			Type:        kin.TransactionTypeSpend,
+			Quarks:      11,
+		},
+		{
+			Sender:      sender,
+			Destination: dest.Public(),
+			Type:        kin.TransactionTypeSpend,
+			Quarks:      11,
+			Memo:        "1-test",
+		},
+		{
+			Sender:      sender,
+			Destination: dest.Public(),
+			Type:        kin.TransactionTypeSpend,
+			Quarks:      11,
+			Invoice: &commonpb.Invoice{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:  "test",
+						Amount: 11,
+					},
+				},
+			},
+		},
+	}
+
+	for _, p := range payments {
+		txID, err := env.client.SubmitPayment(context.Background(), p)
+		assert.NotNil(t, txID)
+		assert.NoError(t, err)
+
+		func() {
+			env.v4Server.Mux.Lock()
+			defer env.v4Server.Mux.Unlock()
+			defer func() { env.v4Server.Submits = nil }()
+
+			assert.Len(t, env.v4Server.Submits, 1)
+
+			tx := solana.Transaction{}
+			assert.NoError(t, tx.Unmarshal(env.v4Server.Submits[0].Transaction.Value))
+			assert.Len(t, tx.Signatures, 2)
+			assert.EqualValues(t, make([]byte, ed25519.SignatureSize), tx.Signatures[0][:])
+			assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+			assert.Len(t, tx.Message.Instructions, 2)
+
+			if p.Memo != "" {
+				memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+				require.NoError(t, err)
+				assert.Equal(t, p.Memo, string(memoInstr.Data))
+			} else if p.Invoice != nil {
+				invoiceList := &commonpb.InvoiceList{
+					Invoices: []*commonpb.Invoice{p.Invoice},
+				}
+				ilBytes, err := proto.Marshal(invoiceList)
+				require.NoError(t, err)
+				ilHash := sha256.Sum224(ilBytes)
+
+				memoInstruction, err := memo.DecompileMemo(tx.Message, 0)
+				require.NoError(t, err)
+
+				m, err := kin.MemoFromBase64String(string(memoInstruction.Data), true)
+				require.NoError(t, err)
+
+				assert.Equal(t, kin.TransactionTypeSpend, m.TransactionType())
+				assert.EqualValues(t, 1, m.AppIndex())
+				assert.EqualValues(t, ilHash[:], m.ForeignKey()[:28])
+				assert.True(t, proto.Equal(invoiceList, env.v4Server.Submits[0].InvoiceList))
+			} else {
+				memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+				require.NoError(t, err)
+
+				m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+				require.NoError(t, err)
+
+				assert.Equal(t, kin.TransactionTypeSpend, m.TransactionType())
+				assert.EqualValues(t, 1, m.AppIndex())
+				assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+			}
+
+			transferInstr, err := token.DecompileTransferAccount(tx.Message, 1)
+			require.NoError(t, err)
+
+			assert.EqualValues(t, sender.Public(), transferInstr.Source)
+			assert.EqualValues(t, dest.Public(), transferInstr.Destination)
+			assert.EqualValues(t, sender.Public(), transferInstr.Owner)
+			assert.EqualValues(t, p.Quarks, transferInstr.Amount)
+		}()
+	}
+
+	env.v4Server.Mux.Lock()
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_INVOICE_ERROR,
+			InvoiceErrors: []*commonpb.InvoiceError{
+				{
+					Invoice: payments[2].Invoice,
+					Reason:  commonpb.InvoiceError_ALREADY_PAID,
+				},
+			},
+		},
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_INVOICE_ERROR,
+			InvoiceErrors: []*commonpb.InvoiceError{
+				{
+					Invoice: payments[2].Invoice,
+					Reason:  commonpb.InvoiceError_WRONG_DESTINATION,
+				},
+			},
+		},
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_INVOICE_ERROR,
+			InvoiceErrors: []*commonpb.InvoiceError{
+				{
+					Invoice: payments[2].Invoice,
+					Reason:  commonpb.InvoiceError_SKU_NOT_FOUND,
+				},
+			},
+		},
+	}
+	env.v4Server.Mux.Unlock()
+
+	for _, e := range []error{ErrAlreadyPaid, ErrWrongDestination, ErrSKUNotFound} {
+		txID, err := env.client.SubmitPayment(context.Background(), payments[2])
+		assert.NotNil(t, txID)
+		assert.Equal(t, e, err)
+	}
+
+	env.v4Server.Mux.Lock()
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_FAILED,
+			TransactionError: &commonpbv4.TransactionError{
+				Reason: commonpbv4.TransactionError_UNAUTHORIZED,
+				Raw:    []byte("rawerror"),
+			},
+		},
+	}
+	env.v4Server.Mux.Unlock()
+
+	txID, err := env.client.SubmitPayment(context.Background(), payments[2])
+	assert.NotNil(t, txID)
+	assert.Equal(t, ErrInvalidSignature, err)
+}
+
+func TestClient_Kin4SubmitPaymentNoServiceSubsidizer(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+	appSubsidizer, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	setServiceConfigResp(t, env.v4Server, true)
+	for _, acc := range [][]byte{sender, dest, appSubsidizer} {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	env.internal.serviceConfig = nil // reset cache
+	setServiceConfigResp(t, env.v4Server, false)
+
+	p := Payment{
+		Sender:      sender,
+		Destination: dest.Public(),
+		Type:        kin.TransactionTypeSpend,
+		Quarks:      11,
+	}
+
+	txID, err := env.client.SubmitPayment(context.Background(), p)
+	assert.Equal(t, ErrNoSubsidizer, err)
+	assert.Nil(t, txID)
+
+	txID, err = env.client.SubmitPayment(context.Background(), p, WithSubsidizer(appSubsidizer))
+	require.NoError(t, err)
+	require.NotNil(t, txID)
+
+	env.v4Server.Mux.Lock()
+	defer env.v4Server.Mux.Unlock()
+
+	assert.Len(t, env.v4Server.Submits, 1)
+
+	tx := solana.Transaction{}
+	assert.NoError(t, tx.Unmarshal(env.v4Server.Submits[0].Transaction.Value))
+	assert.Len(t, tx.Signatures, 2)
+	assert.True(t, ed25519.Verify(ed25519.PublicKey(appSubsidizer.Public()), tx.Message.Marshal(), tx.Signatures[0][:]))
+	assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+	assert.Len(t, tx.Message.Instructions, 2)
+
+	memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+	require.NoError(t, err)
+
+	m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+	require.NoError(t, err)
+
+	assert.Equal(t, kin.TransactionTypeSpend, m.TransactionType())
+	assert.EqualValues(t, 1, m.AppIndex())
+	assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+
+	transferInstr, err := token.DecompileTransferAccount(tx.Message, 1)
+	require.NoError(t, err)
+
+	assert.EqualValues(t, sender.Public(), transferInstr.Source)
+	assert.EqualValues(t, dest.Public(), transferInstr.Destination)
+	assert.EqualValues(t, sender.Public(), transferInstr.Owner)
+	assert.EqualValues(t, p.Quarks, transferInstr.Amount)
+}
+
+func TestClient_Kin4SubmitPaymentKin4AccountResolution(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+	resolvedSender, err := NewPrivateKey()
+	require.NoError(t, err)
+	resolvedDest, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	setServiceConfigResp(t, env.v4Server, true)
+	for _, acc := range [][]byte{sender, dest, resolvedSender, resolvedDest} {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	p := Payment{
+		Sender:      sender,
+		Destination: dest.Public(),
+		Type:        kin.TransactionTypeSpend,
+		Quarks:      11,
+	}
+
+	// Test Preferred Account Resolution
+	env.v4Server.Mux.Lock()
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_FAILED,
+			TransactionError: &commonpbv4.TransactionError{
+				Reason: commonpbv4.TransactionError_INVALID_ACCOUNT,
+				Raw:    []byte("rawerror"),
+			},
+		},
+	}
+	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{
+		sender.Public().Base58(): {
+			{
+				Value: resolvedSender.Public(),
+			},
+		},
+		dest.Public().Base58(): {
+			{
+				Value: resolvedDest.Public(),
+			},
+		},
+	}
+	env.v4Server.Mux.Unlock()
+
+	txID, err := env.client.SubmitPayment(context.Background(), p, WithSenderResolution(AccountResolutionPreferred), WithDestResolution(AccountResolutionPreferred))
+	require.NoError(t, err)
+	assert.NotNil(t, txID)
+
+	env.v4Server.Mux.Lock()
+	assert.Len(t, env.v4Server.Submits, 2)
+	for i, submit := range env.v4Server.Submits {
+		tx := solana.Transaction{}
+		assert.NoError(t, tx.Unmarshal(submit.Transaction.Value))
+		assert.Len(t, tx.Signatures, 2)
+		assert.EqualValues(t, make([]byte, ed25519.SignatureSize), tx.Signatures[0][:])
+		assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+		assert.Len(t, tx.Message.Instructions, 2)
+
+		memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+		require.NoError(t, err)
+
+		m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+		require.NoError(t, err)
+
+		assert.Equal(t, kin.TransactionTypeSpend, m.TransactionType())
+		assert.EqualValues(t, 1, m.AppIndex())
+		assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+
+		transferInstr, err := token.DecompileTransferAccount(tx.Message, 1)
+		require.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, sender.Public(), transferInstr.Source)
+			assert.EqualValues(t, dest.Public(), transferInstr.Destination)
+		} else {
+			assert.EqualValues(t, resolvedSender.Public(), transferInstr.Source)
+			assert.EqualValues(t, resolvedDest.Public(), transferInstr.Destination)
+		}
+		assert.EqualValues(t, sender.Public(), transferInstr.Owner)
+		assert.EqualValues(t, p.Quarks, transferInstr.Amount)
+	}
+	env.v4Server.Mux.Unlock()
+
+	// Test Exact Account Resolution
+	env.v4Server.Mux.Lock()
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_FAILED,
+			TransactionError: &commonpbv4.TransactionError{
+				Reason: commonpbv4.TransactionError_INVALID_ACCOUNT,
+				Raw:    []byte("rawerror"),
+			},
+		},
+	}
+	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{}
+	env.v4Server.Mux.Unlock()
+
+	txID, err = env.client.SubmitPayment(context.Background(), p, WithSenderResolution(AccountResolutionExact), WithDestResolution(AccountResolutionExact))
+	assert.EqualValues(t, ErrAccountDoesNotExist, err)
+	assert.NotNil(t, txID)
+}
+
+func TestClient_Kin4SubmitEarnBatch(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	earnAccounts := make([]PrivateKey, 60)
+	for i := 0; i < len(earnAccounts); i++ {
+		dest, err := NewPrivateKey()
+		require.NoError(t, err)
+		earnAccounts[i] = dest
+	}
+
+	setServiceConfigResp(t, env.v4Server, true)
+
+	for _, acc := range append([]PrivateKey{sender}, earnAccounts...) {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	var earns []Earn
+	for i, r := range earnAccounts {
+		earns = append(earns, Earn{
+			Destination: r.Public(),
+			Quarks:      int64(i) + 1,
+		})
+	}
+	var invoiceEarns []Earn
+	for i, r := range earnAccounts {
+		invoiceEarns = append(invoiceEarns, Earn{
+			Destination: r.Public(),
+			Quarks:      int64(i) + 1,
+			Invoice: &commonpb.Invoice{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title:  "Test",
+						Amount: int64(i) + 1,
+					},
+				},
+			},
+		})
+	}
+
+	batches := []EarnBatch{
+		{
+			Sender: sender,
+			Earns:  earns,
+		},
+		{
+			Sender: sender,
+			Earns:  earns,
+			Memo:   "somememo",
+		},
+		{
+			Sender: sender,
+			Earns:  invoiceEarns,
+		},
+	}
+
+	for _, b := range batches {
+		result, err := env.client.SubmitEarnBatch(context.Background(), b)
+		assert.NoError(t, err)
+
+		func() {
+			env.v4Server.Mux.Lock()
+			defer env.v4Server.Mux.Unlock()
+			defer func() { env.v4Server.Submits = nil }()
+
+			assert.Len(t, env.v4Server.Submits, 4)
+			assert.Len(t, result.Succeeded, len(earnAccounts))
+			assert.Empty(t, result.Failed)
+
+			txIDs := make(map[string]struct{})
+			for i, r := range result.Succeeded {
+				txIDs[string(r.TxID)] = struct{}{}
+				assert.NoError(t, r.Error)
+				assert.Equal(t, b.Earns[i], r.Earn)
+			}
+			assert.Len(t, txIDs, 4)
+
+			for i, s := range env.v4Server.Submits {
+				tx := solana.Transaction{}
+				assert.NoError(t, tx.Unmarshal(s.Transaction.Value))
+				assert.Len(t, tx.Signatures, 2)
+				assert.EqualValues(t, make([]byte, ed25519.SignatureSize), tx.Signatures[0][:])
+				assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+				var batchSize int
+				if b.Memo != "" {
+					batchSize = 19
+					memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+					require.NoError(t, err)
+					assert.Equal(t, b.Memo, string(memoInstr.Data))
+				} else if b.Earns[0].Invoice != nil {
+					batchSize = 18
+					invoiceList := &commonpb.InvoiceList{
+						Invoices: make([]*commonpb.Invoice, 0, batchSize),
+					}
+
+					start := i * batchSize
+					end := int(math.Min(float64((i+1)*batchSize), float64(len(b.Earns))))
+					for j := start; j < end; j++ {
+						invoiceList.Invoices = append(invoiceList.Invoices, b.Earns[j].Invoice)
+					}
+
+					ilBytes, err := proto.Marshal(invoiceList)
+					require.NoError(t, err)
+					ilHash := sha256.Sum224(ilBytes)
+
+					memoInstruction, err := memo.DecompileMemo(tx.Message, 0)
+					require.NoError(t, err)
+
+					m, err := kin.MemoFromBase64String(string(memoInstruction.Data), true)
+					require.NoError(t, err)
+
+					assert.Equal(t, kin.TransactionTypeEarn, m.TransactionType())
+					assert.EqualValues(t, 1, m.AppIndex())
+					assert.EqualValues(t, ilHash[:], m.ForeignKey()[:28])
+					assert.True(t, proto.Equal(invoiceList, s.InvoiceList))
+				} else {
+					batchSize = 18
+
+					memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+					require.NoError(t, err)
+
+					m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+					require.NoError(t, err)
+
+					assert.Equal(t, kin.TransactionTypeEarn, m.TransactionType())
+					assert.EqualValues(t, 1, m.AppIndex())
+					assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+				}
+
+				var reqBatchSize int
+				if i == len(env.v4Server.Submits)-1 {
+					reqBatchSize = 60 % batchSize
+				} else {
+					reqBatchSize = batchSize
+				}
+
+				assert.Len(t, tx.Message.Instructions, reqBatchSize+1)
+				for j := 0; j < reqBatchSize; j++ {
+					transferInstr, err := token.DecompileTransferAccount(tx.Message, j+1)
+					require.NoError(t, err)
+
+					earn := b.Earns[i*batchSize+j]
+					assert.EqualValues(t, sender.Public(), transferInstr.Source)
+					assert.EqualValues(t, earn.Destination, transferInstr.Destination)
+					assert.EqualValues(t, sender.Public(), transferInstr.Owner)
+					assert.EqualValues(t, earn.Quarks, transferInstr.Amount)
+				}
+			}
+		}()
+	}
+
+	// Ensure context cancellation works correctly.
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	cancelFunc()
+	result, err := env.client.SubmitEarnBatch(ctx, batches[0])
+	assert.Error(t, err)
+	assert.Empty(t, result.Succeeded, len(batches[0].Earns))
+	assert.Len(t, result.Failed, len(batches[0].Earns))
+
+	// Ensure that error handling for the following cases is correct:
+	//   - Partial Success: (some of the batches succeeded)
+	//   - Op Failures: operation failures are reported
+	//   - Tx Failures: transaction level failures
+	env.v4Server.Mux.Lock()
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		nil,
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_FAILED,
+			TransactionError: &commonpbv4.TransactionError{
+				Reason:           commonpbv4.TransactionError_UNAUTHORIZED,
+				InstructionIndex: 0,
+				Raw:              []byte("rawerror"),
+			},
+		},
+	}
+	env.v4Server.Mux.Unlock()
+
+	result, err = env.client.SubmitEarnBatch(context.Background(), batches[0])
+	assert.Error(t, err)
+	assert.Len(t, result.Succeeded, 18)
+	assert.Len(t, result.Failed, 42)
+	for i := 0; i < len(result.Succeeded); i++ {
+		assert.NoError(t, result.Succeeded[i].Error)
+		assert.NotNil(t, result.Succeeded[i].TxID)
+		assert.Equal(t, batches[0].Earns[i], result.Succeeded[i].Earn)
+	}
+	for i := 0; i < 18; i++ {
+		assert.Equal(t, ErrInvalidSignature, result.Failed[i].Error)
+		assert.Equal(t, batches[0].Earns[18+i], result.Failed[i].Earn)
+	}
+	for i := 18; i < 42; i++ {
+		assert.NoError(t, result.Failed[i].Error)
+		assert.Equal(t, batches[0].Earns[18+i], result.Failed[i].Earn)
+	}
+}
+
+func TestClient_Kin4SubmitEarnBatchNoServiceSubsidizer(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	appSubsidizer, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	earns := make([]Earn, 20)
+	earnAccounts := make([]PrivateKey, 20)
+	for i := 0; i < len(earnAccounts); i++ {
+		dest, err := NewPrivateKey()
+		require.NoError(t, err)
+		earnAccounts[i] = dest
+
+		earns[i] = Earn{
+			Destination: dest.Public(),
+			Quarks:      int64(i) + 1,
+		}
+	}
+
+	setServiceConfigResp(t, env.v4Server, true)
+	for _, acc := range append([]PrivateKey{sender, appSubsidizer}, earnAccounts...) {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	env.internal.serviceConfig = nil // reset cache
+	setServiceConfigResp(t, env.v4Server, false)
+
+	b := EarnBatch{
+		Sender: sender,
+		Earns:  earns,
+	}
+
+	result, err := env.client.SubmitEarnBatch(context.Background(), b)
+	assert.Equal(t, ErrNoSubsidizer, err)
+	assert.Equal(t, EarnBatchResult{}, result)
+
+	result, err = env.client.SubmitEarnBatch(context.Background(), b, WithSubsidizer(appSubsidizer))
+	assert.NoError(t, err)
+
+	env.v4Server.Mux.Lock()
+	defer env.v4Server.Mux.Unlock()
+
+	assert.Len(t, env.v4Server.Submits, 2)
+	assert.Len(t, result.Succeeded, len(earnAccounts))
+	assert.Empty(t, result.Failed)
+
+	txIDs := make(map[string]struct{})
+	for i, r := range result.Succeeded {
+		txIDs[string(r.TxID)] = struct{}{}
+		assert.NoError(t, r.Error)
+		assert.Equal(t, b.Earns[i], r.Earn)
+	}
+	assert.Len(t, txIDs, 2)
+
+	for i, s := range env.v4Server.Submits {
+		tx := solana.Transaction{}
+		assert.NoError(t, tx.Unmarshal(s.Transaction.Value))
+		assert.Len(t, tx.Signatures, 2)
+		assert.True(t, ed25519.Verify(ed25519.PublicKey(appSubsidizer.Public()), tx.Message.Marshal(), tx.Signatures[0][:]))
+		assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+		memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+		require.NoError(t, err)
+
+		m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+		require.NoError(t, err)
+
+		assert.Equal(t, kin.TransactionTypeEarn, m.TransactionType())
+		assert.EqualValues(t, 1, m.AppIndex())
+		assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+
+		batchSize := 18
+		var reqBatchSize int
+		if i == len(env.v4Server.Submits)-1 {
+			reqBatchSize = 20 % batchSize
+		} else {
+			reqBatchSize = batchSize
+		}
+
+		assert.Len(t, tx.Message.Instructions, reqBatchSize+1)
+		for j := 0; j < reqBatchSize; j++ {
+			transferInstr, err := token.DecompileTransferAccount(tx.Message, j+1)
+			require.NoError(t, err)
+
+			earn := b.Earns[i*batchSize+j]
+			assert.EqualValues(t, sender.Public(), transferInstr.Source)
+			assert.EqualValues(t, earn.Destination, transferInstr.Destination)
+			assert.EqualValues(t, sender.Public(), transferInstr.Owner)
+			assert.EqualValues(t, earn.Quarks, transferInstr.Amount)
+		}
+	}
+}
+
+func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
+	env, cleanup := setup(t, WithKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	resolvedSender, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	// Test Preferred Account Resolution
+	env.v4Server.Mux.Lock()
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_FAILED,
+			TransactionError: &commonpbv4.TransactionError{
+				Reason: commonpbv4.TransactionError_INVALID_ACCOUNT,
+				Raw:    []byte("rawerror"),
+			},
+		},
+	}
+	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{
+		sender.Public().Base58(): {
+			{
+				Value: resolvedSender.Public(),
+			},
+		},
+	}
+
+	earns := make([]Earn, 20)
+	earnAccounts := make([]PrivateKey, 20)
+	resolvedEarnAccounts := make([]PrivateKey, 20)
+	for i := 0; i < len(earnAccounts); i++ {
+		dest, err := NewPrivateKey()
+		require.NoError(t, err)
+		earnAccounts[i] = dest
+
+		earns[i] = Earn{
+			Destination: dest.Public(),
+			Quarks:      int64(i) + 1,
+		}
+
+		resolvedDest, err := NewPrivateKey()
+		require.NoError(t, err)
+		resolvedEarnAccounts[i] = resolvedDest
+		env.v4Server.TokenAccounts[dest.Public().Base58()] = []*commonpbv4.SolanaAccountId{
+			{
+				Value: resolvedDest.Public(),
+			},
+		}
+	}
+	env.v4Server.Mux.Unlock()
+
+	setServiceConfigResp(t, env.v4Server, true)
+	for _, acc := range append([]PrivateKey{sender, resolvedSender}, append(earnAccounts, resolvedEarnAccounts...)...) {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+	b := EarnBatch{
+		Sender: sender,
+		Earns:  earns,
+	}
+
+	result, err := env.client.SubmitEarnBatch(context.Background(), b, WithSenderResolution(AccountResolutionPreferred), WithDestResolution(AccountResolutionPreferred))
+	assert.NoError(t, err)
+
+	env.v4Server.Mux.Lock()
+
+	assert.Len(t, env.v4Server.Submits, 3)
+	assert.Len(t, result.Succeeded, len(earnAccounts))
+	assert.Empty(t, result.Failed)
+
+	txIDs := make(map[string]struct{})
+	for i, r := range result.Succeeded {
+		txIDs[string(r.TxID)] = struct{}{}
+		assert.NoError(t, r.Error)
+		assert.Equal(t, b.Earns[i], r.Earn)
+	}
+	assert.Len(t, txIDs, 2)
+
+	for i, s := range env.v4Server.Submits {
+		batchIndex := int(math.Floor(float64(i) / 2))
+		resolved := (i % 2) == 1
+
+		tx := solana.Transaction{}
+		assert.NoError(t, tx.Unmarshal(s.Transaction.Value))
+		assert.Len(t, tx.Signatures, 2)
+		assert.EqualValues(t, make([]byte, ed25519.SignatureSize), tx.Signatures[0][:])
+		assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+		memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+		require.NoError(t, err)
+
+		m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+		require.NoError(t, err)
+
+		assert.Equal(t, kin.TransactionTypeEarn, m.TransactionType())
+		assert.EqualValues(t, 1, m.AppIndex())
+		assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+
+		batchSize := 18
+		var reqBatchSize int
+		if i == len(env.v4Server.Submits)-1 {
+			reqBatchSize = 20 % batchSize
+		} else {
+			reqBatchSize = batchSize
+		}
+
+		assert.Len(t, tx.Message.Instructions, reqBatchSize+1)
+		for j := 0; j < reqBatchSize; j++ {
+			transferInstr, err := token.DecompileTransferAccount(tx.Message, j+1)
+			require.NoError(t, err)
+
+			earn := b.Earns[batchIndex*batchSize+j]
+			if resolved {
+				require.EqualValues(t, resolvedSender.Public(), transferInstr.Source)
+				require.EqualValues(t, resolvedEarnAccounts[batchIndex*batchSize+j].Public(), transferInstr.Destination)
+			} else {
+				require.EqualValues(t, sender.Public(), transferInstr.Source)
+				require.EqualValues(t, earnAccounts[batchIndex*batchSize+j].Public(), transferInstr.Destination)
+			}
+			require.EqualValues(t, sender.Public(), transferInstr.Owner)
+			require.EqualValues(t, earn.Quarks, transferInstr.Amount)
+		}
+	}
+	env.v4Server.Mux.Unlock()
+
+	// Test Exact Account Resolution
+	env.v4Server.Mux.Lock()
+	env.v4Server.Submits = nil
+	env.v4Server.SubmitResponses = []*transactionpbv4.SubmitTransactionResponse{
+		{
+			Result: transactionpbv4.SubmitTransactionResponse_FAILED,
+			TransactionError: &commonpbv4.TransactionError{
+				Reason: commonpbv4.TransactionError_INVALID_ACCOUNT,
+				Raw:    []byte("rawerror"),
+			},
+		},
+	}
+	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{}
+	env.v4Server.Mux.Unlock()
+
+	result, err = env.client.SubmitEarnBatch(context.Background(), b, WithSenderResolution(AccountResolutionExact), WithDestResolution(AccountResolutionExact))
+	assert.Equal(t, err, ErrAccountDoesNotExist)
+
+	env.v4Server.Mux.Lock()
+	defer env.v4Server.Mux.Unlock()
+
+	assert.Len(t, env.v4Server.Submits, 1)
+	assert.Empty(t, result.Succeeded)
+	assert.Len(t, result.Failed, len(earnAccounts))
+	for i := 0; i < 18; i++ {
+		assert.Equal(t, ErrAccountDoesNotExist, result.Failed[i].Error)
+		assert.Equal(t, earns[i], result.Failed[i].Earn)
+	}
+	for i := 18; i < 20; i++ {
+		assert.NoError(t, result.Failed[i].Error)
+		assert.Equal(t, earns[i], result.Failed[i].Earn)
+	}
+}
+
+func TestClient_CreateAccountMigration(t *testing.T) {
+	env, cleanup := setup(t, WithDesiredKinVersion(4))
+	defer cleanup()
+
+	priv, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	setServiceConfigResp(t, env.v4Server, true)
+
+	err = env.client.CreateAccount(context.Background(), priv)
+	require.NoError(t, err)
+
+	env.v4Server.Mux.Lock()
+	assert.Len(t, env.v4Server.Accounts, 1)
+	assert.NotNil(t, env.v4Server.Accounts[priv.Public().Base58()])
+	env.v4Server.Mux.Unlock()
+}
+
+func TestClient_GetBalanceMigration(t *testing.T) {
+	env, cleanup := setup(t, WithDesiredKinVersion(4))
+	defer cleanup()
+
+	priv, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	env.v4Server.Mux.Lock()
+	env.v4Server.Accounts = map[string]*accountpbv4.AccountInfo{
+		priv.Public().Base58(): {
+			AccountId: &commonpbv4.SolanaAccountId{Value: priv.Public()},
+			Balance:   10,
+		},
+	}
+	env.v4Server.Mux.Unlock()
+
+	balance, err := env.client.GetBalance(context.Background(), priv.Public())
+	assert.NoError(t, err)
+	assert.EqualValues(t, 10, balance)
+}
+
+func TestClient_SubmitPaymentMigration(t *testing.T) {
+	env, cleanup := setup(t, WithDesiredKinVersion(4))
+	defer cleanup()
+
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	setServiceConfigResp(t, env.v4Server, true)
+
+	p := Payment{
+		Sender:      sender,
+		Destination: dest.Public(),
+		Type:        kin.TransactionTypeSpend,
+		Quarks:      11,
+	}
+
+	txID, err := env.client.SubmitPayment(context.Background(), p)
+	require.NoError(t, err)
+	require.NotNil(t, txID)
+
+	env.v4Server.Mux.Lock()
+	defer env.v4Server.Mux.Unlock()
+
+	assert.Len(t, env.v4Server.Submits, 1)
+
+	tx := solana.Transaction{}
+	assert.NoError(t, tx.Unmarshal(env.v4Server.Submits[0].Transaction.Value))
+	assert.Len(t, tx.Signatures, 2)
+	assert.EqualValues(t, make([]byte, ed25519.SignatureSize), tx.Signatures[0][:])
+	assert.True(t, ed25519.Verify(ed25519.PublicKey(sender.Public()), tx.Message.Marshal(), tx.Signatures[1][:]))
+
+	assert.Len(t, tx.Message.Instructions, 2)
+
+	memoInstr, err := memo.DecompileMemo(tx.Message, 0)
+	require.NoError(t, err)
+
+	m, err := kin.MemoFromBase64String(string(memoInstr.Data), true)
+	require.NoError(t, err)
+
+	assert.Equal(t, kin.TransactionTypeSpend, m.TransactionType())
+	assert.EqualValues(t, 1, m.AppIndex())
+	assert.EqualValues(t, make([]byte, 29), m.ForeignKey())
+
+	transferInstr, err := token.DecompileTransferAccount(tx.Message, 1)
+	require.NoError(t, err)
+
+	assert.EqualValues(t, sender.Public(), transferInstr.Source)
+	assert.EqualValues(t, dest.Public(), transferInstr.Destination)
+	assert.EqualValues(t, sender.Public(), transferInstr.Owner)
+	assert.EqualValues(t, p.Quarks, transferInstr.Amount)
+}
+
+func TestClient_EstimateEarnBatchTxSize(t *testing.T) {
+	subsidizer, err := NewPrivateKey()
+	require.NoError(t, err)
+	owner, err := NewPrivateKey()
+	require.NoError(t, err)
+	earns := make([]Earn, 20)
+	for i := 1; i < 20; i++ {
+		dest, err := NewPrivateKey()
+		require.NoError(t, err)
+		earns[i] = Earn{Destination: dest.Public(), Quarks: int64(i + 1)}
+	}
+	earns[0] = earns[1] // test a duplicate destination
+
+	for _, tc := range []struct {
+		hasSeparateSender bool
+		hasAgoraMemo      bool
+		hasTextMemo       bool
+	}{
+		{false, false, false},
+		{false, false, true},
+		{false, true, false},
+		{true, false, false},
+		{true, false, true},
+		{true, true, false},
+	} {
+		var transferSender PrivateKey
+		var m kin.Memo
+		var textMemo string
+		if tc.hasSeparateSender {
+			transferSender, err = NewPrivateKey()
+			require.NoError(t, err)
+		}
+		if tc.hasAgoraMemo {
+			m, err = kin.NewMemo(1, kin.TransactionTypeSpend, 1, []byte("somefk"))
+			require.NoError(t, err)
+		}
+		if tc.hasTextMemo {
+			textMemo = "t-test"
+		}
+
+		for i := 1; i < len(earns); i++ {
+			batch := earns[:i]
+			var instructions []solana.Instruction
+			if tc.hasAgoraMemo {
+				instructions = append(instructions, memo.Instruction(base64.StdEncoding.EncodeToString(m[:])))
+			} else if tc.hasTextMemo {
+				instructions = append(instructions, memo.Instruction(textMemo))
+			}
+
+			if transferSender == nil {
+				transferSender = owner
+			}
+			for _, earn := range batch {
+				instructions = append(
+					instructions,
+					token.Transfer(
+						ed25519.PublicKey(transferSender.Public()),
+						ed25519.PublicKey(earn.Destination),
+						ed25519.PublicKey(owner.Public()),
+						uint64(earn.Quarks),
+					),
+				)
+			}
+			tx := solana.NewTransaction(ed25519.PublicKey(subsidizer.Public()), instructions...)
+			require.NoError(t, tx.Sign(ed25519.PrivateKey(subsidizer), ed25519.PrivateKey(owner)))
+
+			estimated := estimateEarnBatchTxSize(batch, tc.hasSeparateSender, tc.hasAgoraMemo, textMemo)
+			require.Equal(t, len(tx.Marshal()), estimated)
+		}
 	}
 }

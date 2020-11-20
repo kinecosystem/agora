@@ -31,7 +31,7 @@ func eventsHandler(events []events.Event) error {
 // (as configured by the AppIndex, or legacy memo field).
 func signHandler(req client.SignTransactionRequest, resp *client.SignTransactionResponse) error {
 	log.Printf("SignRequest for <'%s','%s'>", req.UserID, req.UserPasskey)
-	txHash, err := req.TxHash()
+	txID, err := req.TxID()
 	if err != nil {
 		return err
 	}
@@ -70,17 +70,17 @@ func signHandler(req client.SignTransactionRequest, resp *client.SignTransaction
 	// Note: Agora will _not_ forward a rejected transaction to the blockchain,
 	//       but it's safer to check that here as well.
 	if resp.IsRejected() {
-		log.Printf("transaction rejected: %x (%d payments)\n", txHash, len(req.Payments))
+		log.Printf("transaction rejected: %x (%d payments)\n", txID, len(req.Payments))
 		return nil
 	}
 
-	log.Printf("transaction approved: %x (%d payments)\n", txHash, len(req.Payments))
+	log.Printf("transaction approved: %x (%d payments)\n", txID, len(req.Payments))
 
 	// Note: This allows agora to forward the transaction to the blockchain. However,
 	// it does not indicate that it will be submitted successfully, or that the transaction
 	// will be successful. For example, if sender has insufficient funds.
 	//
-	// Backends may keep track of the transaction themselves via the req.TxHash(), and rely
+	// Backends may keep track of the transaction themselves via the req.TxID(), and rely
 	// on either the Events handler or polling to get the status.
 	return resp.Sign(whitelistKey)
 }

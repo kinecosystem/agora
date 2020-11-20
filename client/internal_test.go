@@ -55,6 +55,7 @@ func setup(t *testing.T, opts ...ClientOption) (*testEnv, func()) {
 	conn, serv, err := agoratestutil.NewServer(
 		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
 		agoratestutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+		agoratestutil.WithUnaryServerInterceptor(version.MinVersionUnaryServerInterceptor()),
 	)
 	require.NoError(t, err)
 
@@ -1017,13 +1018,15 @@ func setServiceConfigResp(t *testing.T, server *testserver.V4Server, includeSubs
 		Token:        &commonpbv4.SolanaAccountId{Value: token},
 	}
 
+	var subsidizerKey ed25519.PrivateKey
 	if includeSubsidizer {
-		subsidizer, _, err = ed25519.GenerateKey(nil)
+		subsidizer, subsidizerKey, err = ed25519.GenerateKey(nil)
 		require.NoError(t, err)
 		config.SubsidizerAccount = &commonpbv4.SolanaAccountId{Value: subsidizer}
 	}
 
 	server.Mux.Lock()
+	server.Subsidizer = subsidizerKey
 	server.ServiceConfig = config
 	server.Mux.Unlock()
 

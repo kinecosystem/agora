@@ -1,7 +1,10 @@
 # Changelog
 
 ## Unreleased
-- Rename `TxHash` to `TxID` in `TransactionData` 
+- Add Kin 4 support
+- Rename `TxHash` to `TxID` in `Client.GetTransaction`, `TransactionData`, and `EarnResult`
+- Add Solana options to `Client` methods
+- Mark `SignTransactionRequest.TxHash()` as deprecated in favour of `SignTransactionRequest.TxID()`.
 
 ## [v0.2.2](https://github.com/kinecosystem/agora/releases/tag/v0.2.2)
 - Add Kin 2 support
