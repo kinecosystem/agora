@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -443,7 +444,7 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment, opts ...Sol
 		result, err = c.submitPaymentWithResolution(ctx, payment, solanaOpts)
 	} else {
 		var signers []PrivateKey
-		if payment.Channel != nil {
+		if payment.Channel != nil && !bytes.Equal(*payment.Channel, payment.Sender) {
 			signers = []PrivateKey{
 				*payment.Channel,
 				payment.Sender,
@@ -942,7 +943,7 @@ func (c *client) submitSolanaEarnBatch(ctx context.Context, batch EarnBatch, con
 
 func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitTransactionResult, err error) {
 	var signers []PrivateKey
-	if batch.Channel != nil {
+	if batch.Channel != nil && !bytes.Equal(*batch.Channel, batch.Sender) {
 		signers = []PrivateKey{
 			*batch.Channel,
 			batch.Sender,
@@ -1075,9 +1076,17 @@ func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, env
 			}
 
 			if len(c.opts.whitelistKey) > 0 {
-				signedEnvelope, err = transaction.SignEnvelope(&envelope, c.network, c.opts.whitelistKey.stellarSeed())
-				if err != nil {
-					return errors.Wrap(err, "failed to sign transaction envelope")
+				var signed bool
+				for _, signer := range signers {
+					if bytes.Equal(c.opts.whitelistKey, signer) {
+						signed = true
+					}
+				}
+				if !signed {
+					signedEnvelope, err = transaction.SignEnvelope(&envelope, c.network, c.opts.whitelistKey.stellarSeed())
+					if err != nil {
+						return errors.Wrap(err, "failed to sign transaction envelope")
+					}
 				}
 			}
 

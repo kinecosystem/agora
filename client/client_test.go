@@ -400,6 +400,67 @@ func TestClient_SubmitPaymentKin2(t *testing.T) {
 	}()
 }
 
+func TestClient_SubmitPaymentDuplicateSigners(t *testing.T) {
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+	dest, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	env, cleanup := setup(t, WithWhitelister(sender))
+	defer cleanup()
+
+	for _, acc := range [][]byte{sender, dest} {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	p := Payment{
+		Sender:      sender,
+		Destination: dest.Public(),
+		Type:        kin.TransactionTypeSpend,
+		Quarks:      11,
+		Channel:     &sender,
+	}
+
+	info, err := env.internal.GetStellarAccountInfo(context.Background(), p.Sender.Public())
+	require.NoError(t, err)
+	initSeq := info.SequenceNumber
+
+	hash, err := env.client.SubmitPayment(context.Background(), p)
+	assert.NotNil(t, hash)
+	assert.NoError(t, err)
+
+	env.server.mu.Lock()
+	defer env.server.mu.Unlock()
+
+	assert.Len(t, env.server.blockchains[version.KinVersion3].submits, 1)
+
+	var envelope xdr.TransactionEnvelope
+	assert.NoError(t, envelope.UnmarshalBinary(env.server.blockchains[version.KinVersion3].submits[0].EnvelopeXdr))
+
+	assert.EqualValues(t, 100, envelope.Tx.Fee)
+	assert.EqualValues(t, initSeq+1, envelope.Tx.SeqNum)
+	assert.Len(t, envelope.Tx.Operations, 1)
+
+	assert.EqualValues(t, xdr.Int64(11), envelope.Tx.Operations[0].Body.PaymentOp.Amount)
+	assert.EqualValues(t, xdr.AssetTypeAssetTypeNative, envelope.Tx.Operations[0].Body.PaymentOp.Asset.Type)
+
+	assert.Nil(t, envelope.Tx.TimeBounds)
+
+	sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
+	assert.EqualValues(t, p.Sender.Public(), sourceAccount[:])
+
+	// There should only be one signature despite channel + whitelister being set
+	assert.Len(t, envelope.Signatures, 1)
+
+	assert.Equal(t, xdr.MemoTypeMemoHash, envelope.Tx.Memo.Type)
+
+	memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
+	assert.True(t, ok)
+
+	assert.EqualValues(t, 1, memo.AppIndex())
+	assert.EqualValues(t, make([]byte, 29), memo.ForeignKey())
+}
+
 func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
@@ -470,7 +531,7 @@ func TestClient_SubmitEarnBatchInternal(t *testing.T) {
 		},
 		{
 			Sender:  sender,
-			Channel: (*PrivateKey)(&channel),
+			Channel: &channel,
 			Earns:   earns,
 		},
 		{
@@ -909,6 +970,100 @@ func TestClient_SubmitEarnBatch(t *testing.T) {
 	for i := 100; i < 102; i++ {
 		assert.NoError(t, result.Failed[i].Error)
 		assert.Equal(t, batches[0].Earns[100+i], result.Failed[i].Earn)
+	}
+}
+
+func TestClient_SubmitEarnBatchDuplicateSigners(t *testing.T) {
+	sender, err := NewPrivateKey()
+	require.NoError(t, err)
+
+	env, cleanup := setup(t, WithWhitelister(sender))
+	defer cleanup()
+
+	earnAccounts := make([]PrivateKey, 202)
+	for i := 0; i < len(earnAccounts); i++ {
+		dest, err := NewPrivateKey()
+		require.NoError(t, err)
+		earnAccounts[i] = dest
+	}
+
+	for _, acc := range append([]PrivateKey{sender}, earnAccounts...) {
+		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
+	}
+
+	var earns []Earn
+	for i, r := range earnAccounts {
+		earns = append(earns, Earn{
+			Destination: r.Public(),
+			Quarks:      int64(i) + 1,
+		})
+	}
+
+	b := EarnBatch{
+		Sender: sender,
+		Earns:  earns,
+	}
+
+	var initSeq int64
+	if b.Channel == nil {
+		info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Sender.Public())
+		require.NoError(t, err)
+		initSeq = info.SequenceNumber
+	} else {
+		info, err := env.internal.GetStellarAccountInfo(context.Background(), b.Channel.Public())
+		require.NoError(t, err)
+		initSeq = info.SequenceNumber
+	}
+
+	result, err := env.client.SubmitEarnBatch(context.Background(), b)
+	assert.NoError(t, err)
+
+	env.server.mu.Lock()
+	defer env.server.mu.Unlock()
+	defer func() { env.server.blockchains[version.KinVersion3].submits = nil }()
+
+	assert.Len(t, env.server.blockchains[version.KinVersion3].submits, 3)
+	assert.Len(t, result.Succeeded, len(earnAccounts))
+	assert.Empty(t, result.Failed)
+
+	txHashes := make(map[string]struct{})
+	for i, r := range result.Succeeded {
+		txHashes[string(r.TxID)] = struct{}{}
+		assert.NoError(t, r.Error)
+		assert.Equal(t, b.Earns[i], r.Earn)
+	}
+	assert.Len(t, txHashes, 3)
+
+	for i, s := range env.server.blockchains[version.KinVersion3].submits {
+		var envelope xdr.TransactionEnvelope
+		assert.NoError(t, envelope.UnmarshalBinary(s.EnvelopeXdr))
+
+		txBytes, err := envelope.Tx.MarshalBinary()
+		assert.NoError(t, err)
+		txHash := sha256.Sum256(txBytes)
+		_, exists := txHashes[string(txHash[:])]
+		assert.True(t, exists)
+
+		batchSize := int(math.Min(100, float64(len(b.Earns)-i*100)))
+
+		assert.EqualValues(t, 100*batchSize, envelope.Tx.Fee)
+		assert.EqualValues(t, initSeq+int64(i)+1, envelope.Tx.SeqNum)
+		assert.Len(t, envelope.Tx.Operations, batchSize)
+		assert.Nil(t, envelope.Tx.TimeBounds)
+
+		sourceAccount := envelope.Tx.SourceAccount.MustEd25519()
+		assert.EqualValues(t, b.Sender.Public(), sourceAccount[:])
+
+		// There should only be one signature despite channel + whitelister being set
+		assert.Len(t, envelope.Signatures, 1)
+
+		assert.Equal(t, xdr.MemoTypeMemoHash, envelope.Tx.Memo.Type)
+
+		memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
+		assert.True(t, ok)
+
+		assert.EqualValues(t, 1, memo.AppIndex())
+		assert.EqualValues(t, make([]byte, 29), memo.ForeignKey())
 	}
 }
 
