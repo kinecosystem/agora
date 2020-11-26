@@ -8,20 +8,20 @@ import (
 	"github.com/kinecosystem/agora/pkg/migration"
 )
 
-type store struct {
+type Store struct {
 	sync.Mutex
 	entries map[string]migration.State
 }
 
 // New returns a memory backed migration.Store
 func New() migration.Store {
-	return &store{
+	return &Store{
 		entries: make(map[string]migration.State),
 	}
 }
 
 // Get implements migration.Store.Get.
-func (s *store) Get(ctx context.Context, account ed25519.PublicKey) (migration.State, error) {
+func (s *Store) Get(ctx context.Context, account ed25519.PublicKey) (migration.State, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -29,7 +29,7 @@ func (s *store) Get(ctx context.Context, account ed25519.PublicKey) (migration.S
 }
 
 // Update implements migration.Store.Update.
-func (s *store) Update(_ context.Context, account ed25519.PublicKey, prev, next migration.State) error {
+func (s *Store) Update(_ context.Context, account ed25519.PublicKey, prev, next migration.State) error {
 	s.Lock()
 	defer s.Unlock()
 
@@ -42,7 +42,7 @@ func (s *store) Update(_ context.Context, account ed25519.PublicKey, prev, next 
 	return nil
 }
 
-func (s *store) reset() {
+func (s *Store) Reset() {
 	s.Lock()
 	defer s.Unlock()
 

@@ -19,6 +19,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 )
 
@@ -32,6 +33,7 @@ type server struct {
 	tc              *token.Client
 	limiter         *account.Limiter
 	accountNotifier *AccountNotifier
+	migrator        migration.Migrator
 
 	token              ed25519.PublicKey
 	subsidizer         ed25519.PrivateKey
@@ -42,6 +44,7 @@ func New(
 	sc solana.Client,
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
+	migrator migration.Migrator,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 ) (accountpb.AccountServer, error) {
@@ -50,6 +53,7 @@ func New(
 		sc:              sc,
 		tc:              token.NewClient(sc, mint),
 		accountNotifier: accountNotifier,
+		migrator:        migrator,
 		limiter:         limiter,
 		token:           mint,
 		subsidizer:      subsidizer,
@@ -180,7 +184,12 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	}, nil
 }
 
-func (s *server) GetAccountInfo(_ context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
+func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
+	commitment := solanautil.CommitmentFromProto(req.Commitment)
+	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, commitment); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
+	}
+
 	account, err := s.tc.GetAccount(ed25519.PublicKey(req.AccountId.Value), solanautil.CommitmentFromProto(req.Commitment))
 	if err == token.ErrInvalidTokenAccount || err == token.ErrAccountNotFound {
 		return &accountpb.GetAccountInfoResponse{

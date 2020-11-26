@@ -25,7 +25,7 @@ const (
 
 const (
 	KinVersionHeader        = "kin-version"
-	desiredKinVersionHeader = "desired-kin-version"
+	DesiredKinVersionHeader = "desired-kin-version"
 	minVersion              = KinVersion2
 	maxVersion              = KinVersion4
 	defaultVersion          = KinVersion3
@@ -56,7 +56,7 @@ func GetCtxKinVersion(ctx context.Context) (version KinVersion, err error) {
 
 // GetCtxDesiredVersion determines which version of Kin the requestor whiches to have enforced.
 func GetCtxDesiredVersion(ctx context.Context) (version KinVersion, err error) {
-	val, err := headers.GetASCIIHeaderByName(ctx, desiredKinVersionHeader)
+	val, err := headers.GetASCIIHeaderByName(ctx, DesiredKinVersionHeader)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to get desired kin version header")
 	}
@@ -75,6 +75,48 @@ func GetCtxDesiredVersion(ctx context.Context) (version KinVersion, err error) {
 	}
 
 	return KinVersion(i), nil
+}
+
+func DisabledVersionUnaryServerInterceptor(defaultVersion KinVersion, disabledVersions []int) grpc.UnaryServerInterceptor {
+	log := logrus.StandardLogger().WithField("type", "version/interceptor")
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if strings.Contains(info.FullMethod, "GetMinimumKinVersion") {
+			return handler(ctx, req)
+		}
+
+		version, err := GetCtxKinVersion(ctx)
+		if err != nil {
+			log.WithError(err).Warn("failed to get kin version; reverting to default")
+			version = defaultVersion
+		}
+
+		for i := range disabledVersions {
+			if int(version) == disabledVersions[i] {
+				return nil, status.Error(codes.FailedPrecondition, "unsupported kin version")
+			}
+		}
+
+		return handler(ctx, req)
+	}
+}
+
+func DisabledVersionStreamServerInterceptor(defaultVersion KinVersion, disabledVersions []int) grpc.StreamServerInterceptor {
+	log := logrus.StandardLogger().WithField("type", "version/interceptor")
+	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		version, err := GetCtxKinVersion(ss.Context())
+		if err != nil {
+			log.WithError(err).Warn("failed to get kin version; reverting to default")
+			version = defaultVersion
+		}
+
+		for i := range disabledVersions {
+			if int(version) == disabledVersions[i] {
+				return status.Error(codes.FailedPrecondition, "unsupported kin version")
+			}
+		}
+
+		return handler(srv, ss)
+	}
 }
 
 // MinVersionUnaryServerInterceptor prevents versions below the minimum
@@ -120,12 +162,11 @@ func MinVersionUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		log := logrus.StandardLogger().WithField("type", "version/interceptor")
-		stream := &streamWrapper{log: log, ServerStream: ss, ctx: ss.Context()}
 
 		desired, err := GetCtxDesiredVersion(ss.Context())
 		if err != nil {
 			log.WithError(err).Warn("failed to get desired kin version; ignoring")
-			return handler(srv, stream)
+			return handler(srv, ss)
 		}
 
 		switch desired {
@@ -133,7 +174,7 @@ func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 			actual, err := GetCtxKinVersion(ss.Context())
 			if err != nil {
 				log.WithError(err).Warn("failed to get kin version; ignoring")
-				return handler(srv, stream)
+				return handler(srv, ss)
 			}
 
 			if actual < desired {
@@ -147,27 +188,6 @@ func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 			log.WithField("version", desired).Warn("unhandled kin version; ignoring")
 		}
 
-		return handler(srv, stream)
+		return handler(srv, ss)
 	}
-}
-
-type streamWrapper struct {
-	log *logrus.Entry
-	grpc.ServerStream
-	ctx context.Context
-}
-
-// RecvMsg is needed to conform to the grpc.ServerStream interface
-func (s *streamWrapper) RecvMsg(msg interface{}) error {
-	return s.ServerStream.RecvMsg(msg)
-}
-
-// SendMsg is needed to conform to the grpc.ServerStream interface
-func (s *streamWrapper) SendMsg(msg interface{}) error {
-	return s.ServerStream.SendMsg(msg)
-}
-
-// Context overriding so we can send out custom context with all the Header information
-func (s *streamWrapper) Context() context.Context {
-	return s.ctx
 }

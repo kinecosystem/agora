@@ -19,6 +19,7 @@ import (
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/invoice"
+	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -36,6 +37,7 @@ type server struct {
 	invoiceStore invoice.Store
 	history      history.ReaderWriter
 	authorizer   transaction.Authorizer
+	migrator     migration.Migrator
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
@@ -47,6 +49,7 @@ func New(
 	history history.ReaderWriter,
 	committer ingestion.Committer,
 	authorizer transaction.Authorizer,
+	migrator migration.Migrator,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 ) transactionpb.TransactionServer {
@@ -64,6 +67,7 @@ func New(
 		history:      history,
 		invoiceStore: invoiceStore,
 		authorizer:   authorizer,
+		migrator:     migrator,
 		token:        tokenAccount,
 		subsidizer:   subsidizer,
 	}
@@ -92,8 +96,14 @@ func (s *server) GetMinimumKinVersion(ctx context.Context, _ *transactionpb.GetM
 		}, nil
 	}
 
+	v, err := version.GetCtxKinVersion(ctx)
+	if err != nil {
+		v = version.KinVersion3
+	}
+
+	// todo(config): switch on migration, also default to kin3 if unknown
 	return &transactionpb.GetMinimumKinVersionResponse{
-		Version: 2,
+		Version: uint32(v),
 	}, nil
 }
 
@@ -142,6 +152,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	var err error
 	var txMemo *memo.DecompiledMemo
 	var transfers []*token.DecompiledTransferAccount
+	var accounts []ed25519.PublicKey
 
 	//
 	// Parse out Transfer() and Memo() instructions.
@@ -155,6 +166,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
+		accounts = append(accounts, transfers[0].Source)
+		accounts = append(accounts, transfers[0].Destination)
 	default:
 		var offset int
 		if m, err := memo.DecompileMemo(txn.Message, 0); err == nil {
@@ -168,11 +181,18 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			if err != nil {
 				return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 			}
+			accounts = append(accounts, transfers[i].Source)
+			accounts = append(accounts, transfers[i].Destination)
 		}
 
 		if req.InvoiceList != nil && len(req.InvoiceList.Invoices) != len(transfers) {
 			return nil, status.Error(codes.InvalidArgument, "invoice count does not match transfer count")
 		}
+	}
+
+	log.Debug("Triggering migration batch")
+	if err := migration.MigrateBatch(ctx, s.migrator, accounts...); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to migrate batch: %v", err)
 	}
 
 	//
@@ -366,6 +386,10 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		"method":  "GetHistory",
 		"account": base64.StdEncoding.EncodeToString(req.AccountId.Value),
 	})
+
+	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, solana.CommitmentSingle); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to migrate account: %v", err)
+	}
 
 	items, err := s.loader.getItems(ctx, req.AccountId.Value, req.Cursor, req.Direction)
 	if err != nil {

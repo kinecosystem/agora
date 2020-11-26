@@ -6,6 +6,7 @@ echo "" > coverage.txt
 golangci-lint run \
     --exclude horizon.Account \
     --exclude horizon.Problem \
+    --exclude horizon.Signer \
     --exclude horizon.Transaction \
     --exclude proto.MessageName \
     --exclude github.com/golang/protobuf/proto

@@ -23,9 +23,6 @@ import (
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
-	"github.com/kinecosystem/agora/pkg/account"
-	"github.com/kinecosystem/agora/pkg/rate"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
@@ -38,6 +35,7 @@ import (
 	transactionpbv3 "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
+	"github.com/kinecosystem/agora/pkg/account"
 	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
 	accountstellar "github.com/kinecosystem/agora/pkg/account/stellar"
 	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
@@ -47,6 +45,10 @@ import (
 	channelpool "github.com/kinecosystem/agora/pkg/channel/dynamodb"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
+	"github.com/kinecosystem/agora/pkg/migration"
+	migrationstore "github.com/kinecosystem/agora/pkg/migration/dynamodb"
+	kin3migrator "github.com/kinecosystem/agora/pkg/migration/kin3"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	historyrw "github.com/kinecosystem/agora/pkg/transaction/history/dynamodb"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
@@ -57,6 +59,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	transactionsolana "github.com/kinecosystem/agora/pkg/transaction/solana"
 	transactionstellar "github.com/kinecosystem/agora/pkg/transaction/stellar"
+	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	"github.com/kinecosystem/agora/pkg/webhook/events"
 
@@ -76,6 +79,11 @@ const (
 	kinTokenEnv            = "KIN_TOKEN"
 	airdropSourceEnv       = "AIRDROP_SOURCE"
 	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
+
+	// Solana kin3 migration config
+	mintEnv                = "MINT_ADDRESS"
+	mintKeyEnv             = "MINT_KEYPAIR_ID"
+	kin3MigrationSecretEnv = "KIN3_MIGRATION_SECRET"
 
 	// Rate Limit Configs
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
@@ -407,8 +415,56 @@ func (a *app) Init(_ agoraapp.Config) error {
 			a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
 		}
 
+		kin3MigrationSecret := os.Getenv(kin3MigrationSecretEnv)
+
+		var mint ed25519.PublicKey
+		if os.Getenv(mintEnv) != "" {
+			mint, err = base58.Decode(os.Getenv(mintEnv))
+			if err != nil {
+				return errors.Wrap(err, "failed to parse mint")
+			}
+		}
+		var mintKey ed25519.PrivateKey
+		if os.Getenv(mintKeyEnv) != "" {
+			mintKP, err := keystore.Get(context.Background(), os.Getenv(mintKeyEnv))
+			if err != nil {
+				return errors.Wrap(err, "failed to determine mint keypair")
+			}
+
+			rawSeed, err := strkey.Decode(strkey.VersionByteSeed, mintKP.Seed())
+			if err != nil {
+				return errors.Wrap(err, "invalid mint seed string")
+			}
+
+			mintKey = ed25519.NewKeyFromSeed(rawSeed)
+		}
+
+		var migrator migration.Migrator
+		migrationStore := migrationstore.New(dynamoClient)
+
+		if kin3MigrationSecret != "" {
+			if len(mint) == 0 || len(mintKey) == 0 {
+				return errors.Wrap(err, "must specify mint and mint key if kin3 migration is enabled")
+			}
+
+			migrator = kin3migrator.New(
+				migrationStore,
+				solanaClient,
+				client,
+				kinToken,
+				subsidizer,
+				mint,
+				mintKey,
+				[]byte(kin3MigrationSecret),
+			)
+		} else {
+			migrator = migration.NewNoopMigrator()
+		}
+
+		onlineMigrator := migration.NewContextAwareMigrator(migrator)
+
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
-		a.accountSolana, err = accountsolana.New(solanaClient, accountLimiter, kin4AccountNotifier, kinToken, subsidizer)
+		a.accountSolana, err = accountsolana.New(solanaClient, accountLimiter, kin4AccountNotifier, onlineMigrator, kinToken, subsidizer)
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize v4 account serve")
 		}
@@ -418,6 +474,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			historyRW,
 			committer,
 			authorizer,
+			onlineMigrator,
 			kinToken,
 			subsidizer,
 		)

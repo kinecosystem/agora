@@ -23,6 +23,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
@@ -58,6 +59,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 		env.sc,
 		account.NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,
+		migration.NewNoopMigrator(),
 		env.token,
 		env.subsidizer,
 	)

@@ -14,6 +14,10 @@ import (
 var ErrStatusMismatch = errors.New("previous state does not match stored")
 
 // Status is the 'marked' status of a migration.
+//
+// The source of truth for an account's migration status is completely
+// recoverable from the chain, and will be used as a fallback. If the
+// status is marked as complete, the migrators will _not_ consult the chain.
 type Status int
 
 const (
