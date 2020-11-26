@@ -488,15 +488,16 @@ func TestInternal_SolanaAccountRoundTrip(t *testing.T) {
 
 	priv, err := NewPrivateKey()
 	require.NoError(t, err)
+	tokenAcc, _ := generateTokenAccount(ed25519.PrivateKey(priv))
 
-	accountInfo, err := env.internal.GetSolanaAccountInfo(context.Background(), priv.Public(), commonpbv4.Commitment_SINGLE)
+	accountInfo, err := env.internal.GetSolanaAccountInfo(context.Background(), PublicKey(tokenAcc), commonpbv4.Commitment_SINGLE)
 	assert.Nil(t, accountInfo)
 	assert.Equal(t, ErrAccountDoesNotExist, err)
 
 	assert.NoError(t, env.internal.CreateSolanaAccount(context.Background(), priv, commonpbv4.Commitment_SINGLE, nil))
 	assert.Equal(t, ErrAccountExists, env.internal.CreateSolanaAccount(context.Background(), priv, commonpbv4.Commitment_SINGLE, nil))
 
-	accountInfo, err = env.internal.GetSolanaAccountInfo(context.Background(), priv.Public(), commonpbv4.Commitment_SINGLE)
+	accountInfo, err = env.internal.GetSolanaAccountInfo(context.Background(), PublicKey(tokenAcc), commonpbv4.Commitment_SINGLE)
 	assert.NoError(t, err)
 	assert.NotNil(t, accountInfo)
 	assert.EqualValues(t, 10, accountInfo.Balance)
@@ -509,26 +510,27 @@ func TestInternal_SolanaAccountRoundTrip(t *testing.T) {
 
 	tx := solana.Transaction{}
 	require.NoError(t, tx.Unmarshal(createReq.Transaction.Value))
-	assert.Len(t, tx.Signatures, 2)
+	assert.Len(t, tx.Signatures, 3)
 	ed25519.Verify(ed25519.PublicKey(priv.Public()), tx.Message.Marshal(), tx.Signatures[1][:])
+	ed25519.Verify(tokenAcc, tx.Message.Marshal(), tx.Signatures[2][:])
 
 	sysCreate, err := system.DecompileCreateAccount(tx.Message, 0)
 	require.NoError(t, err)
 	assert.Equal(t, subsidizer, sysCreate.Funder)
-	assert.EqualValues(t, priv.Public(), sysCreate.Address)
+	assert.EqualValues(t, tokenAcc, sysCreate.Address)
 	assert.Equal(t, tokenProgram, sysCreate.Owner)
 	assert.Equal(t, testserver.MinBalanceForRentException, sysCreate.Lamports)
 	assert.Equal(t, token.AccountSize, int(sysCreate.Size))
 
 	tokenInit, err := token.DecompileInitializeAccount(tx.Message, 1)
 	require.NoError(t, err)
-	assert.EqualValues(t, priv.Public(), tokenInit.Account)
+	assert.EqualValues(t, tokenAcc, tokenInit.Account)
 	assert.Equal(t, tokenKey, tokenInit.Mint)
 	assert.EqualValues(t, priv.Public(), tokenInit.Owner)
 
 	setAuth, err := token.DecompileSetAuthority(tx.Message, 2)
 	require.NoError(t, err)
-	assert.EqualValues(t, priv.Public(), setAuth.Account)
+	assert.EqualValues(t, tokenAcc, setAuth.Account)
 	assert.EqualValues(t, priv.Public(), setAuth.CurrentAuthority)
 	assert.Equal(t, subsidizer, setAuth.NewAuthority)
 	assert.Equal(t, token.AuthorityTypeCloseAccount, setAuth.Type)
@@ -542,6 +544,7 @@ func TestInternal_CreateNoServiceSubsidizer(t *testing.T) {
 
 	priv, err := NewPrivateKey()
 	require.NoError(t, err)
+	tokenAcc, _ := generateTokenAccount(ed25519.PrivateKey(priv))
 
 	err = env.internal.CreateSolanaAccount(context.Background(), priv, commonpbv4.Commitment_SINGLE, nil)
 	require.Equal(t, ErrNoSubsidizer, err)
@@ -558,26 +561,28 @@ func TestInternal_CreateNoServiceSubsidizer(t *testing.T) {
 
 	tx := solana.Transaction{}
 	require.NoError(t, tx.Unmarshal(createReq.Transaction.Value))
-	assert.Len(t, tx.Signatures, 2)
+	assert.Len(t, tx.Signatures, 3)
+	ed25519.Verify(ed25519.PublicKey(subsidizer.Public()), tx.Message.Marshal(), tx.Signatures[0][:])
 	ed25519.Verify(ed25519.PublicKey(priv.Public()), tx.Message.Marshal(), tx.Signatures[1][:])
+	ed25519.Verify(tokenAcc, tx.Message.Marshal(), tx.Signatures[2][:])
 
 	sysCreate, err := system.DecompileCreateAccount(tx.Message, 0)
 	require.NoError(t, err)
 	assert.EqualValues(t, subsidizer.Public(), sysCreate.Funder)
-	assert.EqualValues(t, priv.Public(), sysCreate.Address)
+	assert.EqualValues(t, tokenAcc, sysCreate.Address)
 	assert.Equal(t, tokenProgram, sysCreate.Owner)
 	assert.Equal(t, testserver.MinBalanceForRentException, sysCreate.Lamports)
 	assert.Equal(t, token.AccountSize, int(sysCreate.Size))
 
 	tokenInit, err := token.DecompileInitializeAccount(tx.Message, 1)
 	require.NoError(t, err)
-	assert.EqualValues(t, priv.Public(), tokenInit.Account)
+	assert.EqualValues(t, tokenAcc, tokenInit.Account)
 	assert.Equal(t, tokenKey, tokenInit.Mint)
 	assert.EqualValues(t, priv.Public(), tokenInit.Owner)
 
 	setAuth, err := token.DecompileSetAuthority(tx.Message, 2)
 	require.NoError(t, err)
-	assert.EqualValues(t, priv.Public(), setAuth.Account)
+	assert.EqualValues(t, tokenAcc, setAuth.Account)
 	assert.EqualValues(t, priv.Public(), setAuth.CurrentAuthority)
 	assert.EqualValues(t, subsidizer.Public(), setAuth.NewAuthority)
 	assert.Equal(t, token.AuthorityTypeCloseAccount, setAuth.Type)
@@ -951,23 +956,24 @@ func TestInternal_RequestAirdrop(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	sender, err := NewPrivateKey()
+	priv, err := NewPrivateKey()
 	require.NoError(t, err)
+	tokenAcc, _ := generateTokenAccount(ed25519.PrivateKey(priv))
 
 	// Account doesn't exist
-	txID, err := env.internal.RequestAirdrop(context.Background(), sender.Public(), 10, commonpbv4.Commitment_SINGLE)
+	txID, err := env.internal.RequestAirdrop(context.Background(), PublicKey(tokenAcc), 10, commonpbv4.Commitment_SINGLE)
 	assert.Equal(t, ErrAccountDoesNotExist, err)
 	assert.Nil(t, txID)
 
 	setServiceConfigResp(t, env.v4Server, true)
-	require.NoError(t, env.internal.CreateSolanaAccount(context.Background(), sender, commonpbv4.Commitment_SINGLE, nil))
+	require.NoError(t, env.internal.CreateSolanaAccount(context.Background(), priv, commonpbv4.Commitment_SINGLE, nil))
 
 	// Too much money
-	txID, err = env.internal.RequestAirdrop(context.Background(), sender.Public(), testserver.MaxAirdrop+1, commonpbv4.Commitment_SINGLE)
+	txID, err = env.internal.RequestAirdrop(context.Background(), PublicKey(tokenAcc), testserver.MaxAirdrop+1, commonpbv4.Commitment_SINGLE)
 	assert.Equal(t, ErrInsufficientBalance, err)
 	assert.Nil(t, txID)
 
-	txID, err = env.internal.RequestAirdrop(context.Background(), sender.Public(), testserver.MaxAirdrop, commonpbv4.Commitment_SINGLE)
+	txID, err = env.internal.RequestAirdrop(context.Background(), PublicKey(tokenAcc), testserver.MaxAirdrop, commonpbv4.Commitment_SINGLE)
 	require.NoError(t, err)
 	assert.NotNil(t, txID)
 }

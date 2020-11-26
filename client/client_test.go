@@ -1108,17 +1108,19 @@ func TestClient_Kin4AccountManagement(t *testing.T) {
 	priv, err := NewPrivateKey()
 	require.NoError(t, err)
 
-	balance, err := env.client.GetBalance(context.Background(), priv.Public())
+	tokenAcc, _ := generateTokenAccount(ed25519.PrivateKey(priv))
+
+	balance, err := env.client.GetBalance(context.Background(), PublicKey(tokenAcc))
 	assert.Equal(t, ErrAccountDoesNotExist, err)
 	assert.Zero(t, balance)
 
-	err = env.client.CreateAccount(context.Background(), PrivateKey(priv))
+	err = env.client.CreateAccount(context.Background(), priv)
 	assert.NoError(t, err)
 
-	err = env.client.CreateAccount(context.Background(), PrivateKey(priv))
+	err = env.client.CreateAccount(context.Background(), priv)
 	assert.Equal(t, ErrAccountExists, err)
 
-	balance, err = env.client.GetBalance(context.Background(), priv.Public())
+	balance, err = env.client.GetBalance(context.Background(), PublicKey(tokenAcc))
 	assert.NoError(t, err)
 	assert.EqualValues(t, 10, balance)
 }
@@ -1931,7 +1933,9 @@ func TestClient_CreateAccountMigration(t *testing.T) {
 
 	env.v4Server.Mux.Lock()
 	assert.Len(t, env.v4Server.Accounts, 1)
-	assert.NotNil(t, env.v4Server.Accounts[priv.Public().Base58()])
+
+	tokenAcc, _ := generateTokenAccount(ed25519.PrivateKey(priv))
+	assert.NotNil(t, env.v4Server.Accounts[PublicKey(tokenAcc).Base58()])
 	env.v4Server.Mux.Unlock()
 }
 

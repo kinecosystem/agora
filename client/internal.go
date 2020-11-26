@@ -252,7 +252,8 @@ func (c *InternalClient) CreateSolanaAccount(ctx context.Context, key PrivateKey
 		return ErrNoSubsidizer
 	}
 
-	publicKey := ed25519.PublicKey(key.Public())
+	owner := ed25519.PublicKey(key.Public())
+	tokenAcc, tokenAccKey := generateTokenAccount(ed25519.PrivateKey(key))
 	tokenProgram := config.TokenProgram.Value
 
 	var subsidizerID ed25519.PublicKey
@@ -272,17 +273,17 @@ func (c *InternalClient) CreateSolanaAccount(ctx context.Context, key PrivateKey
 	}
 
 	tx := solana.NewTransaction(subsidizerID,
-		system.CreateAccount(subsidizerID, publicKey, tokenProgram, minBalance, token.AccountSize),
-		token.InitializeAccount(publicKey, config.Token.Value, publicKey),
-		token.SetAuthority(publicKey, publicKey, subsidizerID, token.AuthorityTypeCloseAccount),
+		system.CreateAccount(subsidizerID, tokenAcc, tokenProgram, minBalance, token.AccountSize),
+		token.InitializeAccount(tokenAcc, config.Token.Value, owner),
+		token.SetAuthority(tokenAcc, owner, subsidizerID, token.AuthorityTypeCloseAccount),
 	)
 	tx.SetBlockhash(recentBlockhash)
 
 	var signers []ed25519.PrivateKey
 	if subsidizer != nil {
-		signers = []ed25519.PrivateKey{ed25519.PrivateKey(subsidizer), ed25519.PrivateKey(key)}
+		signers = []ed25519.PrivateKey{ed25519.PrivateKey(subsidizer), ed25519.PrivateKey(key), tokenAccKey}
 	} else {
-		signers = []ed25519.PrivateKey{ed25519.PrivateKey(key)}
+		signers = []ed25519.PrivateKey{ed25519.PrivateKey(key), tokenAccKey}
 	}
 	err = tx.Sign(signers...)
 	if err != nil {
