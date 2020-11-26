@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## [v0.2.4](https://github.com/kinecosystem/agora/releases/tag/v0.2.4)
+- Create new accounts with different token account address
+
 ## [v0.2.3](https://github.com/kinecosystem/agora/releases/tag/v0.2.3)
 - Add Kin 4 support
 - Rename `TxHash` to `TxID` in `Client.GetTransaction`, `TransactionData`, and `EarnResult`
