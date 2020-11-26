@@ -511,8 +511,8 @@ func TestInternal_SolanaAccountRoundTrip(t *testing.T) {
 	tx := solana.Transaction{}
 	require.NoError(t, tx.Unmarshal(createReq.Transaction.Value))
 	assert.Len(t, tx.Signatures, 3)
-	ed25519.Verify(ed25519.PublicKey(priv.Public()), tx.Message.Marshal(), tx.Signatures[1][:])
-	ed25519.Verify(tokenAcc, tx.Message.Marshal(), tx.Signatures[2][:])
+	assert.True(t, ed25519.Verify(tokenAcc, tx.Message.Marshal(), tx.Signatures[1][:]))
+	assert.True(t, ed25519.Verify(ed25519.PublicKey(priv.Public()), tx.Message.Marshal(), tx.Signatures[2][:]))
 
 	sysCreate, err := system.DecompileCreateAccount(tx.Message, 0)
 	require.NoError(t, err)
@@ -562,9 +562,9 @@ func TestInternal_CreateNoServiceSubsidizer(t *testing.T) {
 	tx := solana.Transaction{}
 	require.NoError(t, tx.Unmarshal(createReq.Transaction.Value))
 	assert.Len(t, tx.Signatures, 3)
-	ed25519.Verify(ed25519.PublicKey(subsidizer.Public()), tx.Message.Marshal(), tx.Signatures[0][:])
-	ed25519.Verify(ed25519.PublicKey(priv.Public()), tx.Message.Marshal(), tx.Signatures[1][:])
-	ed25519.Verify(tokenAcc, tx.Message.Marshal(), tx.Signatures[2][:])
+	assert.True(t, ed25519.Verify(ed25519.PublicKey(subsidizer.Public()), tx.Message.Marshal(), tx.Signatures[0][:]))
+	assert.True(t, ed25519.Verify(tokenAcc, tx.Message.Marshal(), tx.Signatures[1][:]))
+	assert.True(t, ed25519.Verify(ed25519.PublicKey(priv.Public()), tx.Message.Marshal(), tx.Signatures[2][:]))
 
 	sysCreate, err := system.DecompileCreateAccount(tx.Message, 0)
 	require.NoError(t, err)
