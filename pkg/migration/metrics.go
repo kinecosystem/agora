@@ -124,5 +124,38 @@ func registerMetrics() error {
 		}
 	}
 
+	if err := prometheus.Register(successCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			successCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register migration success counter (offline)")
+		}
+
+	}
+
+	if err := prometheus.Register(multiSigCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			multiSigCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register migration multisig counter (offline)")
+		}
+	}
+
+	if err := prometheus.Register(burnedCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			burnedCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register migration burned counter (offline)")
+		}
+	}
+
+	if err := prometheus.Register(failureCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			failureCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register migration failed counter (offline)")
+		}
+	}
+
 	return nil
 }

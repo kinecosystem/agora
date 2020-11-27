@@ -12,6 +12,7 @@ require (
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.3
 	github.com/hashicorp/golang-lru v0.5.1
+	github.com/jackc/pgx/v4 v4.9.2
 	github.com/kinecosystem/agora-api v0.23.0
 	github.com/kinecosystem/agora-common v0.58.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
@@ -20,8 +21,11 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
 	github.com/sirupsen/logrus v1.4.2
+	github.com/spf13/cobra v1.1.1
 	github.com/stellar/go v0.0.0-20191211203732-552e507ffa37
 	github.com/stretchr/testify v1.5.1
+	github.com/ybbus/jsonrpc v2.1.2+incompatible
+	go.uber.org/atomic v1.6.0
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0

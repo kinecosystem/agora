@@ -252,6 +252,13 @@ func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 
 	_, stat, err := m.sc.SubmitTransaction(txn, commitment)
 	if err != nil {
+		if err == solana.ErrSignatureNotFound {
+			if _, tcErr := m.tc.GetAccount(info.migrationAccount, commitment); tcErr == nil {
+				if commitment == solana.CommitmentMax || commitment == solana.CommitmentRoot {
+					return errors.Wrap(migration.MarkComplete(ctx, m.store, info.account, state), "failed to mark migration as complete")
+				}
+			}
+		}
 		// We attempt to reset the state in the store for performance, not safety.
 		// If we don't clear the state, the next attempt will query the signature,
 		// which does not exist. Querying signatures that don't exist take a long

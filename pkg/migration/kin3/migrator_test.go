@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	hProtocol "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/kinecosystem/go/protocols/horizon/base"
 	"github.com/kinecosystem/go/strkey"
+	"github.com/mr-tron/base58"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -72,6 +74,37 @@ func setupKin3Env(t *testing.T) (env kin3Env) {
 	)
 	env.migrator = migrator.(*kin3Migrator)
 	return env
+}
+
+func TestBlockhashEquality(t *testing.T) {
+	var bh solana.Blockhash
+
+	if bh != (solana.Blockhash{}) {
+		assert.Fail(t, "should be equal")
+	}
+
+	bh[0] = 1
+
+	if bh == (solana.Blockhash{}) {
+		assert.Fail(t, "should not be equal")
+	}
+}
+
+func TestDerivation(t *testing.T) {
+	raw, err := base58.Decode("56TFPGGNL97wWLA9iiesmcbt9WRcMGmEFUbUqyXKPtaj")
+	require.NoError(t, err)
+
+	for _, s := range []string{
+		"",
+		"testmigrationkey1",
+		"testmigrationkey2",
+		"testmigrationkey3",
+		"testmigrationkey4",
+	} {
+		pub, _, err := migration.DeriveMigrationAccount(raw, []byte(s))
+		require.NoError(t, err)
+		fmt.Printf("%s: %s\n", s, base58.Encode(pub))
+	}
 }
 
 func TestMigrateAccount(t *testing.T) {
