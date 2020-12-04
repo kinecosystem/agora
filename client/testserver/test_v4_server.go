@@ -11,6 +11,7 @@ import (
 	"github.com/kinecosystem/agora-api/genproto/airdrop/v4"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
+	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/mr-tron/base58"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -77,8 +78,15 @@ func (t *V4Server) CreateAccount(ctx context.Context, req *accountpbv4.CreateAcc
 		return nil, status.Error(codes.InvalidArgument, "invalid Sys::CreateAccount instruction")
 	}
 
-	accountID := base58.Encode(sysCreate.Address)
-	if info, ok := t.Accounts[accountID]; ok {
+	tokenInit, err := token.DecompileInitializeAccount(tx.Message, 1)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid Token::InitializeAccount instruction")
+	}
+
+	tokenAccID := base58.Encode(sysCreate.Address)
+	ownerID := base58.Encode(tokenInit.Owner)
+
+	if info, ok := t.Accounts[tokenAccID]; ok {
 		return &accountpbv4.CreateAccountResponse{
 			Result:      accountpbv4.CreateAccountResponse_EXISTS,
 			AccountInfo: proto.Clone(info).(*accountpbv4.AccountInfo),
@@ -89,7 +97,9 @@ func (t *V4Server) CreateAccount(ctx context.Context, req *accountpbv4.CreateAcc
 		AccountId: &commonpbv4.SolanaAccountId{Value: sysCreate.Address},
 		Balance:   10,
 	}
-	t.Accounts[accountID] = accountInfo
+	t.Accounts[tokenAccID] = accountInfo
+	t.TokenAccounts[ownerID] = append(t.TokenAccounts[ownerID], &commonpbv4.SolanaAccountId{Value: sysCreate.Address})
+
 	return &accountpbv4.CreateAccountResponse{
 		AccountInfo: accountInfo,
 	}, nil
@@ -123,7 +133,9 @@ func (t *V4Server) ResolveTokenAccounts(ctx context.Context, req *accountpbv4.Re
 		return nil, err
 	}
 
-	accounts, ok := t.TokenAccounts[base58.Encode(req.AccountId.Value)]
+	ownerID := base58.Encode(req.AccountId.Value)
+
+	accounts, ok := t.TokenAccounts[ownerID]
 	if !ok {
 		return &accountpbv4.ResolveTokenAccountsResponse{}, nil
 	}

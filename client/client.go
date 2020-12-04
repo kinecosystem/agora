@@ -198,10 +198,10 @@ func WithDefaultCommitment(defaultCommitment commonpbv4.Commitment) ClientOption
 }
 
 type solanaOpts struct {
-	commitment       commonpbv4.Commitment
-	senderResolution AccountResolution
-	destResolution   AccountResolution
-	subsidizer       PrivateKey
+	commitment        commonpbv4.Commitment
+	accountResolution AccountResolution
+	destResolution    AccountResolution
+	subsidizer        PrivateKey
 }
 
 // ClientOption configures a solana-related function call.
@@ -214,10 +214,11 @@ func WithCommitment(commitment commonpbv4.Commitment) SolanaOption {
 	}
 }
 
-// WithSenderResolution specifies an account resolution to use for a Kin 4 payment/earn batch sender.
-func WithSenderResolution(resolution AccountResolution) SolanaOption {
+// WithAccountResolution specifies an account resolution to use for a Kin 4 request.
+// In the case of payments/earn batches, the specified resolution will be used only for the sender.
+func WithAccountResolution(resolution AccountResolution) SolanaOption {
 	return func(o *solanaOpts) {
-		o.senderResolution = resolution
+		o.accountResolution = resolution
 	}
 }
 
@@ -379,12 +380,30 @@ func (c *client) GetBalance(ctx context.Context, account PublicKey, opts ...Sola
 		return 0, errors.Errorf("unsupported kin version: %d", c.opts.kinVersion)
 	}
 
-	solanaOpts := solanaOpts{commitment: c.opts.defaultCommitment}
+	solanaOpts := solanaOpts{
+		commitment:        c.opts.defaultCommitment,
+		accountResolution: AccountResolutionPreferred,
+	}
 	for _, o := range opts {
 		o(&solanaOpts)
 	}
+
 	accountInfo, err := c.internal.GetSolanaAccountInfo(ctx, account, solanaOpts.commitment)
-	if err != nil {
+	if err == ErrAccountDoesNotExist && solanaOpts.accountResolution == AccountResolutionPreferred {
+		tokenAccounts, tokenErr := c.resolveTokenAccounts(ctx, account)
+		if tokenErr != nil {
+			return 0, tokenErr
+		}
+
+		if len(tokenAccounts) == 0 {
+			return 0, ErrAccountDoesNotExist
+		}
+
+		accountInfo, err = c.internal.GetSolanaAccountInfo(ctx, tokenAccounts[0], solanaOpts.commitment)
+		if err != nil {
+			return 0, err
+		}
+	} else if err != nil {
 		return 0, err
 	}
 
@@ -429,9 +448,9 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment, opts ...Sol
 	}
 
 	solanaOpts := solanaOpts{
-		commitment:       c.opts.defaultCommitment,
-		senderResolution: AccountResolutionPreferred,
-		destResolution:   AccountResolutionPreferred,
+		commitment:        c.opts.defaultCommitment,
+		accountResolution: AccountResolutionPreferred,
+		destResolution:    AccountResolutionPreferred,
 	}
 	for _, o := range opts {
 		o(&solanaOpts)
@@ -614,9 +633,9 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch, opts ...S
 	var config *transactionpbv4.GetServiceConfigResponse
 
 	solanaOpts := solanaOpts{
-		commitment:       c.opts.defaultCommitment,
-		senderResolution: AccountResolutionPreferred,
-		destResolution:   AccountResolutionPreferred,
+		commitment:        c.opts.defaultCommitment,
+		accountResolution: AccountResolutionPreferred,
+		destResolution:    AccountResolutionPreferred,
 	}
 	for _, o := range opts {
 		o(&solanaOpts)
@@ -646,7 +665,7 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch, opts ...S
 			return result, ErrNoSubsidizer
 		}
 
-		batches = c.partitionSolanaEarns(batch, solanaOpts.senderResolution)
+		batches = c.partitionSolanaEarns(batch, solanaOpts.accountResolution)
 	}
 
 	lastProcessedBatch := -1
@@ -751,7 +770,7 @@ func (c *client) submitPaymentWithResolution(ctx context.Context, payment Paymen
 
 	if result.Errors.TxError == ErrAccountDoesNotExist {
 		var resubmit bool
-		if solanaOpts.senderResolution == AccountResolutionPreferred {
+		if solanaOpts.accountResolution == AccountResolutionPreferred {
 			tokenAccounts, err := c.resolveTokenAccounts(ctx, payment.Sender.Public())
 			if err != nil {
 				return result, err
@@ -847,7 +866,7 @@ func (c *client) submitEarnBatchWithResolution(ctx context.Context, batch EarnBa
 
 	if result.Errors.TxError == ErrAccountDoesNotExist {
 		var resubmit bool
-		if solanaOpts.senderResolution == AccountResolutionPreferred {
+		if solanaOpts.accountResolution == AccountResolutionPreferred {
 			tokenAccounts, err := c.resolveTokenAccounts(ctx, batch.Sender.Public())
 			if err != nil {
 				return result, err

@@ -1123,6 +1123,15 @@ func TestClient_Kin4AccountManagement(t *testing.T) {
 	balance, err = env.client.GetBalance(context.Background(), PublicKey(tokenAcc))
 	assert.NoError(t, err)
 	assert.EqualValues(t, 10, balance)
+
+	// Test resolution options
+	balance, err = env.client.GetBalance(context.Background(), priv.Public(), WithAccountResolution(AccountResolutionExact))
+	assert.Equal(t, ErrAccountDoesNotExist, err)
+	assert.Zero(t, balance)
+
+	balance, err = env.client.GetBalance(context.Background(), priv.Public())
+	require.NoError(t, err)
+	assert.EqualValues(t, 10, balance)
 }
 
 func TestClient_Kin4SubmitPayment(t *testing.T) {
@@ -1363,13 +1372,11 @@ func TestClient_Kin4SubmitPaymentKin4AccountResolution(t *testing.T) {
 	require.NoError(t, err)
 	dest, err := NewPrivateKey()
 	require.NoError(t, err)
-	resolvedSender, err := NewPrivateKey()
-	require.NoError(t, err)
-	resolvedDest, err := NewPrivateKey()
-	require.NoError(t, err)
+	resolvedSender, _ := generateTokenAccount(ed25519.PrivateKey(sender))
+	resolvedDest, _ := generateTokenAccount(ed25519.PrivateKey(dest))
 
 	setServiceConfigResp(t, env.v4Server, true)
-	for _, acc := range [][]byte{sender, dest, resolvedSender, resolvedDest} {
+	for _, acc := range [][]byte{sender, dest} {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 
@@ -1391,21 +1398,9 @@ func TestClient_Kin4SubmitPaymentKin4AccountResolution(t *testing.T) {
 			},
 		},
 	}
-	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{
-		sender.Public().Base58(): {
-			{
-				Value: resolvedSender.Public(),
-			},
-		},
-		dest.Public().Base58(): {
-			{
-				Value: resolvedDest.Public(),
-			},
-		},
-	}
 	env.v4Server.Mux.Unlock()
 
-	txID, err := env.client.SubmitPayment(context.Background(), p, WithSenderResolution(AccountResolutionPreferred), WithDestResolution(AccountResolutionPreferred))
+	txID, err := env.client.SubmitPayment(context.Background(), p, WithAccountResolution(AccountResolutionPreferred), WithDestResolution(AccountResolutionPreferred))
 	require.NoError(t, err)
 	assert.NotNil(t, txID)
 
@@ -1437,8 +1432,8 @@ func TestClient_Kin4SubmitPaymentKin4AccountResolution(t *testing.T) {
 			assert.EqualValues(t, sender.Public(), transferInstr.Source)
 			assert.EqualValues(t, dest.Public(), transferInstr.Destination)
 		} else {
-			assert.EqualValues(t, resolvedSender.Public(), transferInstr.Source)
-			assert.EqualValues(t, resolvedDest.Public(), transferInstr.Destination)
+			assert.EqualValues(t, resolvedSender, transferInstr.Source)
+			assert.EqualValues(t, resolvedDest, transferInstr.Destination)
 		}
 		assert.EqualValues(t, sender.Public(), transferInstr.Owner)
 		assert.EqualValues(t, p.Quarks, transferInstr.Amount)
@@ -1456,10 +1451,9 @@ func TestClient_Kin4SubmitPaymentKin4AccountResolution(t *testing.T) {
 			},
 		},
 	}
-	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{}
 	env.v4Server.Mux.Unlock()
 
-	txID, err = env.client.SubmitPayment(context.Background(), p, WithSenderResolution(AccountResolutionExact), WithDestResolution(AccountResolutionExact))
+	txID, err = env.client.SubmitPayment(context.Background(), p, WithAccountResolution(AccountResolutionExact), WithDestResolution(AccountResolutionExact))
 	assert.EqualValues(t, ErrAccountDoesNotExist, err)
 	assert.NotNil(t, txID)
 }
@@ -1766,7 +1760,7 @@ func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
 
 	sender, err := NewPrivateKey()
 	require.NoError(t, err)
-	resolvedSender, err := NewPrivateKey()
+	resolvedSender, _ := generateTokenAccount(ed25519.PrivateKey(sender))
 	require.NoError(t, err)
 
 	// Test Preferred Account Resolution
@@ -1780,17 +1774,11 @@ func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
 			},
 		},
 	}
-	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{
-		sender.Public().Base58(): {
-			{
-				Value: resolvedSender.Public(),
-			},
-		},
-	}
+	env.v4Server.Mux.Unlock()
 
 	earns := make([]Earn, 20)
 	earnAccounts := make([]PrivateKey, 20)
-	resolvedEarnAccounts := make([]PrivateKey, 20)
+	resolvedEarnAccounts := make([]PublicKey, 20)
 	for i := 0; i < len(earnAccounts); i++ {
 		dest, err := NewPrivateKey()
 		require.NoError(t, err)
@@ -1801,19 +1789,13 @@ func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
 			Quarks:      int64(i) + 1,
 		}
 
-		resolvedDest, err := NewPrivateKey()
+		resolvedDest, _ := generateTokenAccount(ed25519.PrivateKey(dest))
 		require.NoError(t, err)
-		resolvedEarnAccounts[i] = resolvedDest
-		env.v4Server.TokenAccounts[dest.Public().Base58()] = []*commonpbv4.SolanaAccountId{
-			{
-				Value: resolvedDest.Public(),
-			},
-		}
+		resolvedEarnAccounts[i] = PublicKey(resolvedDest)
 	}
-	env.v4Server.Mux.Unlock()
 
 	setServiceConfigResp(t, env.v4Server, true)
-	for _, acc := range append([]PrivateKey{sender, resolvedSender}, append(earnAccounts, resolvedEarnAccounts...)...) {
+	for _, acc := range append([]PrivateKey{sender}, earnAccounts...) {
 		require.NoError(t, env.client.CreateAccount(context.Background(), acc))
 	}
 	b := EarnBatch{
@@ -1821,7 +1803,7 @@ func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
 		Earns:  earns,
 	}
 
-	result, err := env.client.SubmitEarnBatch(context.Background(), b, WithSenderResolution(AccountResolutionPreferred), WithDestResolution(AccountResolutionPreferred))
+	result, err := env.client.SubmitEarnBatch(context.Background(), b, WithAccountResolution(AccountResolutionPreferred), WithDestResolution(AccountResolutionPreferred))
 	assert.NoError(t, err)
 
 	env.v4Server.Mux.Lock()
@@ -1873,8 +1855,8 @@ func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
 
 			earn := b.Earns[batchIndex*batchSize+j]
 			if resolved {
-				require.EqualValues(t, resolvedSender.Public(), transferInstr.Source)
-				require.EqualValues(t, resolvedEarnAccounts[batchIndex*batchSize+j].Public(), transferInstr.Destination)
+				require.EqualValues(t, resolvedSender, transferInstr.Source)
+				require.EqualValues(t, resolvedEarnAccounts[batchIndex*batchSize+j], transferInstr.Destination)
 			} else {
 				require.EqualValues(t, sender.Public(), transferInstr.Source)
 				require.EqualValues(t, earnAccounts[batchIndex*batchSize+j].Public(), transferInstr.Destination)
@@ -1897,10 +1879,9 @@ func TestClient_Kin4SubmitEarnBatchAccountResolution(t *testing.T) {
 			},
 		},
 	}
-	env.v4Server.TokenAccounts = map[string][]*commonpbv4.SolanaAccountId{}
 	env.v4Server.Mux.Unlock()
 
-	result, err = env.client.SubmitEarnBatch(context.Background(), b, WithSenderResolution(AccountResolutionExact), WithDestResolution(AccountResolutionExact))
+	result, err = env.client.SubmitEarnBatch(context.Background(), b, WithAccountResolution(AccountResolutionExact), WithDestResolution(AccountResolutionExact))
 	assert.Equal(t, err, ErrAccountDoesNotExist)
 
 	env.v4Server.Mux.Lock()
