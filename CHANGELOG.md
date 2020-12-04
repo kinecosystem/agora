@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## [v0.2.5](https://github.com/kinecosystem/agora/releases/tag/v0.2.5)
+- Rename 'WithSenderResolution' to 'WithAccountResolution'
+- Add account resolution support to `Client.GetBalance` 
+
 ## [v0.2.4](https://github.com/kinecosystem/agora/releases/tag/v0.2.4)
 - Create new accounts with different token account address
 
