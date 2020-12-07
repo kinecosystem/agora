@@ -1,14 +1,19 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/taskqueue"
 	"github.com/kinecosystem/agora-common/taskqueue/model/task"
+	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -137,11 +142,14 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 		if envelope.Tx.Memo.Text != nil {
 			if appID, ok := transaction.AppIDFromTextMemo(*envelope.Tx.Memo.Text); ok {
 				index, err := p.appMapper.GetAppIndex(ctx, appID)
-				if err != nil && err != app.ErrMappingNotFound {
-					log.WithError(err).Warn("failed to lookup app id mapping")
-					return errors.Wrap(err, "failed to lookup app id mapping")
+				if err != nil {
+					if err != app.ErrMappingNotFound {
+						log.WithError(err).Warn("failed to lookup app id mapping")
+						return errors.Wrap(err, "failed to lookup app id mapping")
+					}
+				} else {
+					appIndex = int(index)
 				}
-				appIndex = int(index)
 			}
 		} else {
 			memo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
@@ -149,6 +157,67 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 				appIndex = int(memo.AppIndex())
 			}
 		}
+	case *model.Entry_Solana:
+		event.TransactionEvent.SolanaEvent = &SolanaEvent{
+			Transaction:         t.Solana.Transaction,
+			TransactionErrorRaw: t.Solana.TransactionError,
+		}
+
+		if t.Solana.TransactionError != nil {
+			d := json.NewDecoder(bytes.NewBuffer(t.Solana.TransactionError))
+			var raw interface{}
+			err = d.Decode(&raw)
+			if err != nil {
+				log.WithError(err).Warn("failed to decode transaction error")
+				return errors.Wrap(err, "failed to decode transaction error")
+			}
+
+			txErr, err := solana.ParseTransactionError(raw)
+			if err != nil {
+				log.WithError(err).Warn("failed to parse transaction error")
+				return errors.Wrap(err, "failed to parse transaction error")
+			}
+
+			protoErr, err := solanautil.MapTransactionError(*txErr)
+			if err != nil {
+				log.WithError(err).Warn("failed to map transaction error")
+				return errors.Wrap(err, "failed to map transaction error")
+			}
+
+			event.TransactionEvent.SolanaEvent.TransactionError = strings.ToLower(protoErr.Reason.String())
+		}
+
+		tx := &solana.Transaction{}
+		if err := tx.Unmarshal(t.Solana.Transaction); err != nil {
+			log.WithError(err).Warn("failed to unmarshal solana transaction")
+			return errors.Wrap(err, "failed to unmarshal solana transaction")
+		}
+
+		programIdx := tx.Message.Instructions[0].ProgramIndex
+		if bytes.Equal(tx.Message.Accounts[programIdx], memo.ProgramKey) {
+			memoInstruction, err := memo.DecompileMemo(tx.Message, 0)
+			if err != nil {
+				log.WithError(err).Warn("failed to decompile memo instruction")
+				return errors.Wrap(err, "failed to decompile memo instruction")
+			}
+
+			if m, err := kin.MemoFromBase64String(string(memoInstruction.Data), true); err == nil {
+				appIndex = int(m.AppIndex())
+			} else {
+				if appID, ok := transaction.AppIDFromTextMemo(string(memoInstruction.Data)); ok {
+					index, err := p.appMapper.GetAppIndex(ctx, appID)
+					if err != nil {
+						if err != app.ErrMappingNotFound {
+							log.WithError(err).Warn("failed to lookup app id mapping")
+							return errors.Wrap(err, "failed to lookup app id mapping")
+						}
+					} else {
+						appIndex = int(index)
+					}
+				}
+			}
+		}
+
 	default:
 		log.Warn("unsupported entry type, ignoring")
 		return errors.Errorf("unsupported entry type, ignoring")
