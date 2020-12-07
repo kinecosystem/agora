@@ -76,7 +76,12 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 					for _, slot := range blocks {
 						blockPtr := pointerFromSlot(slot)
 						resultCh := make(chan ingestion.Result, 1)
-						queue <- resultCh
+
+						select {
+						case queue <- resultCh:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
 
 						result := ingestion.Result{
 							Parent: parent,
