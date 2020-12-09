@@ -20,6 +20,7 @@ import (
 	"github.com/go-redis/redis_rate/v8"
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/httpgateway"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
@@ -554,6 +555,7 @@ func main() {
 		&app{},
 		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
 		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
 	); err != nil {
 		log.WithError(err).Fatal("error running service")
 	}
