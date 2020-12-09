@@ -21,11 +21,6 @@ import (
 // The function will deduplicate accounts, so callers need not be
 // concerned.
 func MigrateBatch(ctx context.Context, m Migrator, accounts ...ed25519.PublicKey) error {
-	shouldMigrate, err := HasMigrationHeader(ctx)
-	if !shouldMigrate {
-		return err
-	}
-
 	accountSet := make(map[string]struct{})
 	for _, a := range accounts {
 		accountSet[string(a)] = struct{}{}

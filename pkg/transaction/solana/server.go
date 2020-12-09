@@ -146,6 +146,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 
 	var txn solana.Transaction
 	if err := txn.Unmarshal(req.Transaction.Value); err != nil {
+		log.WithError(err).Debug("bad transaction encoding")
 		return nil, status.Error(codes.InvalidArgument, "bad transaction encoding")
 	}
 

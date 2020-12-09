@@ -1,4 +1,4 @@
-package kin3
+package kin2
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -31,19 +32,20 @@ type accountInfo struct {
 	balance             uint64
 }
 
-type kin3Migrator struct {
-	log   *logrus.Entry
-	sc    solana.Client
-	tc    *token.Client
-	hc    horizon.ClientInterface
-	store migration.Store
+type kin2Migrator struct {
+	log        *logrus.Entry
+	sc         solana.Client
+	tc         *token.Client
+	hc         horizon.ClientInterface
+	kin2Issuer string
+	store      migration.Store
 
 	migrationSecret []byte
 
 	subsidizer    ed25519.PublicKey
 	subsidizerKey ed25519.PrivateKey
-	mint          ed25519.PublicKey
-	mintKey       ed25519.PrivateKey
+	source        ed25519.PublicKey
+	sourceKey     ed25519.PrivateKey
 
 	// Guarded by sync/atomc
 	lamportSize uint64
@@ -57,27 +59,29 @@ func New(
 	store migration.Store,
 	sc solana.Client,
 	hc horizon.ClientInterface,
+	kin2Issuer string,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
-	mint ed25519.PublicKey,
-	mintKey ed25519.PrivateKey,
+	source ed25519.PublicKey,
+	sourceKey ed25519.PrivateKey,
 	migrationSecret []byte,
 ) migration.Migrator {
-	return &kin3Migrator{
-		log:             logrus.StandardLogger().WithField("type", "migration/kin3migrator"),
+	return &kin2Migrator{
+		log:             logrus.StandardLogger().WithField("type", "migration/kin2migrator"),
 		sc:              sc,
+		kin2Issuer:      kin2Issuer,
 		tc:              token.NewClient(sc, tokenAccount),
 		store:           store,
 		hc:              hc,
 		subsidizer:      subsidizer.Public().(ed25519.PublicKey),
 		subsidizerKey:   subsidizer,
-		mint:            mint,
-		mintKey:         mintKey,
+		source:          source,
+		sourceKey:       sourceKey,
 		migrationSecret: migrationSecret,
 	}
 }
 
-func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
+func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
 	migrationAccount, migrationAccountKey, err := migration.DeriveMigrationAccount(account, m.migrationSecret)
 	if err != nil {
 		return err
@@ -96,6 +100,9 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	case migration.StatusInProgress:
 		return m.recover(ctx, account, migrationAccount, commitment)
 	}
+
+	// WARNING: this currently ignores kin3 all together. this should be fixed to either merge balances into
+	//          a single account.
 
 	//
 	// Load necessary account information, and double check whether or not we should migrate.
@@ -118,7 +125,7 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	return m.migrateAccount(ctx, info, commitment)
 }
 
-func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, commitment solana.Commitment) (err error) {
+func (m *kin2Migrator) migrateAccount(ctx context.Context, info accountInfo, commitment solana.Commitment) (err error) {
 	log := m.log.WithField("method", "createMigrationAccount")
 
 	lamports := atomic.LoadUint64(&m.lamportSize)
@@ -187,14 +194,14 @@ func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 			token.AuthorityTypeAccountHolder,
 		),
 		token.Transfer(
-			m.mint,
+			m.source,
 			info.migrationAccount,
-			m.mintKey.Public().(ed25519.PublicKey),
+			m.sourceKey.Public().(ed25519.PublicKey),
 			info.balance,
 		),
 	)
 	txn.SetBlockhash(bh)
-	if err := txn.Sign(m.subsidizerKey, m.mintKey, info.migrationAccountKey); err != nil {
+	if err := txn.Sign(m.subsidizerKey, m.sourceKey, info.migrationAccountKey); err != nil {
 		return errors.Wrap(err, "failed to sign migration transaction")
 	}
 
@@ -246,7 +253,7 @@ func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 	return nil
 }
 
-func (m *kin3Migrator) recover(ctx context.Context, account, migrationAccount ed25519.PublicKey, commitment solana.Commitment) error {
+func (m *kin2Migrator) recover(ctx context.Context, account, migrationAccount ed25519.PublicKey, commitment solana.Commitment) error {
 	log := m.log.WithField("method", "recover")
 
 	log.Trace("Recovering migration status")
@@ -284,7 +291,7 @@ func (m *kin3Migrator) recover(ctx context.Context, account, migrationAccount ed
 	return errors.Errorf("unhandled state status: %v", state.Status)
 }
 
-func (m *kin3Migrator) loadAccount(ctx context.Context, account ed25519.PublicKey, migrationKey ed25519.PrivateKey) (info accountInfo, err error) {
+func (m *kin2Migrator) loadAccount(ctx context.Context, account ed25519.PublicKey, migrationKey ed25519.PrivateKey) (info accountInfo, err error) {
 	info.account = account
 	info.migrationAccount = migrationKey.Public().(ed25519.PublicKey)
 	info.migrationAccountKey = migrationKey
@@ -303,12 +310,9 @@ func (m *kin3Migrator) loadAccount(ctx context.Context, account ed25519.PublicKe
 			}
 		}
 
-		return info, errors.Wrap(err, "failed to check kin3 account status")
+		return info, errors.Wrap(err, "failed to check kin2 account status")
 	}
-	strBalance, err := stellarAccount.GetNativeBalance()
-	if err != nil {
-		return info, errors.Wrap(err, "failed to get native balance")
-	}
+	strBalance := stellarAccount.GetCreditBalance(kin.KinAssetCode, m.kin2Issuer)
 	balance, err := amount.ParseInt64(strBalance)
 	if err != nil {
 		return info, errors.Wrap(err, "failed to parse balance")

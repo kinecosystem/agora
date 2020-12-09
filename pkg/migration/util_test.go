@@ -69,20 +69,6 @@ func TestMigrate_Error(t *testing.T) {
 	assert.Error(t, MigrateBatch(ctx, m, accounts...))
 }
 
-func TestMigrateBatch_NoMigrate(t *testing.T) {
-	ctx, err := headers.ContextWithHeaders(context.Background())
-	require.NoError(t, err)
-	require.NoError(t, headers.SetASCIIHeader(ctx, version.DesiredKinVersionHeader, "2"))
-
-	account, _, err := ed25519.GenerateKey(nil)
-	require.NoError(t, err)
-
-	m := &mockMigrator{}
-	assert.NoError(t, MigrateBatch(ctx, m, account))
-
-	m.AssertNotCalled(t, "InitiateMigration", mock.Anything, mock.Anything, mock.Anything)
-}
-
 func TestBlockhashEquality(t *testing.T) {
 	var bh solana.Blockhash
 

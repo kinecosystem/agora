@@ -48,6 +48,7 @@ import (
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/migration"
 	migrationstore "github.com/kinecosystem/agora/pkg/migration/dynamodb"
+	kin2migrator "github.com/kinecosystem/agora/pkg/migration/kin2"
 	kin3migrator "github.com/kinecosystem/agora/pkg/migration/kin3"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/transaction"
@@ -80,6 +81,11 @@ const (
 	kinTokenEnv            = "KIN_TOKEN"
 	airdropSourceEnv       = "AIRDROP_SOURCE"
 	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
+
+	// Solana kin2 migration config
+	kin2SourceAddressEnv   = "KIN2_SOURCE_ADDRESS"
+	kin2SourceKeyEnv       = "KIN2_SOURCE_KEYPAIR_ID"
+	kin2MigrationSecretEnv = "KIN2_MIGRATION_SECRET"
 
 	// Solana kin3 migration config
 	mintEnv                = "MINT_ADDRESS"
@@ -416,6 +422,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
 		}
 
+		kin2MigrationSecret := os.Getenv(kin2MigrationSecretEnv)
 		kin3MigrationSecret := os.Getenv(kin3MigrationSecretEnv)
 
 		var mint ed25519.PublicKey
@@ -440,15 +447,66 @@ func (a *app) Init(_ agoraapp.Config) error {
 			mintKey = ed25519.NewKeyFromSeed(rawSeed)
 		}
 
-		var migrator migration.Migrator
+		var kin2Source ed25519.PublicKey
+		if os.Getenv(kin2SourceAddressEnv) != "" {
+			kin2Source, err = base58.Decode(os.Getenv(kin2SourceAddressEnv))
+			if err != nil {
+				return errors.Wrap(err, "failed to parse kin2 source")
+			}
+		}
+		var kin2SourceKey ed25519.PrivateKey
+		if os.Getenv(kin2SourceKeyEnv) != "" {
+			kin2SourceKP, err := keystore.Get(context.Background(), os.Getenv(kin2SourceKeyEnv))
+			if err != nil {
+				return errors.Wrap(err, "failed to determine kin2 source keypair")
+			}
+
+			rawSeed, err := strkey.Decode(strkey.VersionByteSeed, kin2SourceKP.Seed())
+			if err != nil {
+				return errors.Wrap(err, "invalid kin2 source seed string")
+			}
+
+			kin2SourceKey = ed25519.NewKeyFromSeed(rawSeed)
+		}
+
+		var kin2Migrator, kin3Migrator migration.Migrator
 		migrationStore := migrationstore.New(dynamoClient)
+
+		if kin2MigrationSecret != "" {
+			if kin3MigrationSecret == kin2MigrationSecret {
+				return errors.New("kin2 and kin3 migration secrets cannot be the same")
+			}
+
+			if len(kin2Source) == 0 || len(kin2SourceKey) == 0 {
+				return errors.New("must specify source and source key if kin2 migration is enabled")
+			}
+
+			issuer, err := kin.GetKin2Issuer()
+			if err != nil {
+				return errors.Wrap(err, "failed to get kin2 issuer")
+			}
+
+			kin2Migrator = kin2migrator.New(
+				migrationStore,
+				solanaClient,
+				kin2Client,
+				issuer,
+				kinToken,
+				subsidizer,
+				kin2Source,
+				kin2SourceKey,
+				[]byte(kin2MigrationSecret),
+			)
+		} else {
+			kin2Migrator = migration.NewNoopMigrator()
+		}
 
 		if kin3MigrationSecret != "" {
 			if len(mint) == 0 || len(mintKey) == 0 {
-				return errors.Wrap(err, "must specify mint and mint key if kin3 migration is enabled")
+				return errors.New("must specify mint and mint key if kin3 migration is enabled")
 			}
 
-			migrator = kin3migrator.New(
+			kin3Migrator = kin3migrator.New(
 				migrationStore,
 				solanaClient,
 				client,
@@ -459,9 +517,12 @@ func (a *app) Init(_ agoraapp.Config) error {
 				[]byte(kin3MigrationSecret),
 			)
 		} else {
-			migrator = migration.NewNoopMigrator()
+			kin3Migrator = migration.NewNoopMigrator()
 		}
 
+		// todo: we shouldn't use this in production. we should use a single migrator.
+		//       the 'tee' component should be implemented inside a single migrator for performance.
+		migrator := migration.NewTeeMigrator(kin2Migrator, kin3Migrator)
 		onlineMigrator := migration.NewContextAwareMigrator(migrator)
 
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
@@ -554,7 +615,9 @@ func main() {
 	if err := agoraapp.Run(
 		&app{},
 		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
+		agoraapp.WithUnaryServerInterceptor(version.MinVersionUnaryServerInterceptor()),
 		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+		agoraapp.WithStreamServerInterceptor(version.MinVersionStreamServerInterceptor()),
 		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
 	); err != nil {
 		log.WithError(err).Fatal("error running service")

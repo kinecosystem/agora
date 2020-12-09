@@ -42,10 +42,29 @@ func NewContextAwareMigrator(base Migrator) Migrator {
 }
 
 func (m *contextAwareMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
-	shouldMigrate, err := HasMigrationHeader(ctx)
-	if !shouldMigrate {
+	hasMigrationheader, err := HasMigrationHeader(ctx)
+	if !hasMigrationheader {
 		return err
 	}
 
 	return m.base.InitiateMigration(ctx, account, commitment)
+}
+
+type teeMigrator struct {
+	a, b Migrator
+}
+
+func NewTeeMigrator(a, b Migrator) Migrator {
+	return &teeMigrator{
+		a: a,
+		b: b,
+	}
+}
+
+func (m *teeMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
+	if err := m.a.InitiateMigration(ctx, account, commitment); err != nil {
+		return err
+	}
+
+	return m.b.InitiateMigration(ctx, account, commitment)
 }
