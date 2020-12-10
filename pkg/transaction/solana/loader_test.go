@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"testing"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/solana"
@@ -149,6 +150,7 @@ func TestLoadTransaction_FromClient(t *testing.T) {
 	}
 
 	env.client.On("GetConfirmedTransaction", sig).Return(confirmedTransaction, nil)
+	env.client.On("GetBlockTime", uint64(10)).Return(time.Now(), nil)
 
 	resp, err := env.loader.loadTransaction(context.Background(), hash)
 	assert.NoError(t, err)
@@ -233,6 +235,7 @@ func TestLoadTransaction_UpgradeConfirmed(t *testing.T) {
 	}
 
 	env.client.On("GetSignatureStatus", sig, mock.Anything).Return(status, nil)
+	env.client.On("GetBlockTime", uint64(1)).Return(time.Now(), nil)
 
 	resp, err := env.loader.loadTransaction(context.Background(), hash)
 	assert.NoError(t, err)

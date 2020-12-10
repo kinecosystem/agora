@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/strkey"
@@ -113,12 +114,23 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 			rawTxError = []byte(str)
 		}
 
+		blockTime, err := l.sc.GetBlockTime(txn.Slot)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get transaction time")
+		}
+
+		ts, err := ptypes.TimestampProto(blockTime)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to marshal transaction time")
+		}
+
 		entry = &model.Entry{
 			Version: 4,
 			Kind: &model.Entry_Solana{
 				Solana: &model.SolanaEntry{
 					Slot:             txn.Slot,
 					Confirmed:        true,
+					BlockTime:        ts,
 					Transaction:      txn.Transaction.Marshal(),
 					TransactionError: rawTxError,
 				},
@@ -144,7 +156,17 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 		// Alternatively, if we have the status, and confirmations isn't set, it
 		// means the transaction was rooted, and therefore confirmed.
 		if err == solana.ErrSignatureNotFound || stat.Confirmations == nil {
+			blockTime, err := l.sc.GetBlockTime(stat.Slot)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get transaction time")
+			}
+			ts, err := ptypes.TimestampProto(blockTime)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to marshal transaction time")
+			}
+
 			writeback = true
+			entry.GetSolana().BlockTime = ts
 			entry.GetSolana().Confirmed = true
 		} else if stat.Confirmations != nil {
 			confirmations = *stat.Confirmations

@@ -1,11 +1,13 @@
 package solana
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"math"
 	"time"
 
+	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/agora-common/solana"
@@ -121,47 +123,52 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 	block, err := i.client.GetConfirmedBlock(slot)
 	if err != nil {
-		return nil
+		// todo: wtf? why was this return nil...
+		return errors.Wrapf(err, "failed to get confirmed block")
 	}
 
-	// not every slot has a block
+	// Not every slot has a block, so if we get no error, an empty
+	// block is considered valid.
+	//
+	// todo(metrics): add meter here. should be close to zero in test/prod
 	if block == nil {
 		return nil
 	}
 
+	blockTime, err := i.client.GetBlockTime(slot)
+	if err != nil {
+		// Note: even in the solana.ErrBlockNotAvailable case, we _should_
+		//       always have it available. It being not available indicates the
+		//       underlying RPC node should be fixed.
+		return errors.Wrap(err, "failed to get block time")
+	}
+
+	ts, err := ptypes.TimestampProto(blockTime)
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal block time")
+	}
+
+	type shouldProcessFunc func(solana.BlockTransaction, int) (bool, error)
+	checks := []shouldProcessFunc{
+		i.containsInitialize,
+		i.containsTransfer,
+		i.containsSetAuthority,
+	}
+
 	for _, txn := range block.Transactions {
 		for instr := range txn.Transaction.Message.Instructions {
-			decompiled, err := token.DecompileTransferAccount(txn.Transaction.Message, instr)
-			if err != nil {
-				continue
+			shouldProcess := false
+			for _, check := range checks {
+				shouldProcess, err = check(txn, instr)
+				if err != nil {
+					return err
+				}
+				if shouldProcess {
+					break
+				}
 			}
 
-			_, err = i.tokenClient.GetAccount(decompiled.Source, solana.CommitmentSingle)
-			if err == token.ErrInvalidTokenAccount {
-				// The source account is either not a token account, or it's not for
-				// our configured mint
-				continue
-			} else if err != nil {
-				// If we cannot retrieve the source account, _and_ there's a transaction failure,
-				// then it is likely (but not guaranteed) that the transaction failed because the
-				// source does not exist.
-				//
-				// If, on the other hand, there is _no_ transaction error, then the we should be
-				// able to retrieve the account info, as the it was referenced in a successful
-				// token transfer instruction.
-				//
-				// In either case, we don't really have enough information to infer which mint
-				// the transfer was for. We can only infer whether or not it was an RPC error, or
-				// a transaction error.
-				//
-				// Note: we could likely check the destination account as well, but it is generally
-				// more likely that the source will be ok (rather than the dest), and we want to
-				// avoid unnecessary API calls. The side effect here is that the failed transaction
-				// will not be stored in our history.
-				if txn.Err == nil {
-					return errors.Wrap(err, "failed to get account for non-failed transaction")
-				}
-
+			if !shouldProcess {
 				continue
 			}
 
@@ -180,6 +187,7 @@ func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 					Solana: &model.SolanaEntry{
 						Slot:             slot,
 						Confirmed:        true,
+						BlockTime:        ts,
 						Transaction:      txn.Transaction.Marshal(),
 						TransactionError: txnErr,
 					},
@@ -189,10 +197,100 @@ func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 			if err := w.Write(context.Background(), entry); err != nil {
 				return errors.Wrap(err, "failed to write txn")
 			}
-
-			break
 		}
 	}
 
 	return nil
+}
+
+func (i *ingestor) containsInitialize(txn solana.BlockTransaction, index int) (bool, error) {
+	decompiled, err := token.DecompileInitializeAccount(txn.Transaction.Message, index)
+	if err != nil {
+		return false, nil
+	}
+
+	if !bytes.Equal(decompiled.Mint, i.tokenClient.Token()) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (i *ingestor) containsSetAuthority(txn solana.BlockTransaction, index int) (bool, error) {
+	decompiled, err := token.DecompileSetAuthority(txn.Transaction.Message, index)
+	if err != nil {
+		return false, nil
+	}
+
+	info, err := i.tokenClient.GetAccount(decompiled.Account, solana.CommitmentSingle)
+	if err == token.ErrInvalidTokenAccount {
+		// The source account is either not a token account, or it's not for
+		// our configured mint
+		return false, nil
+	} else if err != nil {
+		// If we cannot retrieve the source account, _and_ there's a transaction failure,
+		// then it is likely (but not guaranteed) that the transaction failed because the
+		// of a bad 'currentAuthority' signature (i.e. someone's trying to steal).
+		//
+		// If, on the other hand, there is _no_ transaction error, then the we should be
+		// able to retrieve the account info, as the it was referenced in a successful
+		// token transfer instruction.
+		//
+		// In either case, we don't really have enough information to infer which mint
+		// the transfer was for. We can only infer whether or not it was an RPC error, or
+		// a transaction error.
+		if txn.Err == nil {
+			return false, errors.Wrap(err, "failed to get account for non-failed transaction")
+		}
+
+		return false, nil
+	}
+
+	if !bytes.Equal(info.Mint, i.tokenClient.Token()) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (i *ingestor) containsTransfer(txn solana.BlockTransaction, index int) (bool, error) {
+	decompiled, err := token.DecompileTransferAccount(txn.Transaction.Message, index)
+	if err != nil {
+		return false, nil
+	}
+
+	info, err := i.tokenClient.GetAccount(decompiled.Source, solana.CommitmentSingle)
+	if err == token.ErrInvalidTokenAccount {
+		// The source account is either not a token account, or it's not for
+		// our configured mint
+		return false, nil
+	} else if err != nil {
+		// If we cannot retrieve the source account, _and_ there's a transaction failure,
+		// then it is likely (but not guaranteed) that the transaction failed because the
+		// source does not exist.
+		//
+		// If, on the other hand, there is _no_ transaction error, then the we should be
+		// able to retrieve the account info, as the it was referenced in a successful
+		// token transfer instruction.
+		//
+		// In either case, we don't really have enough information to infer which mint
+		// the transfer was for. We can only infer whether or not it was an RPC error, or
+		// a transaction error.
+		//
+		// Note: we could likely check the destination account as well, but it is generally
+		// more likely that the source will be ok (rather than the dest), and we want to
+		// avoid unnecessary API calls. The side effect here is that the failed transaction
+		// will not be stored in our history.
+		if txn.Err == nil {
+			return false, errors.Wrap(err, "failed to get account for non-failed transaction")
+		}
+
+		return false, nil
+	}
+
+	if !bytes.Equal(info.Mint, i.tokenClient.Token()) {
+		return false, nil
+	}
+
+	return true, nil
 }

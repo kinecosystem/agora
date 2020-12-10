@@ -150,6 +150,14 @@ func OrderingKeyFromBlock(block uint64, max bool) []byte {
 	return b[:]
 }
 
+func BlockFromOrderingKey(k []byte) (uint64, error) {
+	if len(k) != 1+8+8 {
+		return 0, errors.Errorf("invalid ordering key size: %d", len(k))
+	}
+
+	return binary.BigEndian.Uint64(k[1:]), nil
+}
+
 // GetAccountsFromEnvelope returns the set of accounts involved in a transaction
 // contained within a transaction envelope.
 func GetAccountsFromEnvelope(env xdr.TransactionEnvelope) (map[string]struct{}, error) {

@@ -177,4 +177,12 @@ func TestOrderingKeyFromBlock(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		assert.EqualValues(t, 0xff, v[9+i])
 	}
+
+	b, err := BlockFromOrderingKey(v)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0x1122334455667788), b)
+
+	b, err = BlockFromOrderingKey(make([]byte, 4))
+	assert.Error(t, err)
+	assert.Zero(t, b)
 }

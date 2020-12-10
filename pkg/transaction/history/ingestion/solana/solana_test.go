@@ -52,6 +52,7 @@ func TestInitialParams(t *testing.T) {
 		env.client.Calls = nil
 		ctx, cancel := context.WithCancel(context.Background())
 
+		env.client.On("GetBlockTime", mock.Anything).Return(time.Now(), nil)
 		env.client.On("GetConfirmedBlocksWithLimit", mock.Anything, mock.Anything).Return([]uint64{}, nil)
 
 		queue, err := env.ingestor.Ingest(ctx, env.writer, tc.p)
@@ -102,6 +103,7 @@ func TestRoundTrip(t *testing.T) {
 	env.client.On("GetConfirmedBlocksWithLimit", uint64(1), mock.Anything).Return([]uint64{1, 2}, nil)
 	env.client.On("GetConfirmedBlocksWithLimit", uint64(3), mock.Anything).Return([]uint64{3, 4}, nil)
 	env.client.On("GetConfirmedBlocksWithLimit", uint64(5), mock.Anything).Return([]uint64{}, nil)
+	env.client.On("GetBlockTime", mock.Anything).Return(time.Now(), nil)
 	env.client.On("GetAccountInfo", mock.Anything, mock.Anything).Return(accountInfo, nil)
 
 	blocks := generateBlocks(t, 4, 10)
@@ -264,6 +266,7 @@ func TestTransactionFilter(t *testing.T) {
 	env.client.On("GetConfirmedBlocksWithLimit", uint64(1), mock.Anything).Return([]uint64{1}, nil)
 	env.client.On("GetConfirmedBlocksWithLimit", uint64(2), mock.Anything).Return([]uint64{}, nil)
 	env.client.On("GetConfirmedBlock", uint64(1), mock.Anything).Return(block, nil)
+	env.client.On("GetBlockTime", uint64(1)).Return(time.Now(), nil)
 	env.client.On("GetAccountInfo", senders[0].Public().(ed25519.PublicKey), mock.Anything).Return(accountInfos[0], nil)
 	env.client.On("GetAccountInfo", senders[1].Public().(ed25519.PublicKey), mock.Anything).Return(accountInfos[1], nil)
 
