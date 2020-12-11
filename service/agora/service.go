@@ -38,6 +38,8 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/account"
 	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
+	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
+	accountcache "github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/dynamodb"
 	accountstellar "github.com/kinecosystem/agora/pkg/account/stellar"
 	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
@@ -101,6 +103,10 @@ const (
 	// Channel Configs
 	maxChannelsEnv = "MAX_CHANNELS"
 	channelSaltEnv = "CHANNEL_SALT"
+
+	// Token Account Cache Configs
+	tokenAccountTTLEnv      = "TOKEN_ACCOUNT_TTL"
+	consistencyCheckProbEnv = "TOKEN_ACCOUNT_CONSISTENCY_CHECK_PROBABILITY"
 )
 
 type app struct {
@@ -396,6 +402,16 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Wrap(err, "failed to parse kin token address")
 		}
 
+		tokenAccountTTLSeconds, err := strconv.Atoi(os.Getenv(tokenAccountTTLEnv))
+		if err != nil {
+			return errors.Wrap(err, "failed to parse token account TTL")
+		}
+
+		consistencyCheckFreq, err := strconv.ParseFloat(os.Getenv(consistencyCheckProbEnv), 32)
+		if err != nil || consistencyCheckFreq > 1.0 {
+			return errors.Wrap(err, "failed to parse token account consistency check frequency (should be in range [0.0, 1.0])")
+		}
+
 		var subsidizer []byte
 		if os.Getenv(subsidizerKeypairIDEnv) != "" {
 			subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
@@ -526,10 +542,30 @@ func (a *app) Init(_ agoraapp.Config) error {
 		onlineMigrator := migration.NewContextAwareMigrator(migrator)
 
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
-		a.accountSolana, err = accountsolana.New(solanaClient, accountLimiter, kin4AccountNotifier, onlineMigrator, kinToken, subsidizer)
+
+		tokenAccountCache := accountcache.New(dynamoClient, time.Duration(tokenAccountTTLSeconds)*time.Second)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize token account cache")
+		}
+		cacheInvalidator, err := tokenaccount.NewCacheUpdater(tokenAccountCache, kinToken)
+		if err != nil {
+			return errors.Wrap(err, "faild to initialize token account cache invalidator")
+		}
+
+		a.accountSolana, err = accountsolana.New(
+			solanaClient,
+			accountLimiter,
+			kin4AccountNotifier,
+			tokenAccountCache,
+			onlineMigrator,
+			kinToken,
+			subsidizer,
+			float32(consistencyCheckFreq),
+		)
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize v4 account serve")
 		}
+
 		a.txnSolana = transactionsolana.New(
 			solanaClient,
 			invoiceStore,
@@ -557,7 +593,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		// Kin4 Ingestion and Streams
 		//
 		go func() {
-			transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier)
+			transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
 		}()
 		go func() {
 			err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)

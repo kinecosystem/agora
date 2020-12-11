@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -23,6 +24,8 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
+	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
@@ -35,9 +38,10 @@ type testEnv struct {
 
 	minLamports uint64
 
-	sc       *solana.MockClient
-	notifier *AccountNotifier
-	server   *server
+	sc                *solana.MockClient
+	notifier          *AccountNotifier
+	tokenAccountCache tokenaccount.Cache
+	server            *server
 }
 
 func setup(t *testing.T) (env testEnv, cleanup func()) {
@@ -52,6 +56,9 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	token := testutil.GenerateSolanaKeypair(t)
 	env.token = token.Public().(ed25519.PublicKey)
 
+	env.tokenAccountCache, err = memory.New(time.Second, 5)
+	require.NoError(t, err)
+
 	env.sc.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(uint64(50), nil)
 	env.minLamports = 50
 
@@ -59,9 +66,11 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 		env.sc,
 		account.NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,
+		env.tokenAccountCache,
 		migration.NewNoopMigrator(),
 		env.token,
 		env.subsidizer,
+		0.0,
 	)
 	require.NoError(t, err)
 	env.server = s.(*server)
@@ -636,6 +645,120 @@ func TestResolveTokenAccounts(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Empty(t, resp.TokenAccounts)
+}
+
+func TestResolveTokenAccounts_Cached(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	accounts := testutil.GenerateSolanaKeys(t, 5)
+	reverse := func(keys []ed25519.PublicKey) []ed25519.PublicKey {
+		r := make([]ed25519.PublicKey, len(keys))
+		for i := range keys {
+			r[len(keys)-1-i] = keys[i]
+		}
+		return r
+	}
+
+	// token accounts for accounts[0] should get cached, so this should get called only once
+	env.sc.On("GetTokenAccountsByOwner", accounts[0], env.token).Return(reverse(accounts[1:]), nil).Times(1)
+
+	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[0],
+		},
+	})
+	require.NoError(t, err)
+	for _, account := range resp.TokenAccounts {
+		var found bool
+		for _, existing := range accounts[1:] {
+			if bytes.Equal(account.Value, existing) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
+	}
+
+	secondResp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[0],
+		},
+	})
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(resp, secondResp))
+
+	// no token accounts gets returned for accounts[1], so this should get called twice
+	env.sc.On("GetTokenAccountsByOwner", accounts[1], env.token).Return([]ed25519.PublicKey{}, nil).Times(2)
+
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[1],
+		},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, resp.TokenAccounts)
+
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[1],
+		},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, resp.TokenAccounts)
+
+	env.sc.AssertExpectations(t)
+}
+
+func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	// Always check
+	env.server.cacheCheckProbability = 1.0
+
+	accounts := testutil.GenerateSolanaKeys(t, 5)
+	reverse := func(keys []ed25519.PublicKey) []ed25519.PublicKey {
+		r := make([]ed25519.PublicKey, len(keys))
+		for i := range keys {
+			r[len(keys)-1-i] = keys[i]
+		}
+		return r
+	}
+
+	// token accounts for accounts[0] should get cached, but check freq is 1.0, so this should get called twice
+	env.sc.On("GetTokenAccountsByOwner", accounts[0], env.token).Return(reverse(accounts[1:]), nil).Times(2)
+
+	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[0],
+		},
+	})
+	require.NoError(t, err)
+	for _, account := range resp.TokenAccounts {
+		var found bool
+		for _, existing := range accounts[1:] {
+			if bytes.Equal(account.Value, existing) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
+	}
+
+	cached, err := env.tokenAccountCache.Get(context.Background(), accounts[0])
+	require.NoError(t, err)
+	assert.True(t, len(cached) > 0)
+
+	secondResp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[0],
+		},
+	})
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(resp, secondResp))
+
+	env.sc.AssertExpectations(t)
 }
 
 func TestGetEvents(t *testing.T) {

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"math/rand"
 
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/strkey"
 	"google.golang.org/grpc/codes"
@@ -19,6 +21,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 )
@@ -27,41 +30,62 @@ const (
 	eventStreamBufferSize = 64
 )
 
+var (
+	consistencyCheckFailedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "token_account_cache_consistency_check_failures",
+		Help:      "Number of token account cache consistency check failures",
+	})
+)
+
 type server struct {
-	log             *logrus.Entry
-	sc              solana.Client
-	tc              *token.Client
-	limiter         *account.Limiter
-	accountNotifier *AccountNotifier
-	migrator        migration.Migrator
+	log               *logrus.Entry
+	sc                solana.Client
+	tc                *token.Client
+	limiter           *account.Limiter
+	accountNotifier   *AccountNotifier
+	tokenAccountCache tokenaccount.Cache
+	migrator          migration.Migrator
 
 	token              ed25519.PublicKey
 	subsidizer         ed25519.PrivateKey
 	minAccountLamports uint64
+
+	cacheCheckProbability float32
+}
+
+func init() {
+	if err := registerMetrics(); err != nil {
+		logrus.WithError(err).Error("failed to register account server metrics")
+	}
 }
 
 func New(
 	sc solana.Client,
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
+	tokenAccountCache tokenaccount.Cache,
 	migrator migration.Migrator,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
+	cacheCheckFreq float32,
 ) (accountpb.AccountServer, error) {
 	s := &server{
-		log:             logrus.StandardLogger().WithField("type", "account/solana"),
-		sc:              sc,
-		tc:              token.NewClient(sc, mint),
-		accountNotifier: accountNotifier,
-		migrator:        migrator,
-		limiter:         limiter,
-		token:           mint,
-		subsidizer:      subsidizer,
+		log:                   logrus.StandardLogger().WithField("type", "account/solana"),
+		sc:                    sc,
+		tc:                    token.NewClient(sc, mint),
+		accountNotifier:       accountNotifier,
+		tokenAccountCache:     tokenAccountCache,
+		migrator:              migrator,
+		limiter:               limiter,
+		token:                 mint,
+		subsidizer:            subsidizer,
+		cacheCheckProbability: cacheCheckFreq,
 	}
 
 	minAccountLamports, err := sc.GetMinimumBalanceForRentExemption(token.AccountSize)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get minimum balance for rent exemption")
+		return nil, errors.Wrap(err, "failed to add minimum balance for rent exemption")
 	}
 
 	s.minAccountLamports = minAccountLamports
@@ -207,10 +231,29 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	}, nil
 }
 
-func (s *server) ResolveTokenAccounts(_ context.Context, req *accountpb.ResolveTokenAccountsRequest) (*accountpb.ResolveTokenAccountsResponse, error) {
-	accounts, err := s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.ResolveTokenAccountsRequest) (*accountpb.ResolveTokenAccountsResponse, error) {
+	log := s.log.WithField("method", "ResolveTokenAccounts")
+
+	var accounts []ed25519.PublicKey
+	var putRequired bool
+
+	cached, err := s.tokenAccountCache.Get(ctx, req.AccountId.Value)
+	if err != nil && err != tokenaccount.ErrTokenAccountsNotFound {
+		log.WithError(err).Warn("failed to get token accounts from cache")
+	}
+	if len(cached) == 0 || rand.Float32() < s.cacheCheckProbability {
+		putRequired = true
+		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
+		if err != nil {
+			log.WithError(err).Warn("failed to get token accounts")
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		if len(cached) != 0 {
+			checkCacheConsistency(cached, accounts)
+		}
+	} else {
+		accounts = cached
 	}
 
 	resp := &accountpb.ResolveTokenAccountsResponse{
@@ -261,6 +304,18 @@ func (s *server) ResolveTokenAccounts(_ context.Context, req *accountpb.ResolveT
 
 		resp.TokenAccounts[i+offset] = &commonpb.SolanaAccountId{
 			Value: accounts[i],
+		}
+	}
+
+	if putRequired {
+		keys := make([]ed25519.PublicKey, len(resp.TokenAccounts))
+		for i, tokenAccount := range resp.TokenAccounts {
+			keys[i] = tokenAccount.Value
+		}
+		err = s.tokenAccountCache.Put(ctx, req.AccountId.Value, keys)
+		if err != nil {
+			log.WithError(err).Warn("failed to cache token accounts")
+			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}
 
@@ -344,7 +399,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 
 			accountInfo, err := s.tc.GetAccount(req.AccountId.Value, solana.CommitmentRecent)
 			if err != nil {
-				log.WithError(err).Warn("failed to get account info, excluding account event")
+				log.WithError(err).Warn("failed to add account info, excluding account event")
 			} else {
 				events = append(events, &accountpb.Event{
 					Type: &accountpb.Event_AccountUpdateEvent{
@@ -373,6 +428,36 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 		case <-stream.Context().Done():
 			log.Debug("Stream context cancelled, ending stream")
 			return status.Error(codes.Canceled, "")
+		}
+	}
+}
+
+func registerMetrics() (err error) {
+	if err := prometheus.Register(consistencyCheckFailedCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			consistencyCheckFailedCounter = e.ExistingCollector.(prometheus.Counter)
+			return nil
+		}
+		return errors.Wrap(err, "failed to register token account cache inconsistency counter")
+	}
+
+	return nil
+}
+
+func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) {
+	if len(cached) != len(fetched) {
+		consistencyCheckFailedCounter.Inc()
+	} else {
+		keys := make(map[string]struct{})
+		for _, a := range cached {
+			keys[base58.Encode(a)] = struct{}{}
+		}
+
+		for _, a := range fetched {
+			if _, ok := keys[base58.Encode(a)]; !ok {
+				consistencyCheckFailedCounter.Inc()
+				break
+			}
 		}
 	}
 }
