@@ -162,3 +162,19 @@ func TestAccountFromRaw(t *testing.T) {
 	actual := accountFromRaw(rawKey.Public().(ed25519.PublicKey))
 	assert.Equal(t, kp.Address(), actual)
 }
+
+func TestOrderingKeyFromBlock(t *testing.T) {
+	v := OrderingKeyFromBlock(0x1122334455667788, false)
+	assert.EqualValues(t, KinVersion_KIN4, v[0])
+	assert.Equal(t, uint64(0x1122334455667788), binary.BigEndian.Uint64(v[1:]))
+	for i := 0; i < 8; i++ {
+		assert.EqualValues(t, 0, v[9+i])
+	}
+
+	v = OrderingKeyFromBlock(0x1122334455667788, true)
+	assert.EqualValues(t, KinVersion_KIN4, v[0])
+	assert.Equal(t, uint64(0x1122334455667788), binary.BigEndian.Uint64(v[1:]))
+	for i := 0; i < 8; i++ {
+		assert.EqualValues(t, 0xff, v[9+i])
+	}
+}

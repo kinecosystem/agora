@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -17,6 +18,20 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
+)
+
+const (
+	// 10 thousand is roughly an hour's worth of blocks (9000, if no variance).
+	// We don't want this to be _too_ large in case the number of transactions
+	// is high, exceeding the partition size of 10 GB.
+	//
+	// We can tune this in the future (remembering to mark the block number the change
+	// was applied at) if it's too small (or big), but for now this should balance both
+	// fairly well.
+	//
+	// This size also means that we _should_ only be looking at 1-2 partitions for
+	// most query cases (KRE queries, other history builders, etc).
+	blockPartitionSize = 10_000
 )
 
 type db struct {
@@ -46,6 +61,85 @@ func (db *db) GetTransaction(ctx context.Context, txHash []byte) (*model.Entry, 
 	}
 
 	return getEntry(resp.Item)
+}
+
+// GetTransactions implements history.Reader.GetTransactions.
+//
+// We implement the 'global' transaction store by partitioning transactions
+// by block ranges, for two reasons:
+//
+//   1. Scan() does _not_ provide any ordering, so a simple KV approach will not work
+//      for the desired use case of scanning history in order.
+//   2. Query() allows us ordering, but putting every transaction into a mega partition
+//      is very dangerous (max 10 GB per partition, and performance degradation).
+//
+// Therefore, our structure for global data is structured by placing transactions into
+// block partitions (keyed on the start (inclusive) of the range), and sorted based on
+// the ordering key of the transaction itself (which internally contains the block). This
+// is a common pattern for time series DBs[1], but here we use block instead of time, as
+// we don't always have time.
+//
+// To query, we simply find the block partition that would contain the 'romBlock. From there,
+// we grab transactions in that partition until we have enough transactions (limit or maxBlock),
+// or we've run out of transactions in the partition. In the latter case, we move onto the next
+// partition, repeating the process.
+//
+// Note: this format does suffer somewhat heavily if there is a lot of sparse data. For example,
+//       if there was a transaction produced at block X, and then another one at X + 10,000,000,
+//       we'd have to scan 10,000 empty partitions. Techniques to mitigate this are somewhat
+//       complicated (but doable), however given that we generally have a sufficient production rate,
+//       and our queries should be bounded, this shouldn't be a major issue.
+//
+// [1] https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-time-series.html
+func (db *db) GetTransactions(ctx context.Context, fromBlock, maxBlock uint64, limit int) ([]*model.Entry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if maxBlock == 0 {
+		return nil, errors.New("maxBlock must be non-zero")
+	}
+	if maxBlock < fromBlock {
+		return nil, errors.Errorf("fromBlock (%d) must be <= maxBlock (%d)", fromBlock, maxBlock)
+	}
+
+	var entries []*model.Entry
+	for blockStart := (fromBlock / blockPartitionSize) * blockPartitionSize; len(entries) < limit && blockStart <= maxBlock; blockStart += blockPartitionSize {
+		start := model.OrderingKeyFromBlock(fromBlock, false)
+		max := model.OrderingKeyFromBlock(maxBlock, true)
+
+		pager := dynamodb.NewQueryPaginator(db.client.QueryRequest(&dynamodb.QueryInput{
+			TableName:              txHistoryTableStr,
+			KeyConditionExpression: getTransactionHistoryStr,
+			ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
+				":block_start": {N: aws.String(strconv.FormatUint(blockStart, 10))},
+				":from":        {B: start},
+				":max":         {B: max},
+			},
+			Limit:            aws.Int64(int64(limit)),
+			ScanIndexForward: aws.Bool(true),
+		}))
+		for pager.Next(ctx) {
+			for _, item := range pager.CurrentPage().Items {
+				e, err := getEntry(item)
+				if err != nil {
+					return nil, errors.Wrap(err, "invalid entry")
+				}
+
+				entries = append(entries, e)
+
+				// query limit applies per request; we also need to limit
+				// the total results.
+				if limit > 0 && len(entries) >= limit {
+					return entries, nil
+				}
+			}
+		}
+		if pager.Err() != nil {
+			return nil, errors.Wrap(pager.Err(), "failed to query transactions")
+		}
+	}
+
+	return entries, nil
 }
 
 // GetAccountTransactions implements history.Reader.GetGetAccountTransactions.
@@ -159,6 +253,30 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 		}
 	} else if err != nil {
 		return errors.Wrap(err, "failed to insert tx entry")
+	}
+
+	// We only want to commit rooted/committed solana entries to
+	// history.
+	//
+	// The reason we don't do this for tx-by-hash is that in order
+	// for GetTransaction() to yield the raw transaction for non-rooted
+	// transactions, we must store the entry ourselves.
+	//
+	// This type of use case is not applicable for tx-history, where
+	// callers are operating on rooted history only, and can tolerate
+	// the delay.
+	if solanaEntry := entry.GetSolana(); solanaEntry != nil && solanaEntry.Confirmed {
+		_, err := db.client.PutItemRequest(&dynamodb.PutItemInput{
+			TableName: txHistoryTableStr,
+			Item: map[string]dynamodb.AttributeValue{
+				historyKey:     {N: aws.String(strconv.FormatUint((solanaEntry.Slot/blockPartitionSize)*blockPartitionSize, 10))},
+				historySortKey: {B: orderingKey},
+				entryAttr:      {B: entryBytes},
+			},
+		}).Send(ctx)
+		if err != nil {
+			return errors.Wrap(err, "failed to insert tx history entry")
+		}
 	}
 
 	writes := make([]dynamodb.WriteRequest, len(accounts))

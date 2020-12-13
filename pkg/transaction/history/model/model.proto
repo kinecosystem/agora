@@ -66,4 +66,23 @@ message SolanaEntry {
         min_len: 0
         max_len: 1024
     }];
+
+    // Optional estimated block time of the transaction.
+    //
+    // This isn't mandatory since we may not always have information
+    // on the timestamp. Notably:
+    //
+    //   1. If the entry hasn't been confirmed yet, getBlockTime() won't work.
+    //   2. If the block is older than the RPC node's timestamp history.
+    //
+    // In case (1), we expect that the block time will be updated once it is confirmed.
+    // In case (2), it either means an ingestor has fallen extremely behind, or the RPC
+    // node has had some issue losing history. In the latter case, we'd want to try and
+    // repair the timestamps from another node.
+    //
+    // Since we do _not_ want to prevent the ingestion of transactions (by requiring block_time),
+    // we make it optional.
+    google.protobuf.Timestamp block_time = 5 [(validate.rules).timestamp = {
+        required: false,
+    }];
 }

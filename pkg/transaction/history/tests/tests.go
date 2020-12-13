@@ -20,7 +20,8 @@ import (
 func RunTests(t *testing.T, rw history.ReaderWriter, teardown func()) {
 	for _, tf := range []func(t *testing.T, rw history.ReaderWriter){
 		testRoundTrip_Stellar,
-		testOrdering,
+		testGetAccountTransactions,
+		testHistory,
 		testDoubleInsert_Stellar,
 		testDoubleInsert_Solana,
 	} {
@@ -49,6 +50,11 @@ func testRoundTrip_Stellar(t *testing.T, rw history.ReaderWriter) {
 		actual, err := rw.GetTransaction(ctx, hash)
 		require.NoError(t, err)
 		assert.True(t, proto.Equal(actual, entry))
+
+		// stellar transactions aren't currently stored in history
+		entries, err := rw.GetTransactions(ctx, 0, 1000, 0)
+		assert.Empty(t, entries)
+		assert.NoError(t, err)
 
 		for i := 1; i < len(accounts); i++ {
 			entries, err := rw.GetAccountTransactions(ctx, accounts[i].Address(), nil)
@@ -165,21 +171,30 @@ func testDoubleInsert_Solana(t *testing.T, rw history.ReaderWriter) {
 	})
 }
 
-func testOrdering(t *testing.T, rw history.ReaderWriter) {
-	t.Run("TestQuery", func(t *testing.T) {
+func testGetAccountTransactions(t *testing.T, rw history.ReaderWriter) {
+	t.Run("TestGetAccountTransactions", func(t *testing.T) {
 		ctx := context.Background()
-		accounts := testutil.GenerateAccountIDs(t, 10)
+		kp, senderAddr := testutil.GenerateAccountID(t)
+		accounts := testutil.GenerateAccountIDs(t, 9)
+		solAccounts := testutil.GenerateSolanaKeys(t, 10)
+
+		raw := strkey.MustDecode(strkey.VersionByteSeed, kp.Seed())
+		sender := ed25519.NewKeyFromSeed(raw)
 
 		_, err := rw.GetLatestForAccount(ctx, accounts[0].Address())
 		assert.Equal(t, err, history.ErrNotFound)
 
 		generated := make([]*model.Entry, 100)
-		for i := 0; i < 100; i++ {
-			generated[i], _ = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, accounts[0], accounts[1:], nil, nil)
+		for i := 0; i < 50; i++ {
+			generated[i], _ = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, senderAddr, accounts, nil, nil)
+			require.NoError(t, rw.Write(ctx, generated[i]))
+		}
+		for i := 50; i < 100; i++ {
+			generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i), true, sender, solAccounts, nil, nil)
 			require.NoError(t, rw.Write(ctx, generated[i]))
 		}
 
-		latest, err := rw.GetLatestForAccount(ctx, accounts[0].Address())
+		latest, err := rw.GetLatestForAccount(ctx, kp.Address())
 		assert.NoError(t, err)
 		assert.True(t, proto.Equal(generated[99], latest))
 
@@ -190,16 +205,16 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 
 		// Ascending, default limit
 		for i := 1; i < len(accounts); i++ {
-			entries, err := rw.GetAccountTransactions(ctx, accounts[i].Address(), nil)
+			entries, err := rw.GetAccountTransactions(ctx, kp.Address(), nil)
 			assert.NoError(t, err)
-			require.Len(t, entries, 100)
+			require.Equal(t, 100, len(entries))
 
 			for e := 0; e < 100; e++ {
 				require.True(t, proto.Equal(generated[e], entries[e]))
 			}
 
 			// Ascending, limit
-			entries, err = rw.GetAccountTransactions(ctx, accounts[i].Address(), &history.ReadOptions{Limit: 50})
+			entries, err = rw.GetAccountTransactions(ctx, kp.Address(), &history.ReadOptions{Limit: 50})
 			assert.NoError(t, err)
 			require.Len(t, entries, 50, "len: %v", len(entries))
 			for e := 0; e < 50; e++ {
@@ -207,9 +222,9 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 			}
 
 			// Ascending, offset
-			entries, err = rw.GetAccountTransactions(ctx, accounts[i].Address(), &history.ReadOptions{Start: orderingKey})
+			entries, err = rw.GetAccountTransactions(ctx, kp.Address(), &history.ReadOptions{Start: orderingKey})
 			assert.NoError(t, err)
-			require.Len(t, entries, 90)
+			require.Equal(t, 90, len(entries))
 			for e := 0; e < 90; e++ {
 				require.True(t, proto.Equal(generated[10+e], entries[e]))
 			}
@@ -217,12 +232,12 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 			// Descending, default limit
 			//
 			// We expect no results, since going "backwards" from 0 should return nothing
-			entries, err = rw.GetAccountTransactions(ctx, accounts[i].Address(), &history.ReadOptions{Descending: true})
+			entries, err = rw.GetAccountTransactions(ctx, kp.Address(), &history.ReadOptions{Descending: true})
 			assert.NoError(t, err)
 			require.Len(t, entries, 0)
 
 			// Descending, default limit + offset
-			entries, err = rw.GetAccountTransactions(ctx, accounts[i].Address(), &history.ReadOptions{Descending: true, Start: lastKey})
+			entries, err = rw.GetAccountTransactions(ctx, kp.Address(), &history.ReadOptions{Descending: true, Start: lastKey})
 			assert.NoError(t, err)
 			require.Len(t, entries, 100)
 			for e := 0; e < 100; e++ {
@@ -230,12 +245,67 @@ func testOrdering(t *testing.T, rw history.ReaderWriter) {
 			}
 
 			// Descending, limit
-			entries, err = rw.GetAccountTransactions(ctx, accounts[i].Address(), &history.ReadOptions{Descending: true, Start: lastKey, Limit: 50})
+			entries, err = rw.GetAccountTransactions(ctx, kp.Address(), &history.ReadOptions{Descending: true, Start: lastKey, Limit: 50})
 			assert.NoError(t, err)
 			require.Len(t, entries, 50)
 			for e := 0; e < 50; e++ {
 				require.True(t, proto.Equal(generated[99-e], entries[e]))
 			}
+		}
+	})
+}
+
+func testHistory(t *testing.T, rw history.ReaderWriter) {
+	t.Run("TestHistory", func(t *testing.T) {
+		ctx := context.Background()
+		sender := testutil.GenerateSolanaKeypair(t)
+		accounts := testutil.GenerateSolanaKeys(t, 10)
+
+		expansion := uint64(10_000 / 2)
+		generated := make([]*model.Entry, 200)
+		for i := 0; i < 200; i++ {
+			// We amplify the slot to exploit weakness's within the partitioning scheme of dynamodb.
+			// In theory we should put this in the dynamodb test itself, but it's small enough it's ok here.
+			generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i)*expansion, i < 150, sender, accounts, nil, nil)
+			require.NoError(t, rw.Write(ctx, generated[i]))
+		}
+
+		// No max block
+		_, err := rw.GetTransactions(ctx, 0, 0, 0)
+		assert.Error(t, err)
+
+		// From block > max block
+		_, err = rw.GetTransactions(ctx, 10, 1, 0)
+		assert.Error(t, err)
+
+		// Limits outside of entries
+		entries, err := rw.GetTransactions(ctx, 0, 300*expansion, 300)
+		assert.NoError(t, err)
+		require.Equal(t, 150, len(entries))
+
+		for i, e := range entries {
+			assert.True(t, proto.Equal(e, generated[i]))
+		}
+
+		// Query with offset
+		offset := generated[10].GetSolana().Slot
+		entries, err = rw.GetTransactions(ctx, offset, 300*expansion, 5)
+		assert.NoError(t, err)
+		assert.Equal(t, 5, len(entries))
+
+		for i, e := range entries {
+			assert.True(t, proto.Equal(e, generated[i+10]))
+		}
+
+		// Query with maxBlock offset
+		//
+		// We expect 6 items because the range is inclusive at both ends.
+		entries, err = rw.GetTransactions(ctx, offset, generated[15].GetSolana().Slot, 0)
+		assert.NoError(t, err)
+		assert.Equal(t, 6, len(entries))
+
+		for i, e := range entries {
+			assert.True(t, proto.Equal(e, generated[i+10]))
 		}
 	})
 }

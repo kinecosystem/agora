@@ -13,15 +13,15 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
-type accountHistory []*model.Entry
+type orderedEntries []*model.Entry
 
-func (a accountHistory) Len() int {
+func (a orderedEntries) Len() int {
 	return len(a)
 }
-func (a accountHistory) Swap(i int, j int) {
+func (a orderedEntries) Swap(i int, j int) {
 	a[i], a[j] = a[j], a[i]
 }
-func (a accountHistory) Less(i int, j int) bool {
+func (a orderedEntries) Less(i int, j int) bool {
 	iKey, err := a[i].GetOrderingKey()
 	if err != nil {
 		panic(err)
@@ -38,13 +38,14 @@ type RW struct {
 	sync.Mutex
 	Writes      []*model.Entry
 	txns        map[string]*model.Entry
-	accountTxns map[string]accountHistory
+	txnHistory  orderedEntries
+	accountTxns map[string]orderedEntries
 }
 
 func New() *RW {
 	return &RW{
 		txns:        make(map[string]*model.Entry),
-		accountTxns: make(map[string]accountHistory),
+		accountTxns: make(map[string]orderedEntries),
 	}
 }
 
@@ -96,6 +97,11 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 		rw.txns[string(hash)] = proto.Clone(e).(*model.Entry)
 	}
 
+	if solanaEntry := e.GetSolana(); solanaEntry != nil && solanaEntry.Confirmed {
+		rw.txnHistory = append(rw.txnHistory, proto.Clone(e).(*model.Entry))
+		sort.Sort(rw.txnHistory)
+	}
+
 	for _, a := range accounts {
 		accountHistory := rw.accountTxns[a]
 
@@ -128,6 +134,41 @@ func (rw *RW) GetTransaction(_ context.Context, txHash []byte) (*model.Entry, er
 		return nil, history.ErrNotFound
 	}
 	return e, nil
+}
+
+// GetTransactions implements history.Reader.GetTransactions.
+func (rw *RW) GetTransactions(_ context.Context, fromBlock, maxBlock uint64, limit int) ([]*model.Entry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if maxBlock == 0 {
+		return nil, errors.New("maxBlock must be non-zero")
+	}
+	if fromBlock > maxBlock {
+		return nil, errors.Errorf("fromBlock (%d) must be <= maxBlock (%d)", fromBlock, maxBlock)
+	}
+
+	rw.Lock()
+	defer rw.Unlock()
+
+	// We could use sort.Search() here, but we don't expect to
+	// use the memory implementation for anything outside of testing,
+	// so we expect small values of len(rw.txnHistory)
+	copy := make([]*model.Entry, 0, len(rw.txnHistory))
+	for i := 0; i < len(rw.txnHistory); i++ {
+		slot := rw.txnHistory[i].GetSolana().Slot
+		if slot < fromBlock {
+			continue
+		} else if slot > maxBlock {
+			break
+		} else if len(copy) >= limit {
+			break
+		}
+
+		copy = append(copy, proto.Clone(rw.txnHistory[i]).(*model.Entry))
+	}
+
+	return copy, nil
 }
 
 // GetLatestForAccount implements history.Reader.GetLatestForAccount.
@@ -205,4 +246,7 @@ func (rw *RW) Reset() {
 	defer rw.Unlock()
 
 	rw.Writes = nil
+	rw.txnHistory = nil
+	rw.accountTxns = make(map[string]orderedEntries)
+	rw.txns = make(map[string]*model.Entry)
 }

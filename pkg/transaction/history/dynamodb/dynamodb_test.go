@@ -94,6 +94,36 @@ func setupTestTable(client dynamodbiface.ClientAPI) error {
 
 	keySchema = []dynamodb.KeySchemaElement{
 		{
+			AttributeName: aws.String(historyKey),
+			KeyType:       dynamodb.KeyTypeHash,
+		},
+		{
+			AttributeName: aws.String(historySortKey),
+			KeyType:       dynamodb.KeyTypeRange,
+		},
+	}
+	attrDefinitions = []dynamodb.AttributeDefinition{
+		{
+			AttributeName: aws.String(historyKey),
+			AttributeType: dynamodb.ScalarAttributeTypeN,
+		},
+		{
+			AttributeName: aws.String(historySortKey),
+			AttributeType: dynamodb.ScalarAttributeTypeB,
+		},
+	}
+	_, err = client.CreateTableRequest(&dynamodb.CreateTableInput{
+		KeySchema:            keySchema,
+		AttributeDefinitions: attrDefinitions,
+		BillingMode:          dynamodb.BillingModePayPerRequest,
+		TableName:            txHistoryTableStr,
+	}).Send(context.Background())
+	if err != nil {
+		return err
+	}
+
+	keySchema = []dynamodb.KeySchemaElement{
+		{
 			AttributeName: aws.String(accountKey),
 			KeyType:       dynamodb.KeyTypeHash,
 		},
@@ -122,7 +152,7 @@ func setupTestTable(client dynamodbiface.ClientAPI) error {
 }
 
 func resetTestTable(client dynamodbiface.ClientAPI) error {
-	for _, table := range []string{txTable, txByAccountTable} {
+	for _, table := range []string{txTable, txHistoryTable, txByAccountTable} {
 		_, err := client.DeleteTableRequest(&dynamodb.DeleteTableInput{
 			TableName: aws.String(table),
 		}).Send(context.Background())

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/binary"
+	"math"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -135,6 +136,18 @@ func OrderingKeyFromCursor(v KinVersion, cursor string) ([]byte, error) {
 	b[0] = byte(v)
 	binary.BigEndian.PutUint64(b[1:], pt)
 	return b[:], nil
+}
+
+func OrderingKeyFromBlock(block uint64, max bool) []byte {
+	var b [1 + 8 + 8]byte
+	b[0] = byte(KinVersion_KIN4)
+	binary.BigEndian.PutUint64(b[1:], block)
+
+	if max {
+		binary.BigEndian.PutUint64(b[9:], math.MaxUint64)
+	}
+
+	return b[:]
 }
 
 // GetAccountsFromEnvelope returns the set of accounts involved in a transaction
