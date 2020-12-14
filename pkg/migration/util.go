@@ -77,5 +77,12 @@ func MarkComplete(ctx context.Context, store Store, account ed25519.PublicKey, p
 		LastModified: time.Now(),
 	}
 
-	return store.Update(ctx, account, prev, completedState)
+	err := store.Update(ctx, account, prev, completedState)
+	if err != nil {
+		markCompleteFailureCounter.Inc()
+		return err
+	}
+
+	markCompleteSuccessCounter.Inc()
+	return nil
 }

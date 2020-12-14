@@ -7,6 +7,7 @@ import (
 
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -30,6 +31,20 @@ const (
 	maxVersion              = KinVersion4
 	defaultVersion          = KinVersion3
 )
+
+var (
+	preconditionFailedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "precondition_failed",
+		Help:      "Number of precondition failed responses from agora",
+	})
+)
+
+func init() {
+	if err := registerMetrics(); err != nil {
+		logrus.WithError(err).Error("failed to register precondition failed counter")
+	}
+}
 
 // GetCtxKinVersion determines which version of Kin to use based on the headers in the provided context.
 func GetCtxKinVersion(ctx context.Context) (version KinVersion, err error) {
@@ -92,6 +107,7 @@ func DisabledVersionUnaryServerInterceptor(defaultVersion KinVersion, disabledVe
 
 		for i := range disabledVersions {
 			if int(version) == disabledVersions[i] {
+				preconditionFailedCounter.Inc()
 				return nil, status.Error(codes.FailedPrecondition, "unsupported kin version")
 			}
 		}
@@ -111,6 +127,7 @@ func DisabledVersionStreamServerInterceptor(defaultVersion KinVersion, disabledV
 
 		for i := range disabledVersions {
 			if int(version) == disabledVersions[i] {
+				preconditionFailedCounter.Inc()
 				return status.Error(codes.FailedPrecondition, "unsupported kin version")
 			}
 		}
@@ -143,10 +160,12 @@ func MinVersionUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 			}
 
 			if actual < desired {
+				preconditionFailedCounter.Inc()
 				return nil, status.Error(codes.FailedPrecondition, "unsupported kin version")
 			}
 		case KinVersion4:
 			if !strings.Contains(info.FullMethod, "v4") {
+				preconditionFailedCounter.Inc()
 				return nil, status.Error(codes.FailedPrecondition, "version not supported")
 			}
 		default:
@@ -178,10 +197,12 @@ func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 			}
 
 			if actual < desired {
+				preconditionFailedCounter.Inc()
 				return status.Error(codes.FailedPrecondition, "unsupported kin version")
 			}
 		case KinVersion4:
 			if !strings.Contains(info.FullMethod, "v4") {
+				preconditionFailedCounter.Inc()
 				return status.Error(codes.FailedPrecondition, "version not supported")
 			}
 		default:
@@ -190,4 +211,16 @@ func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 
 		return handler(srv, ss)
 	}
+}
+
+func registerMetrics() error {
+	if err := prometheus.Register(preconditionFailedCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			preconditionFailedCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return err
+		}
+	}
+
+	return nil
 }

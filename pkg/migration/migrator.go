@@ -42,11 +42,14 @@ func NewContextAwareMigrator(base Migrator) Migrator {
 }
 
 func (m *contextAwareMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
+	initiateMigrationBeforeCounter.Inc()
+
 	hasMigrationheader, err := HasMigrationHeader(ctx)
 	if !hasMigrationheader {
 		return err
 	}
 
+	initiateMigrationAfterCounter.Inc()
 	return m.base.InitiateMigration(ctx, account, commitment)
 }
 

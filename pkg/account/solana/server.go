@@ -36,6 +36,16 @@ var (
 		Name:      "token_account_cache_consistency_check_failures",
 		Help:      "Number of token account cache consistency check failures",
 	})
+	resolveAccountHitCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "resolve_token_account_hits",
+		Help:      "Number of times at least one token account was resolved for a requested account",
+	})
+	resolveAccountMissCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "resolve_token_account_misses",
+		Help:      "Number of times no token account was resolved for a requested account",
+	})
 )
 
 type server struct {
@@ -319,6 +329,12 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 		}
 	}
 
+	if len(resp.TokenAccounts) == 0 {
+		resolveAccountMissCounter.Inc()
+	} else {
+		resolveAccountHitCounter.Inc()
+	}
+
 	return resp, nil
 }
 
@@ -432,18 +448,6 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 	}
 }
 
-func registerMetrics() (err error) {
-	if err := prometheus.Register(consistencyCheckFailedCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			consistencyCheckFailedCounter = e.ExistingCollector.(prometheus.Counter)
-			return nil
-		}
-		return errors.Wrap(err, "failed to register token account cache inconsistency counter")
-	}
-
-	return nil
-}
-
 func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) {
 	if len(cached) != len(fetched) {
 		consistencyCheckFailedCounter.Inc()
@@ -460,4 +464,31 @@ func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicK
 			}
 		}
 	}
+}
+
+func registerMetrics() (err error) {
+	if err := prometheus.Register(consistencyCheckFailedCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			consistencyCheckFailedCounter = e.ExistingCollector.(prometheus.Counter)
+			return nil
+		}
+		return errors.Wrap(err, "failed to register token account cache consistency check failure counter")
+	}
+
+	if err := prometheus.Register(resolveAccountHitCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			resolveAccountHitCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register resolve token account hit counter")
+		}
+	}
+	if err := prometheus.Register(resolveAccountMissCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			resolveAccountMissCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register resolve token account miss counter")
+		}
+	}
+
+	return nil
 }

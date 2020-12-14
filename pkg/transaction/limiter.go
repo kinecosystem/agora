@@ -19,12 +19,12 @@ var (
 	submitRLCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "submit_transaction_rate_limited_global",
-		Help:      "Number of globally rate limited create account requests",
+		Help:      "Number of globally rate limited submit transaction requests",
 	})
 	submitRLAppCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "submit_transaction_rate_limited_app",
-		Help:      "Number of app rate limited create account requests",
+		Help:      "Number of app rate limited submit transaction requests",
 	}, []string{"app_index"})
 )
 
@@ -57,7 +57,7 @@ func (t *Limiter) Allow(appIndex int) (bool, error) {
 			return true, err
 		}
 		if !allowed {
-			submitRLAppCounter.WithLabelValues(strconv.Itoa(appIndex))
+			submitRLAppCounter.WithLabelValues(strconv.Itoa(appIndex)).Inc()
 			return allowed, err
 		}
 	}
@@ -76,16 +76,16 @@ func registerMetrics() (err error) {
 	if err := prometheus.Register(submitRLCounter); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			submitRLCounter = e.ExistingCollector.(prometheus.Counter)
-			return nil
+		} else {
+			return errors.Wrap(err, "failed to register submit tx global rate limit counter")
 		}
-		return errors.Wrap(err, "failed to register submit tx global rate limit counter")
 	}
 	if err := prometheus.Register(submitRLAppCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			submitRLAppCounter = e.ExistingCollector.(*prometheus.CounterVec)
-			return nil
+		} else {
+			return errors.Wrap(err, "failed to register submit tx app rate limit counter")
 		}
-		return errors.Wrap(err, "failed to register submit tx app rate limit counter")
 	}
 
 	return nil

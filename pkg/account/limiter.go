@@ -5,7 +5,9 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -22,6 +24,12 @@ var (
 
 type Limiter struct {
 	limiter rate.Limiter
+}
+
+func init() {
+	if err := registerMetrics(); err != nil {
+		logrus.WithError(err).Error("failed to register account limiter metrics")
+	}
 }
 
 func NewLimiter(limiter rate.Limiter) *Limiter {
@@ -41,4 +49,16 @@ func (l *Limiter) Allow(version version.KinVersion) (bool, error) {
 	}
 
 	return allowed, nil
+}
+
+func registerMetrics() error {
+	if err := prometheus.Register(createAccountRLCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			createAccountRLCounter = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register create account global rate limit counter")
+		}
+	}
+
+	return nil
 }

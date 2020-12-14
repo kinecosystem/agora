@@ -23,6 +23,11 @@ import (
 	"github.com/kinecosystem/agora/pkg/solanautil"
 )
 
+var (
+	onDemandSuccessCounter = migration.OnDemandSuccessCounterVec.WithLabelValues("3")
+	onDemandFailureCounter = migration.OnDemandFailureCounterVec.WithLabelValues("3")
+)
+
 type accountInfo struct {
 	account             ed25519.PublicKey
 	migrationAccount    ed25519.PublicKey
@@ -115,7 +120,13 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return nil
 	}
 
-	return m.migrateAccount(ctx, info, commitment)
+	err = m.migrateAccount(ctx, info, commitment)
+	if err == nil {
+		onDemandSuccessCounter.Inc()
+	} else {
+		onDemandFailureCounter.Inc()
+	}
+	return err
 }
 
 func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, commitment solana.Commitment) (err error) {

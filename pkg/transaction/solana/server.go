@@ -5,12 +5,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,6 +27,10 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
+)
+
+var (
+	submitTxCounter = transaction.SubmitTransactionCounter.WithLabelValues("4")
 )
 
 type server struct {
@@ -151,6 +155,8 @@ func (s *server) GetMinimumBalanceForRentExemption(_ context.Context, req *trans
 // See: https://github.com/kinecosystem/agora-api/blob/master/spec/memo.md
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
+
+	submitTxCounter.Inc()
 
 	var txn solana.Transaction
 	if err := txn.Unmarshal(req.Transaction.Value); err != nil {

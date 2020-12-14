@@ -29,6 +29,10 @@ import (
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
+var (
+	submitTxCounter = transaction.SubmitTransactionCounter.WithLabelValues("3")
+)
+
 type server struct {
 	log         *logrus.Entry
 	network     build.Network
@@ -88,6 +92,8 @@ func New(
 // SubmitTransaction implements transactionpb.TransactionServer.SubmitTransaction.
 func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.SubmitTransactionRequest) (*transactionpb.SubmitTransactionResponse, error) {
 	log := s.log.WithField("method", "SubmitTransaction")
+
+	submitTxCounter.Inc()
 
 	kinVersion, err := version.GetCtxKinVersion(ctx)
 	if err != nil {
