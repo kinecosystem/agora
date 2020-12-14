@@ -24,14 +24,14 @@ func TestOpenTransactionStream(t *testing.T) {
 	notifier := newTestNotifier(3*10, cancel)
 
 	// Stream Flow:
-	//   1. GetSlot() for initial seed position.
-	//   2. blocks := GetConfirmedBlocksWithLimit(seed-30, 1024)
+	//   1. GetSlot(solana.CommitmentMax) for initial seed position.
+	//   2. blocks := GetConfirmedBlocksWithLimit(seed, 1024)
 	//   3. seed = last(block)
 	// loop:
 	//   4. blocks: GetConfirmedBlocksWithLimit(seed, 1024)
 	//   5. for b in B: GetConfirmedBlock(b)
 
-	client.On("GetSlot").Return(uint64(100), nil)
+	client.On("GetSlot", solana.CommitmentMax).Return(uint64(70), nil)
 	client.On("GetConfirmedBlocksWithLimit", uint64(70), uint64(1024)).Return([]uint64{70, 71, 72}, nil)
 	client.On("GetConfirmedBlocksWithLimit", uint64(72), uint64(1024)).Return([]uint64{72, 73, 74}, nil)
 	client.On("GetConfirmedBlocksWithLimit", uint64(75), uint64(1024)).Return([]uint64{}, nil)

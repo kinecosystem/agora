@@ -29,13 +29,13 @@ func StreamTransactions(ctx context.Context, client solana.Client, notifiers ...
 	err := retry.Loop(
 		func() (err error) {
 			if seed == 0 {
-				seed, err = client.GetSlot()
+				seed, err = client.GetSlot(solana.CommitmentMax)
 				if err != nil {
 					log.WithError(err).Warn("failed to get seed slot")
 					return err
 				}
 
-				blocks, err := client.GetConfirmedBlocksWithLimit(seed-30, 1024)
+				blocks, err := client.GetConfirmedBlocksWithLimit(seed, 1024)
 				if err != nil {
 					log.WithError(err).Warn("failed to get blocks from seed slot")
 					return err
