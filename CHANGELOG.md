@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## [v0.2.6](https://github.com/kinecosystem/agora/releases/tag/v0.2.6)
+- Fix Kin 4 account creation bug
+
 ## [v0.2.5](https://github.com/kinecosystem/agora/releases/tag/v0.2.5)
 - Rename 'WithSenderResolution' to 'WithAccountResolution'
 - Add account resolution support to `Client.GetBalance` 
