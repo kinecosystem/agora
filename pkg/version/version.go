@@ -98,6 +98,9 @@ func DisabledVersionUnaryServerInterceptor(defaultVersion KinVersion, disabledVe
 		if strings.Contains(info.FullMethod, "GetMinimumKinVersion") {
 			return handler(ctx, req)
 		}
+		if strings.Contains(info.FullMethod, "Check") {
+			return handler(ctx, req)
+		}
 
 		version, err := GetCtxKinVersion(ctx)
 		if err != nil {
