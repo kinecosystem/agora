@@ -101,6 +101,15 @@ func DisabledVersionUnaryServerInterceptor(defaultVersion KinVersion, disabledVe
 		if strings.Contains(info.FullMethod, "Check") {
 			return handler(ctx, req)
 		}
+		if strings.Contains(info.FullMethod, "v4") {
+			for _, v := range disabledVersions {
+				if v == 4 {
+					preconditionFailedCounter.Inc()
+					return nil, status.Error(codes.FailedPrecondition, "unsupported kin version")
+				}
+			}
+			return handler(ctx, req)
+		}
 
 		version, err := GetCtxKinVersion(ctx)
 		if err != nil {
@@ -122,6 +131,16 @@ func DisabledVersionUnaryServerInterceptor(defaultVersion KinVersion, disabledVe
 func DisabledVersionStreamServerInterceptor(defaultVersion KinVersion, disabledVersions []int) grpc.StreamServerInterceptor {
 	log := logrus.StandardLogger().WithField("type", "version/interceptor")
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if strings.Contains(info.FullMethod, "v4") {
+			for _, v := range disabledVersions {
+				if v == 4 {
+					preconditionFailedCounter.Inc()
+					return status.Error(codes.FailedPrecondition, "unsupported kin version")
+				}
+			}
+			return handler(srv, ss)
+		}
+
 		version, err := GetCtxKinVersion(ss.Context())
 		if err != nil {
 			log.WithError(err).Warn("failed to get kin version; reverting to default")
