@@ -439,7 +439,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
 		}
 
-		kin3MigrationSecret, err := agoraapp.LoadFile(kin3MigrationSecretEnv)
+		kin3MigrationSecret, err := agoraapp.LoadFile(os.Getenv(kin3MigrationSecretEnv))
 		if err != nil {
 			return errors.Wrap(err, "failed to get migration secret")
 		}
