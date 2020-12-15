@@ -1,6 +1,7 @@
 package kin3
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"math/rand"
@@ -346,6 +347,12 @@ func (m *kin3Migrator) loadAccount(ctx context.Context, account ed25519.PublicKe
 	info.owner, err = strkey.Decode(strkey.VersionByteAccountID, nonZeroSigners[0].Key)
 	if err != nil {
 		return info, errors.Wrap(err, "failed to decode owner key")
+	}
+
+	emptyKey := make([]byte, len(ed25519.PublicKey{}))
+	if len(info.owner) == 0 || bytes.Equal(info.owner, emptyKey) {
+		// note: this should _never_ happen except for the single adddress that is all zeros.
+		return info, errors.Errorf("zero key for: %s", base58.Encode(account))
 	}
 
 	return info, nil
