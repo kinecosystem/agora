@@ -72,11 +72,16 @@ func StreamTransactions(ctx context.Context, client solana.Client, notifiers ...
 				}
 			}
 
+			newSeed := seed
+			if len(blocks) > 0 {
+				newSeed = blocks[len(blocks)-1]
+			}
+
 			log.WithFields(logrus.Fields{
 				"old_seed": seed,
-				"new_seed": blocks[len(blocks)-1],
+				"new_seed": newSeed,
 			}).Info("finished block process")
-			seed = blocks[len(blocks)-1]
+			seed = newSeed
 
 			time.Sleep(solana.PollRate)
 			return nil
