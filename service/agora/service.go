@@ -537,6 +537,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			onlineMigrator,
 			kinToken,
 			subsidizer,
+			migratorHorizonClient,
 		)
 
 		kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)

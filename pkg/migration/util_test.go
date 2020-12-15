@@ -8,6 +8,8 @@ import (
 
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/kinecosystem/go/strkey"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -23,11 +25,11 @@ type mockMigrator struct {
 	mock.Mock
 }
 
-func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
+func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
 	m.Lock()
 	defer m.Unlock()
 
-	args := m.Called(ctx, account, commitment)
+	args := m.Called(ctx, account, ignoreBalance, commitment)
 	return args.Error(0)
 }
 
@@ -42,7 +44,7 @@ func TestMigrateBatch(t *testing.T) {
 	var mu sync.Mutex
 	callCount := make(map[string]int)
 
-	m.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+	m.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
 		mu.Lock()
 		callCount[string(args.Get(1).(ed25519.PublicKey))]++
 		mu.Unlock()
@@ -55,6 +57,57 @@ func TestMigrateBatch(t *testing.T) {
 	}
 }
 
+func TestMigrateTransferAccounts(t *testing.T) {
+	ctx, err := headers.ContextWithHeaders(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, headers.SetASCIIHeader(ctx, version.DesiredKinVersionHeader, "4"))
+
+	accounts := testutil.GenerateSolanaKeys(t, 6)
+
+	sender1, err := strkey.Encode(strkey.VersionByteAccountID, accounts[0])
+	require.NoError(t, err)
+	sender2, err := strkey.Encode(strkey.VersionByteAccountID, accounts[3])
+	require.NoError(t, err)
+
+	hc := &horizon.MockClient{}
+	hc.On("LoadAccount", sender1).Return(*testutil.GenerateHorizonAccount("", "100", "1"), nil)
+	hc.On("LoadAccount", sender2).Return(*testutil.GenerateHorizonAccount("", "0", "1"), nil)
+
+	pairs := [][]ed25519.PublicKey{
+		{accounts[0], accounts[1]},
+		{accounts[0], accounts[2]},
+		{accounts[3], accounts[4]},
+		{accounts[3], accounts[5]},
+	}
+	m := &mockMigrator{}
+
+	var mu sync.Mutex
+	ignoreBalCallCount := 0
+	normalCallCount := 0
+
+	callCount := make(map[string]int)
+	m.On("InitiateMigration", mock.Anything, mock.Anything, true, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		mu.Lock()
+		callCount[string(args.Get(1).(ed25519.PublicKey))]++
+		ignoreBalCallCount += 1
+		mu.Unlock()
+	})
+	m.On("InitiateMigration", mock.Anything, mock.Anything, false, mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		mu.Lock()
+		callCount[string(args.Get(1).(ed25519.PublicKey))]++
+		normalCallCount += 1
+		mu.Unlock()
+	})
+
+	assert.NoError(t, MigrateTransferAccounts(ctx, hc, m, pairs...))
+	assert.Equal(t, len(callCount), 5) // accounts[3] doesn't get migrated
+	for _, v := range callCount {
+		assert.Equal(t, 1, v)
+	}
+	assert.Equal(t, ignoreBalCallCount, 3)
+	assert.Equal(t, normalCallCount, 2)
+}
+
 func TestMigrate_Error(t *testing.T) {
 	ctx, err := headers.ContextWithHeaders(context.Background())
 	require.NoError(t, err)
@@ -63,8 +116,8 @@ func TestMigrate_Error(t *testing.T) {
 	accounts := testutil.GenerateSolanaKeys(t, 10)
 	m := &mockMigrator{}
 
-	m.On("InitiateMigration", mock.Anything, accounts[1], mock.Anything).Return(errors.New("yikes"))
-	m.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	m.On("InitiateMigration", mock.Anything, accounts[1], mock.Anything, mock.Anything).Return(errors.New("yikes"))
+	m.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	assert.Error(t, MigrateBatch(ctx, m, accounts...))
 }

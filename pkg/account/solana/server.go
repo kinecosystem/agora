@@ -220,7 +220,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
 	commitment := solanautil.CommitmentFromProto(req.Commitment)
-	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, commitment); err != nil {
+	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
 	}
 

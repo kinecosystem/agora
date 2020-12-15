@@ -14,6 +14,7 @@ import (
 	solanamemo "github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/token"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
+	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,8 @@ type serverEnv struct {
 	rw           *historymemory.RW
 	committer    ingestion.Committer
 	authorizer   *mockAuthorizer
+
+	hClient *horizon.MockClient
 }
 
 type mockAuthorizer struct {
@@ -82,6 +85,10 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 	token := testutil.GenerateSolanaKeypair(t)
 	env.token = token.Public().(ed25519.PublicKey)
 
+	env.hClient = &horizon.MockClient{}
+	// Required for migrating transfer account pairs
+	env.hClient.On("LoadAccount", mock.Anything).Return(*testutil.GenerateHorizonAccount("", "100", "1"), nil)
+
 	s := New(
 		env.sc,
 		env.invoiceStore,
@@ -91,6 +98,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 		migration.NewNoopMigrator(),
 		env.token,
 		env.subsidizer,
+		env.hClient,
 	)
 	env.server = s.(*server)
 

@@ -10,6 +10,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -45,6 +46,8 @@ type server struct {
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
+
+	hc horizon.ClientInterface
 }
 
 func New(
@@ -56,6 +59,7 @@ func New(
 	migrator migration.Migrator,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
+	hc horizon.ClientInterface,
 ) transactionpb.TransactionServer {
 	return &server{
 		log: logrus.StandardLogger().WithField("type", "transaction/solana/server"),
@@ -74,6 +78,7 @@ func New(
 		migrator:     migrator,
 		token:        tokenAccount,
 		subsidizer:   subsidizer,
+		hc:           hc,
 	}
 }
 
@@ -167,7 +172,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	var err error
 	var txMemo *memo.DecompiledMemo
 	var transfers []*token.DecompiledTransferAccount
-	var accounts []ed25519.PublicKey
+	var transferAccountPairs [][]ed25519.PublicKey
 
 	//
 	// Parse out Transfer() and Memo() instructions.
@@ -181,8 +186,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
-		accounts = append(accounts, transfers[0].Source)
-		accounts = append(accounts, transfers[0].Destination)
+		transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[0].Source, transfers[0].Source})
 	default:
 		var offset int
 		if m, err := memo.DecompileMemo(txn.Message, 0); err == nil {
@@ -196,8 +200,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			if err != nil {
 				return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 			}
-			accounts = append(accounts, transfers[i].Source)
-			accounts = append(accounts, transfers[i].Destination)
+			transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[i].Source, transfers[i].Source})
 		}
 
 		if req.InvoiceList != nil && len(req.InvoiceList.Invoices) != len(transfers) {
@@ -206,8 +209,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	log.Debug("Triggering migration batch")
-	if err := migration.MigrateBatch(ctx, s.migrator, accounts...); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to migrate batch: %v", err)
+	if err := migration.MigrateTransferAccounts(ctx, s.hc, s.migrator, transferAccountPairs...); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to migrate transfer accounts: %v", err)
 	}
 
 	//
@@ -402,7 +405,7 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		"account": base64.StdEncoding.EncodeToString(req.AccountId.Value),
 	})
 
-	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, solana.CommitmentSingle); err != nil {
+	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentSingle); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to migrate account: %v", err)
 	}
 

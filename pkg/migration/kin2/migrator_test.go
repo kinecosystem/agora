@@ -252,7 +252,7 @@ func TestRecover(t *testing.T) {
 			env.sc.On("GetAccountInfo", migrationAccount, mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
 		}
 
-		assert.NoError(t, env.migrator.recover(ctx, account, migrationAccount, tc.commitment))
+		assert.NoError(t, env.migrator.recover(ctx, account, migrationAccount, false, tc.commitment))
 
 		// Verify final state
 		result, err := env.store.Get(ctx, account)
@@ -441,7 +441,7 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	// Not Found
 	//
 	env.hc.On("LoadAccount", mock.Anything).Return(hProtocol.Account{}, notFoundError)
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, solana.CommitmentMax))
+	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
@@ -474,7 +474,7 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	}
 	env.hc.ExpectedCalls = nil
 	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, solana.CommitmentMax))
+	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
@@ -516,7 +516,7 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 		submitted = args.Get(0).(solana.Transaction)
 	})
 
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, solana.CommitmentMax))
+	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
@@ -542,7 +542,7 @@ func TestInitiateMigration_AlreadyMigrated(t *testing.T) {
 	assert.NoError(t, env.store.Update(ctx, account, migration.ZeroState, migration.State{Status: migration.StatusComplete}))
 
 	// note: this will crash if any blockchain or horizon rpc is called as we have no setup mocks.
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, solana.CommitmentMax))
+	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 }
 
 func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
@@ -600,7 +600,7 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	}
 	env.sc.On("SubmitTransaction", mock.Anything, mock.Anything).Return(signature, status, nil)
 
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, solana.CommitmentRecent))
+	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentRecent))
 	state, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusInProgress, state.Status)
@@ -609,7 +609,7 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	// check the transaction error. This is fine, but not what we're testing for here.
 	env.store.(*memory.Store).Reset()
 
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, solana.CommitmentMax))
+	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)

@@ -24,13 +24,13 @@ func TestContextAwareMigrator(t *testing.T) {
 
 	m := NewContextAwareMigrator(base)
 
-	assert.Nil(t, m.InitiateMigration(ctx, account, solana.CommitmentRecent))
+	assert.Nil(t, m.InitiateMigration(ctx, account, false, solana.CommitmentRecent))
 	assert.Empty(t, base.Calls)
 
 	require.NoError(t, headers.SetASCIIHeader(ctx, version.DesiredKinVersionHeader, "4"))
 
-	base.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	assert.Nil(t, m.InitiateMigration(ctx, account, solana.CommitmentRecent))
+	base.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	assert.Nil(t, m.InitiateMigration(ctx, account, false, solana.CommitmentRecent))
 	assert.Len(t, base.Calls, 1)
 }
 
@@ -40,23 +40,23 @@ func TestTeeMigrator(t *testing.T) {
 
 	m := NewTeeMigrator(a, b)
 
-	a.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	b.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	assert.Nil(t, m.InitiateMigration(context.Background(), account, solana.CommitmentRecent))
+	a.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	b.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	assert.Nil(t, m.InitiateMigration(context.Background(), account, false, solana.CommitmentRecent))
 
 	a.ExpectedCalls = nil
 	b.ExpectedCalls = nil
 
 	e := errors.New("a")
-	a.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(e)
-	b.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	assert.Equal(t, e, m.InitiateMigration(context.Background(), account, solana.CommitmentRecent))
+	a.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(e)
+	b.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	assert.Equal(t, e, m.InitiateMigration(context.Background(), account, false, solana.CommitmentRecent))
 
 	a.ExpectedCalls = nil
 	b.ExpectedCalls = nil
 
 	e = errors.New("b")
-	a.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	b.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything).Return(e)
-	assert.Equal(t, e, m.InitiateMigration(context.Background(), account, solana.CommitmentRecent))
+	a.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	b.On("InitiateMigration", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(e)
+	assert.Equal(t, e, m.InitiateMigration(context.Background(), account, false, solana.CommitmentRecent))
 }

@@ -86,7 +86,7 @@ func New(
 	}
 }
 
-func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, commitment solana.Commitment) error {
+func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
 	migrationAccount, migrationAccountKey, err := migration.DeriveMigrationAccount(account, m.migrationSecret)
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	case migration.StatusComplete:
 		return nil
 	case migration.StatusInProgress:
-		return m.recover(ctx, account, migrationAccount, commitment)
+		return m.recover(ctx, account, migrationAccount, ignoreBalance, commitment)
 	}
 
 	// WARNING: this currently ignores kin3 all together. this should be fixed to either merge balances into
@@ -123,7 +123,7 @@ func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return errors.Wrap(err, "failed to load account info")
 	}
 
-	if info.balance == 0 {
+	if !ignoreBalance && info.balance == 0 {
 		return nil
 	}
 
@@ -264,7 +264,7 @@ func (m *kin2Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 	return nil
 }
 
-func (m *kin2Migrator) recover(ctx context.Context, account, migrationAccount ed25519.PublicKey, commitment solana.Commitment) error {
+func (m *kin2Migrator) recover(ctx context.Context, account, migrationAccount ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
 	log := m.log.WithField("method", "recover")
 
 	log.Trace("Recovering migration status")
@@ -296,7 +296,7 @@ func (m *kin2Migrator) recover(ctx context.Context, account, migrationAccount ed
 
 		fallthrough
 	case migration.StatusNone:
-		return m.InitiateMigration(ctx, account, commitment)
+		return m.InitiateMigration(ctx, account, ignoreBalance, commitment)
 	}
 
 	return errors.Errorf("unhandled state status: %v", state.Status)
