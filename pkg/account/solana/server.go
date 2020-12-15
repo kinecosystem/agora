@@ -318,14 +318,20 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	}
 
 	if putRequired {
-		keys := make([]ed25519.PublicKey, len(resp.TokenAccounts))
-		for i, tokenAccount := range resp.TokenAccounts {
-			keys[i] = tokenAccount.Value
-		}
-		err = s.tokenAccountCache.Put(ctx, req.AccountId.Value, keys)
-		if err != nil {
-			log.WithError(err).Warn("failed to cache token accounts")
-			return nil, status.Error(codes.Internal, err.Error())
+		if len(resp.TokenAccounts) > 0 {
+			keys := make([]ed25519.PublicKey, len(resp.TokenAccounts))
+			for i, tokenAccount := range resp.TokenAccounts {
+				keys[i] = tokenAccount.Value
+			}
+			err = s.tokenAccountCache.Put(ctx, req.AccountId.Value, keys)
+			if err != nil {
+				log.WithError(err).Warn("failed to cache token accounts")
+			}
+		} else {
+			err = s.tokenAccountCache.Delete(ctx, req.AccountId.Value)
+			if err != nil {
+				log.WithError(err).Warn("failed to cache token accounts")
+			}
 		}
 	}
 
