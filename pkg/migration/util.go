@@ -72,9 +72,11 @@ func MigrateTransferAccounts(ctx context.Context, hc horizon.ClientInterface, m 
 							normalAccounts[string(dest)] = struct{}{}
 						}
 					}
+
+					continue
 				}
 			}
-			return errors.New("failed to load account")
+			return errors.Wrap(err, "failed to load account")
 		} else {
 			strBalance, err := stellarAccount.GetNativeBalance()
 			if err != nil {
