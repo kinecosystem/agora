@@ -947,7 +947,7 @@ func TestInternal_GetMinimumBalanceForRentException(t *testing.T) {
 	env, cleanup := setup(t)
 	defer cleanup()
 
-	balance, err := env.internal.GetMinimumBalanceForRentException(context.Background())
+	balance, err := env.internal.GetMinimumBalanceForRentException(context.Background(), token.AccountSize)
 	require.NoError(t, err)
 	assert.Equal(t, testserver.MinBalanceForRentException, balance)
 }

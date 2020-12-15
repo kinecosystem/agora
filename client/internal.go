@@ -267,7 +267,7 @@ func (c *InternalClient) CreateSolanaAccount(ctx context.Context, key PrivateKey
 	if err != nil {
 		return err
 	}
-	minBalance, err := c.GetMinimumBalanceForRentException(ctx)
+	minBalance, err := c.GetMinimumBalanceForRentException(ctx, token.AccountSize)
 	if err != nil {
 		return err
 	}
@@ -301,6 +301,9 @@ func (c *InternalClient) CreateSolanaAccount(ctx context.Context, key PrivateKey
 
 		return err
 	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create account")
+	}
 
 	switch resp.Result {
 	case accountpbv4.CreateAccountResponse_OK:
@@ -357,6 +360,9 @@ func (c *InternalClient) ResolveTokenAccounts(ctx context.Context, publicKey Pub
 		})
 		return err
 	})
+	if err != nil {
+		return accounts, errors.Wrap(err, "failed to resolve token accounts")
+	}
 
 	accounts = make([]PublicKey, len(resp.TokenAccounts))
 	for i, tokenAccount := range resp.TokenAccounts {
@@ -497,13 +503,16 @@ func (c *InternalClient) GetRecentBlockhash(ctx context.Context) (blockhash sola
 	return blockhash, nil
 }
 
-func (c *InternalClient) GetMinimumBalanceForRentException(ctx context.Context) (balance uint64, err error) {
+func (c *InternalClient) GetMinimumBalanceForRentException(ctx context.Context, size uint64) (balance uint64, err error) {
 	ctx = c.addMetadataToCtx(ctx)
 
 	var resp *transactionpbv4.GetMinimumBalanceForRentExemptionResponse
 
 	_, err = c.retrier.Retry(func() error {
-		resp, err = c.transactionClientV4.GetMinimumBalanceForRentExemption(ctx, &transactionpbv4.GetMinimumBalanceForRentExemptionRequest{})
+		resp, err = c.transactionClientV4.GetMinimumBalanceForRentExemption(ctx,
+			&transactionpbv4.GetMinimumBalanceForRentExemptionRequest{
+				Size: size,
+			})
 		return err
 	})
 	if err != nil {
@@ -526,6 +535,10 @@ func (c *InternalClient) RequestAirdrop(ctx context.Context, publicKey PublicKey
 		})
 		return err
 	})
+
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to request airdrop")
+	}
 
 	switch resp.Result {
 	case airdroppbv4.RequestAirdropResponse_OK:
