@@ -127,8 +127,16 @@ func (s *server) GetRecentBlockhash(_ context.Context, _ *transactionpb.GetRecen
 // GetMinimumBalanceForRentExemption returns the minimum amount of lamports that
 // must be in an account for it not to be garbage collected.
 func (s *server) GetMinimumBalanceForRentExemption(_ context.Context, req *transactionpb.GetMinimumBalanceForRentExemptionRequest) (*transactionpb.GetMinimumBalanceForRentExemptionResponse, error) {
+	accountSize := req.Size
+
+	// todo: remove temporary patch for account size
+	// Use token.AccountSize as patch for account creation bug in the Go client
+	if accountSize == 0 {
+		accountSize = token.AccountSize
+	}
+
 	// todo(perf): could aggressively cache this.
-	lamports, err := s.sc.GetMinimumBalanceForRentExemption(req.Size)
+	lamports, err := s.sc.GetMinimumBalanceForRentExemption(accountSize)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to get minimum balance for rent exemption")
 	}
