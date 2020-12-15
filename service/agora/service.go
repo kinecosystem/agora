@@ -79,10 +79,11 @@ const (
 	keystoreTypeEnv      = "KEYSTORE_TYPE"
 
 	// Solana config
-	solanaEndpointEnv      = "SOLANA_ENDPOINT"
-	kinTokenEnv            = "KIN_TOKEN"
-	airdropSourceEnv       = "AIRDROP_SOURCE"
-	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
+	solanaEndpointEnv       = "SOLANA_ENDPOINT"
+	solanaPublicEndpointEnv = "SOLANA_PUBLIC_ENDPOINT"
+	kinTokenEnv             = "KIN_TOKEN"
+	airdropSourceEnv        = "AIRDROP_SOURCE"
+	subsidizerKeypairIDEnv  = "SUBSIDIZER_KEYPAIR_ID"
 
 	// Solana kin2 migration config
 	//kin2SourceAddressEnv   = "KIN2_SOURCE_ADDRESS"
@@ -398,6 +399,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(solanaEndpointEnv) != "" {
 		solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
 
+		var solanaPubClient solana.Client
+		if os.Getenv(solanaPublicEndpointEnv) != "" {
+			solanaPubClient = solana.New(os.Getenv(solanaEndpointEnv))
+		}
+
 		kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
 		if err != nil {
 			return errors.Wrap(err, "failed to parse kin token address")
@@ -489,7 +495,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 			kin3Migrator = kin3migrator.New(
 				migrationStore,
-				solanaClient,
+				solanaPubClient,
 				migratorHorizonClient,
 				kinToken,
 				subsidizer,
@@ -515,7 +521,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 
 		a.accountSolana, err = accountsolana.New(
-			solanaClient,
+			solanaPubClient,
 			accountLimiter,
 			kin4AccountNotifier,
 			tokenAccountCache,
@@ -529,7 +535,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 
 		a.txnSolana = transactionsolana.New(
-			solanaClient,
+			solanaPubClient,
 			invoiceStore,
 			historyRW,
 			committer,
