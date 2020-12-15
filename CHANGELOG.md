@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## [v0.2.7](https://github.com/kinecosystem/agora/releases/tag/v0.2.7)
+- Fix Kin 2 prod issuer
+
 ## [v0.2.6](https://github.com/kinecosystem/agora/releases/tag/v0.2.6)
 - Fix Kin 4 account creation bug
 

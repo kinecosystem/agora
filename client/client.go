@@ -276,7 +276,7 @@ func New(env Environment, opts ...ClientOption) (Client, error) {
 		endpoint = "api.agorainfra.net:443"
 		if c.opts.kinVersion == 2 {
 			c.network = kin2TMainnet
-			issuer = kin.Kin2TestIssuer
+			issuer = kin.Kin2ProdIssuer
 		} else {
 			c.network = mainnet
 		}
