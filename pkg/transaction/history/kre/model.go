@@ -36,12 +36,13 @@ func (c *creation) Save() (row map[string]bigquery.Value, insertID string, err e
 	copy(buf[len(c.txID):], c.account)
 	insertID = base64.StdEncoding.EncodeToString(buf)
 
-	// Reference: https://github.com/kinecosystem/history-collector/blob/8ed2f79ff79184d78830d1844a4706e4a29d838c/python/main.py#L153q
+	// Reference: https://github.com/kinecosystem/history-collector/blob/9ed2f79ff79184d78830d1844a4706e4a29d838c/python/main.py#L153q
+	// Real Reference: https://github.com/kinecosystem/py-kin-base/blob/master/kin_base/stellarxdr/StellarXDR_const.py#L363
 	var txStatus string
 	if c.successful {
 		txStatus = "txSUCCESS"
 	} else {
-		txStatus = "FAILED"
+		txStatus = "txFAILED"
 	}
 
 	row = map[string]bigquery.Value{
@@ -96,11 +97,12 @@ func (p *payment) Save() (row map[string]bigquery.Value, insertID string, err er
 	insertID = base64.StdEncoding.EncodeToString(buf)
 
 	// Reference: https://github.com/kinecosystem/history-collector/blob/8ed2f79ff79184d78830d1844a4706e4a29d838c/python/main.py#L153q
+	// Real Reference: https://github.com/kinecosystem/py-kin-base/blob/master/kin_base/stellarxdr/StellarXDR_const.py#L363
 	var txStatus string
 	if p.successful {
 		txStatus = "txSUCCESS"
 	} else {
-		txStatus = "FAILED"
+		txStatus = "txFAILED"
 	}
 
 	row = map[string]bigquery.Value{

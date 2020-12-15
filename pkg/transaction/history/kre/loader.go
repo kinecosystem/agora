@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/agora-common/solana"
-	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -235,12 +235,15 @@ func (l *Loader) process(ctx context.Context) error {
 		//
 		// Ship the entries off to BigQuery
 		//
-		if err := l.paymentsTable.Inserter().Put(context.Background(), payments); err != nil {
-			return errors.Wrap(err, "failed to insert payments")
+		if len(creations) > 0 {
+			if err := l.creationsTable.Inserter().Put(context.Background(), creations); err != nil {
+				return errors.Wrap(err, "failed to insert creations")
+			}
 		}
-
-		if err := l.creationsTable.Inserter().Put(context.Background(), creations); err != nil {
-			return errors.Wrap(err, "failed to insert creations")
+		if len(payments) > 0 {
+			if err := l.paymentsTable.Inserter().Put(context.Background(), payments); err != nil {
+				return errors.Wrap(err, "failed to insert payments")
+			}
 		}
 
 		//
@@ -253,6 +256,16 @@ func (l *Loader) process(ctx context.Context) error {
 		}
 
 		if err := l.committer.Commit(ctx, GetKREIngestorName(), latest, blockPointer); err != nil {
+			// There are cases where latest and blockPointer are the same.
+			//
+			// todo(perf): we can 'add 1' to the blockPointer here, preventing
+			//             us from double processing. Since we sleep every 5 minutes, this is fine.
+			//             Additionally, if there is a constant stream of transactions, this case
+			//             should be rare. We dump a log to validate
+			log.WithFields(logrus.Fields{
+				"latest":       hex.EncodeToString(latest),
+				"blockPointer": hex.EncodeToString(blockPointer),
+			}).Warn("Failed to update pointer")
 			return errors.Wrap(err, "failed to update commit pointer")
 		}
 		latest = blockPointer
@@ -267,35 +280,8 @@ func (l *Loader) getCreations(txn solana.Transaction, successful bool) (creation
 		if err != nil {
 			continue
 		}
-
-		var hasCreate bool
-		for j := i - 1; j >= 0; j-- {
-			createInstr, err := system.DecompileCreateAccount(txn.Message, j)
-			if err != nil {
-				continue
-			}
-
-			if bytes.Equal(createInstr.Address, decompiled.Account) {
-				hasCreate = true
-				if !bytes.Equal(decompiled.Owner, l.tc.Token()) {
-					continue
-				}
-				break
-			}
-		}
-
-		// If there was no create instruction for this initialized account,
-		// we need to look up the account separately to confirm that it's for
-		// out token. We don't do this if the transaction wasn't successful, because
-		// this transaction wouldn't have created it, and it saves us a few hops.
-		if !hasCreate && successful {
-			// note: GetAccount returns an error if the account is not for the configured mint.
-			_, err := l.tc.GetAccount(decompiled.Account, solana.CommitmentSingle)
-			if err == token.ErrAccountNotFound || err == token.ErrInvalidTokenAccount {
-				continue
-			} else if err != nil {
-				return nil, errors.Wrap(err, "failed to load account")
-			}
+		if !bytes.Equal(decompiled.Mint, l.tc.Token()) {
+			continue
 		}
 
 		creations = append(creations, &creation{
