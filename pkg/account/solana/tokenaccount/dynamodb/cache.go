@@ -65,9 +65,13 @@ func (c *cache) Get(ctx context.Context, owner ed25519.PublicKey) ([]ed25519.Pub
 		return nil, tokenaccount.ErrTokenAccountsNotFound
 	}
 
-	_, tokenAccounts, err := fromItem(resp.Item)
+	_, tokenAccounts, expiry, err := fromItem(resp.Item)
 	if err != nil {
 		return nil, err
+	}
+
+	if expiry.Before(time.Now()) {
+		return nil, tokenaccount.ErrTokenAccountsNotFound
 	}
 
 	return tokenAccounts, nil

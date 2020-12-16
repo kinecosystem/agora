@@ -29,9 +29,10 @@ func TestModelConversion(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, expiry.Unix(), i)
 
-	owner, tokenAccounts, err := fromItem(item)
+	owner, tokenAccounts, convertedExpiry, err := fromItem(item)
 	require.NoError(t, err)
 
 	assert.EqualValues(t, keys[0], owner)
 	assert.EqualValues(t, keys[1:], tokenAccounts)
+	assert.EqualValues(t, expiry.Unix(), convertedExpiry.Unix())
 }

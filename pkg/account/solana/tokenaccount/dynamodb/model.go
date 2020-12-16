@@ -45,15 +45,15 @@ func toItem(owner ed25519.PublicKey, tokenAccounts []ed25519.PublicKey, expiryTi
 	})
 }
 
-func fromItem(item map[string]dynamodb.AttributeValue) (owner ed25519.PublicKey, tokenAccounts []ed25519.PublicKey, err error) {
+func fromItem(item map[string]dynamodb.AttributeValue) (owner ed25519.PublicKey, tokenAccounts []ed25519.PublicKey, expiry time.Time, err error) {
 	var accountsItem tokenAccountsItem
 	if err := dynamodbattribute.UnmarshalMap(item, &accountsItem); err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to unmarshal token accounts")
+		return nil, nil, time.Time{}, errors.Wrapf(err, "failed to unmarshal token accounts")
 	}
 
 	tokenAccounts = make([]ed25519.PublicKey, len(accountsItem.TokenAccounts))
 	for i, account := range accountsItem.TokenAccounts {
 		tokenAccounts[i] = account
 	}
-	return accountsItem.Owner, tokenAccounts, nil
+	return accountsItem.Owner, tokenAccounts, time.Unix(accountsItem.ExpiryTime, 0), nil
 }
