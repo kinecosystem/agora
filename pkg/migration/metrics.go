@@ -41,6 +41,11 @@ var (
 		Help:      "Number of initiate migration calls after context filtering",
 	})
 
+	migrationAllowedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "migration_allowed",
+		Help:      "Number of initiate migration calls allowed",
+	})
 	migrationRateLimitedCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "migration_rate_limited",
@@ -100,6 +105,14 @@ func registerMetrics() error {
 			initiateMigrationAfterCounter = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			return errors.Wrap(err, "failed to register initiate migration after filter counter")
+		}
+	}
+
+	if err := prometheus.Register(migrationAllowedCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			migrationAllowedCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register migration allowed counter")
 		}
 	}
 

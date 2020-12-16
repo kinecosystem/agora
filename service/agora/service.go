@@ -518,12 +518,10 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kin3Migrator = migration.NewNoopMigrator()
 		}
 
-		limitedMigrator := migration.NewRatelimitedMigrator(
+		onlineMigrator := migration.NewRatelimitedMigrator(
 			kin3Migrator,
 			rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationGlobalRL)),
 		)
-
-		onlineMigrator := migration.NewContextAwareMigrator(limitedMigrator)
 
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
 

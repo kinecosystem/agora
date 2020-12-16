@@ -79,6 +79,7 @@ func (m *rateLimitedMigrator) InitiateMigration(ctx context.Context, account ed2
 		return ErrRateLimited
 	}
 
+	migrationAllowedCounter.Inc()
 	return m.base.InitiateMigration(ctx, account, ignoreBalance, commitment)
 }
 
