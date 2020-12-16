@@ -77,7 +77,7 @@ func GetCtxDesiredVersion(ctx context.Context) (version KinVersion, err error) {
 	}
 
 	if len(val) == 0 {
-		return GetCtxKinVersion(ctx)
+		return 0, errors.New("no desired kin version set")
 	}
 
 	i, err := strconv.Atoi(val)

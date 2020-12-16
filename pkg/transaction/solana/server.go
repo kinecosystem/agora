@@ -110,10 +110,11 @@ func (s *server) GetMinimumKinVersion(ctx context.Context, _ *transactionpb.GetM
 		v = version.KinVersion3
 	}
 
-	// todo(config): switch on migration, also default to kin3 if unknown
-	return &transactionpb.GetMinimumKinVersionResponse{
-		Version: uint32(v),
-	}, nil
+	if v == version.KinVersion2 {
+		return &transactionpb.GetMinimumKinVersionResponse{Version: uint32(2)}, nil
+	} else {
+		return &transactionpb.GetMinimumKinVersionResponse{Version: uint32(4)}, nil
+	}
 }
 
 // GetRecentBlockhash returns a recent block hash from the underlying network,
