@@ -233,7 +233,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	log.Debug("Triggering migration batch")
-	if err := migration.MigrateTransferAccounts(ctx, s.hc, s.migrator, transferAccountPairs...); err != nil {
+	if err := migration.MigrateTransferAccounts(ctx, s.hc, s.migrator, transferAccountPairs...); err != nil && err != migration.ErrNotFound {
 		return nil, status.Errorf(codes.Internal, "failed to migrate transfer accounts: %v", err)
 	}
 
@@ -429,7 +429,7 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		"account": base64.StdEncoding.EncodeToString(req.AccountId.Value),
 	})
 
-	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentSingle); err != nil {
+	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentSingle); err != nil && err != migration.ErrNotFound {
 		return nil, status.Errorf(codes.Internal, "failed to migrate account: %v", err)
 	}
 

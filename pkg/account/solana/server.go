@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"math/rand"
-	"net/http"
 
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
@@ -50,10 +49,6 @@ var (
 		Name:      "resolve_token_account_misses",
 		Help:      "Number of times no token account was resolved for a requested account",
 	})
-)
-
-var (
-	errHorizonAccountNotFound = errors.New("horizon account not found")
 )
 
 type server struct {
@@ -246,7 +241,7 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	log := s.log.WithField("method", "GetAccountInfo")
 
 	commitment := solanautil.CommitmentFromProto(req.Commitment)
-	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment); err != nil {
+	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment); err != nil && err != migration.ErrNotFound {
 		log.WithError(err).Warn("failed to initiate migration")
 
 		// Check to see if migration was started at all; fallback to Horizon if it wasn't
@@ -257,11 +252,6 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		}
 		if !exists {
 			balance, err := s.loadHorizonBalance(req.AccountId.Value)
-			if err == errHorizonAccountNotFound {
-				return &accountpb.GetAccountInfoResponse{
-					Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
-				}, nil
-			}
 			if err != nil {
 				return nil, status.Error(codes.Internal, "failed to get account balance")
 			}
@@ -335,7 +325,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 
 	if len(accounts) == 0 {
 		// We only use recent here to ensure ResolveAccounts() is still fairly quick.
-		if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentRecent); err != nil {
+		if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentRecent); err != nil && err != migration.ErrNotFound {
 			return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
 		}
 	}
@@ -533,16 +523,8 @@ func (s *server) loadHorizonBalance(account ed25519.PublicKey) (int64, error) {
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to encode account as stellar address")
 	}
-
 	stellarAccount, err := s.hc.LoadAccount(address)
 	if err != nil {
-		if hErr, ok := err.(*horizon.Error); ok {
-			switch hErr.Problem.Status {
-			case http.StatusNotFound:
-				return 0, errHorizonAccountNotFound
-			}
-		}
-
 		return 0, errors.Wrap(err, "failed to check kin3 account balance")
 	}
 	strBalance, err := stellarAccount.GetNativeBalance()

@@ -120,10 +120,8 @@ func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	//
 	info, err := m.loadAccount(ctx, account, migrationAccountKey)
 	switch err {
-	case nil, migration.ErrNotFound:
-		// todo(offline): we actually care about ErrNotFound, since it means
-		//                we might be on a wrong config.
-	case migration.ErrBurned, migration.ErrMultisig:
+	case nil:
+	case migration.ErrBurned, migration.ErrMultisig, migration.ErrNotFound:
 		return err
 	default:
 		return errors.Wrap(err, "failed to load account info")

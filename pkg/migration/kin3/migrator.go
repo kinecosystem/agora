@@ -125,11 +125,7 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	info, err := m.loadAccount(migrationCtx, account, migrationAccountKey)
 	switch err {
 	case nil:
-	case migration.ErrNotFound:
-		// todo(offline): we actually care about ErrNotFound, since it means
-		//                we might be on a wrong config.
-		return nil
-	case migration.ErrBurned, migration.ErrMultisig:
+	case migration.ErrBurned, migration.ErrMultisig, migration.ErrNotFound:
 		return err
 	default:
 		return errors.Wrap(err, "failed to load account info")

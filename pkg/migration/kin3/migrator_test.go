@@ -408,7 +408,7 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	// Not Found
 	//
 	env.hc.On("LoadAccount", mock.Anything).Return(hProtocol.Account{}, notFoundError)
-	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
+	assert.Equal(t, migration.ErrNotFound, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, exists, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)

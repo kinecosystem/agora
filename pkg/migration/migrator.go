@@ -53,22 +53,3 @@ func (m *contextAwareMigrator) InitiateMigration(ctx context.Context, account ed
 	initiateMigrationAfterCounter.Inc()
 	return m.base.InitiateMigration(ctx, account, ignoreBalance, commitment)
 }
-
-type teeMigrator struct {
-	a, b Migrator
-}
-
-func NewTeeMigrator(a, b Migrator) Migrator {
-	return &teeMigrator{
-		a: a,
-		b: b,
-	}
-}
-
-func (m *teeMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
-	if err := m.a.InitiateMigration(ctx, account, ignoreBalance, commitment); err != nil {
-		return err
-	}
-
-	return m.b.InitiateMigration(ctx, account, ignoreBalance, commitment)
-}
