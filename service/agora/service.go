@@ -508,6 +508,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 				migrationStore,
 				solanaPubClient,
 				migratorHorizonClient,
+				rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationGlobalRL)),
 				kinToken,
 				subsidizer,
 				mint,
@@ -517,11 +518,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		} else {
 			kin3Migrator = migration.NewNoopMigrator()
 		}
-
-		onlineMigrator := migration.NewRatelimitedMigrator(
-			kin3Migrator,
-			rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationGlobalRL)),
-		)
 
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
 
@@ -537,7 +533,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kin4AccountNotifier,
 			tokenAccountCache,
 			infocache.New(dynamoClient, accountInfoTTL),
-			onlineMigrator,
+			kin3Migrator,
 			kinToken,
 			subsidizer,
 			float32(consistencyCheckFreq),
@@ -552,7 +548,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			historyRW,
 			committer,
 			authorizer,
-			onlineMigrator,
+			kin3Migrator,
 			kinToken,
 			subsidizer,
 			migratorHorizonClient,

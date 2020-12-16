@@ -21,12 +21,16 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/migration"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 )
 
 var (
 	onDemandSuccessCounter = migration.OnDemandSuccessCounterVec.WithLabelValues("3")
 	onDemandFailureCounter = migration.OnDemandFailureCounterVec.WithLabelValues("3")
+
+	migrationAllowedCounter     = migration.MigrationAllowedCounter
+	migrationRateLimitedCounter = migration.MigrationRateLimitedCounter
 )
 
 type accountInfo struct {
@@ -38,11 +42,12 @@ type accountInfo struct {
 }
 
 type kin3Migrator struct {
-	log   *logrus.Entry
-	sc    solana.Client
-	tc    *token.Client
-	hc    horizon.ClientInterface
-	store migration.Store
+	log     *logrus.Entry
+	sc      solana.Client
+	tc      *token.Client
+	hc      horizon.ClientInterface
+	store   migration.Store
+	limiter rate.Limiter
 
 	migrationSecret []byte
 
@@ -63,6 +68,7 @@ func New(
 	store migration.Store,
 	sc solana.Client,
 	hc horizon.ClientInterface,
+	limiter rate.Limiter,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	mint ed25519.PublicKey,
@@ -75,6 +81,7 @@ func New(
 		tc:              token.NewClient(sc, tokenAccount),
 		store:           store,
 		hc:              hc,
+		limiter:         limiter,
 		subsidizer:      subsidizer.Public().(ed25519.PublicKey),
 		subsidizerKey:   subsidizer,
 		mint:            mint,
@@ -111,9 +118,11 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	//
 	info, err := m.loadAccount(migrationCtx, account, migrationAccountKey)
 	switch err {
-	case nil, migration.ErrNotFound:
+	case nil:
+	case migration.ErrNotFound:
 		// todo(offline): we actually care about ErrNotFound, since it means
 		//                we might be on a wrong config.
+		return nil
 	case migration.ErrBurned, migration.ErrMultisig:
 		return err
 	default:
@@ -123,6 +132,19 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	if info.balance == 0 {
 		return nil
 	}
+
+	// We check the rate limiter here instead of up there since we don't want to
+	// rate limit accounts that don't need migrating.
+	allowed, err := m.limiter.Allow("kin3_migration")
+	if err != nil {
+		return errors.Wrap(err, "failed to check migration rate limit")
+	}
+	if !allowed {
+		migrationRateLimitedCounter.Inc()
+		return errors.New("rate limited")
+	}
+
+	migrationAllowedCounter.Inc()
 
 	err = m.migrateAccount(migrationCtx, info, commitment)
 	if err == nil {

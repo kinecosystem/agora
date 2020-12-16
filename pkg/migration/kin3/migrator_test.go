@@ -18,12 +18,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	xrate "golang.org/x/time/rate"
 
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/migration/memory"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/version"
 )
@@ -61,6 +63,7 @@ func setupKin3Env(t *testing.T) (env kin3Env) {
 		env.store,
 		env.sc,
 		env.hc,
+		rate.NewLocalRateLimiter(xrate.Inf),
 		env.token,
 		env.subsidizerKey,
 		env.mint,
