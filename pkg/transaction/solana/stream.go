@@ -7,6 +7,7 @@ import (
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/agora-common/solana"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -39,6 +40,11 @@ func StreamTransactions(ctx context.Context, client solana.Client, notifiers ...
 				if err != nil {
 					log.WithError(err).Warn("failed to get blocks from seed slot")
 					return err
+				}
+
+				if len(blocks) == 0 {
+					// todo: handle better
+					return errors.Errorf("no blocks from seed: %d", seed)
 				}
 
 				seed = blocks[len(blocks)-1]

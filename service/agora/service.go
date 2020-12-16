@@ -402,6 +402,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 		var solanaPubClient solana.Client
 		if os.Getenv(solanaPublicEndpointEnv) != "" {
 			solanaPubClient = solana.New(os.Getenv(solanaPublicEndpointEnv))
+		} else {
+			solanaPubClient = solanaClient
 		}
 
 		kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
@@ -565,6 +567,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 			transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
 		}()
 		go func() {
+			if true {
+				// disable history for now
+				return
+			}
+
 			err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
 			if err != nil && err != context.Canceled {
 				log.WithError(err).Warn("kin 4 history ingestion loop terminated")

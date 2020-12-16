@@ -13,7 +13,7 @@ require (
 	github.com/golang/protobuf v1.4.3
 	github.com/hashicorp/golang-lru v0.5.1
 	github.com/kinecosystem/agora-api v0.23.0
-	github.com/kinecosystem/agora-common v0.57.0
+	github.com/kinecosystem/agora-common v0.58.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/mr-tron/base58 v1.2.0
 	github.com/ory/dockertest v3.3.5+incompatible

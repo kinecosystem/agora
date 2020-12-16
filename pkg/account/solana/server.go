@@ -93,12 +93,21 @@ func New(
 		cacheCheckProbability: cacheCheckFreq,
 	}
 
+	backupValue := uint64(2039280)
 	minAccountLamports, err := sc.GetMinimumBalanceForRentExemption(token.AccountSize)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to add minimum balance for rent exemption")
+		s.log.WithError(err).Warn("Failed to load minimum balance for rent exemption, falling back.")
+		s.minAccountLamports = backupValue
+	} else {
+		s.minAccountLamports = minAccountLamports
 	}
 
-	s.minAccountLamports = minAccountLamports
+	if minAccountLamports != backupValue {
+		s.log.WithFields(logrus.Fields{
+			"actual": minAccountLamports,
+			"backup": backupValue,
+		}).Warn("backup value does not match actual")
+	}
 
 	return s, nil
 }
