@@ -50,7 +50,7 @@ func setEnabledRun(_ *cobra.Command, args []string) error {
 	case "false":
 		s = migrationpb.SetStateRequest_STOPPED
 	default:
-		return errors.Errorf("must be true of false")
+		return errors.Errorf("must be true or false")
 	}
 	_, err := client.SetState(context.Background(), &migrationpb.SetStateRequest{
 		State: s,

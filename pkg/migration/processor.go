@@ -55,13 +55,10 @@ var (
 	})
 )
 
-func init() {
-}
-
 type Processor struct {
 	log               *logrus.Entry
 	m                 Migrator
-	submitter         taskqueue.Processor
+	processor         taskqueue.Processor
 	multisigSubmitter taskqueue.Submitter
 	burnedSubmitter   taskqueue.Submitter
 
@@ -84,7 +81,7 @@ func NewProcessor(
 		localLimiter:      localLimiter,
 	}
 
-	p.submitter, err = queueCtr(p.queueHandler)
+	p.processor, err = queueCtr(p.queueHandler)
 	if err != nil {
 		return nil, err
 	}
@@ -107,14 +104,14 @@ func (p *Processor) Write(ctx context.Context, account ed25519.PublicKey, ignore
 		return errors.Wrap(err, "failed to marshal item")
 	}
 
-	return p.submitter.Submit(ctx, &task.Message{
+	return p.processor.Submit(ctx, &task.Message{
 		TypeName: proto.MessageName(item),
 		RawValue: raw,
 	})
 }
 
 func (p *Processor) Shutdown() {
-	p.submitter.Shutdown()
+	p.processor.Shutdown()
 }
 
 func (p *Processor) queueHandler(ctx context.Context, msg *task.Message) error {
@@ -210,7 +207,7 @@ func (p *Processor) Queue(ctx context.Context, req *migrationpb.QueueRequest) (*
 		}
 	}
 
-	if err := p.submitter.SubmitBatch(ctx, tasks); err != nil {
+	if err := p.processor.SubmitBatch(ctx, tasks); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to submit batch: %v", err)
 	}
 
@@ -220,9 +217,9 @@ func (p *Processor) Queue(ctx context.Context, req *migrationpb.QueueRequest) (*
 func (p *Processor) SetState(_ context.Context, req *migrationpb.SetStateRequest) (*migrationpb.VoidResponse, error) {
 	switch req.State {
 	case migrationpb.SetStateRequest_RUNNING:
-		p.submitter.Start()
+		p.processor.Start()
 	case migrationpb.SetStateRequest_STOPPED:
-		p.submitter.Pause()
+		p.processor.Pause()
 	default:
 		return nil, status.Error(codes.InvalidArgument, "")
 	}
