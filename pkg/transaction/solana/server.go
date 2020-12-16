@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"sync"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
@@ -48,6 +49,10 @@ type server struct {
 	subsidizer ed25519.PrivateKey
 
 	hc horizon.ClientInterface
+
+	// todo: could use sync map, shouldn't be an issue for now
+	cacheMu         sync.RWMutex
+	rentExemptCache map[uint64]uint64
 }
 
 func New(
@@ -72,13 +77,14 @@ func New(
 			invoiceStore,
 			tokenAccount,
 		),
-		history:      history,
-		invoiceStore: invoiceStore,
-		authorizer:   authorizer,
-		migrator:     migrator,
-		token:        tokenAccount,
-		subsidizer:   subsidizer,
-		hc:           hc,
+		history:         history,
+		invoiceStore:    invoiceStore,
+		authorizer:      authorizer,
+		migrator:        migrator,
+		token:           tokenAccount,
+		subsidizer:      subsidizer,
+		hc:              hc,
+		rentExemptCache: make(map[uint64]uint64),
 	}
 }
 
@@ -145,11 +151,26 @@ func (s *server) GetMinimumBalanceForRentExemption(_ context.Context, req *trans
 		accountSize = token.AccountSize
 	}
 
+	s.cacheMu.RLock()
+	// todo: we may want a ttl, but this in theory only ever goes down.
+	cached, ok := s.rentExemptCache[accountSize]
+	s.cacheMu.RUnlock()
+
+	if ok {
+		return &transactionpb.GetMinimumBalanceForRentExemptionResponse{
+			Lamports: cached,
+		}, nil
+	}
+
 	// todo(perf): could aggressively cache this.
 	lamports, err := s.sc.GetMinimumBalanceForRentExemption(accountSize)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to get minimum balance for rent exemption")
 	}
+
+	s.cacheMu.Lock()
+	s.rentExemptCache[accountSize] = lamports
+	s.cacheMu.Unlock()
 
 	return &transactionpb.GetMinimumBalanceForRentExemptionResponse{
 		Lamports: lamports,
