@@ -91,6 +91,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 
 	s := New(
 		env.sc,
+		env.sc,
 		env.invoiceStore,
 		env.rw,
 		env.committer,

@@ -38,6 +38,7 @@ var (
 type server struct {
 	log          *logrus.Entry
 	sc           solana.Client
+	scSubmit     solana.Client
 	tc           *token.Client
 	loader       *loader
 	invoiceStore invoice.Store
@@ -57,6 +58,7 @@ type server struct {
 
 func New(
 	sc solana.Client,
+	scSubmit solana.Client,
 	invoiceStore invoice.Store,
 	history history.ReaderWriter,
 	committer ingestion.Committer,
@@ -67,9 +69,10 @@ func New(
 	hc horizon.ClientInterface,
 ) transactionpb.TransactionServer {
 	return &server{
-		log: logrus.StandardLogger().WithField("type", "transaction/solana/server"),
-		sc:  sc,
-		tc:  token.NewClient(sc, tokenAccount),
+		log:      logrus.StandardLogger().WithField("type", "transaction/solana/server"),
+		sc:       sc,
+		scSubmit: scSubmit,
+		tc:       token.NewClient(sc, tokenAccount),
 		loader: newLoader(
 			sc,
 			history,
@@ -333,7 +336,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	var submitResult transactionpb.SubmitTransactionResponse_Result
-	sig, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
+	sig, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		log.WithError(err).Warn("unhandled SubmitTransaction")
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)

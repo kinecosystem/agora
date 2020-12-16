@@ -80,11 +80,12 @@ const (
 	keystoreTypeEnv      = "KEYSTORE_TYPE"
 
 	// Solana config
-	solanaEndpointEnv      = "SOLANA_ENDPOINT"
-	solanaMigratorEndpoint = "SOLANA_MIGRATOR_ENDPOINT"
-	kinTokenEnv            = "KIN_TOKEN"
-	airdropSourceEnv       = "AIRDROP_SOURCE"
-	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
+	solanaEndpointEnv         = "SOLANA_ENDPOINT"
+	solanaSubmitEndpointEnv   = "SOLANA_SUBMIT_ENDPOINT"
+	solanaMigratorEndpointEnv = "SOLANA_MIGRATOR_ENDPOINT"
+	kinTokenEnv               = "KIN_TOKEN"
+	airdropSourceEnv          = "AIRDROP_SOURCE"
+	subsidizerKeypairIDEnv    = "SUBSIDIZER_KEYPAIR_ID"
 
 	// Solana kin2 migration config
 	//kin2SourceAddressEnv   = "KIN2_SOURCE_ADDRESS"
@@ -406,11 +407,22 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}()
 
 	if os.Getenv(solanaEndpointEnv) != "" {
-		solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
+		var (
+			solanaClient         solana.Client
+			solanaSubmitClient   solana.Client
+			solanaMigratorClient solana.Client
+		)
 
-		var solanaMigratorClient solana.Client
-		if os.Getenv(solanaMigratorEndpoint) != "" {
-			solanaMigratorClient = solana.New(os.Getenv(solanaMigratorEndpoint))
+		solanaClient = solana.New(os.Getenv(solanaEndpointEnv))
+
+		if os.Getenv(solanaSubmitEndpointEnv) != "" {
+			solanaSubmitClient = solana.New(os.Getenv(solanaSubmitEndpointEnv))
+		} else {
+			solanaSubmitClient = solanaClient
+		}
+
+		if os.Getenv(solanaMigratorEndpointEnv) != "" {
+			solanaMigratorClient = solana.New(os.Getenv(solanaMigratorEndpointEnv))
 		} else {
 			solanaMigratorClient = solanaClient
 		}
@@ -544,6 +556,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 		a.txnSolana = transactionsolana.New(
 			solanaClient,
+			solanaSubmitClient,
 			invoiceStore,
 			historyRW,
 			committer,
