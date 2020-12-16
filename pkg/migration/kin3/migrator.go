@@ -89,10 +89,13 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return err
 	}
 
+	migrationCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
 	//
 	// Check migration state store.
 	//
-	status, err := m.store.Get(context.Background(), account)
+	status, err := m.store.Get(migrationCtx, account)
 	if err != nil {
 		return err
 	}
@@ -100,13 +103,13 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	case migration.StatusComplete:
 		return nil
 	case migration.StatusInProgress:
-		return m.recover(ctx, account, migrationAccount, ignoreBalance, commitment)
+		return m.recover(migrationCtx, account, migrationAccount, ignoreBalance, commitment)
 	}
 
 	//
 	// Load necessary account information, and double check whether or not we should migrate.
 	//
-	info, err := m.loadAccount(ctx, account, migrationAccountKey)
+	info, err := m.loadAccount(migrationCtx, account, migrationAccountKey)
 	switch err {
 	case nil, migration.ErrNotFound:
 		// todo(offline): we actually care about ErrNotFound, since it means
@@ -121,7 +124,7 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return nil
 	}
 
-	err = m.migrateAccount(ctx, info, commitment)
+	err = m.migrateAccount(migrationCtx, info, commitment)
 	if err == nil {
 		onDemandSuccessCounter.Inc()
 	} else {
