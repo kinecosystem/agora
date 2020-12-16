@@ -12,6 +12,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
+	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,9 @@ type testEnv struct {
 
 	minLamports uint64
 
-	sc                *solana.MockClient
+	sc *solana.MockClient
+	hc *horizon.MockClient
+
 	notifier          *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         accountinfo.Cache
@@ -53,6 +56,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 
 	env.client = accountpb.NewAccountClient(conn)
 	env.sc = solana.NewMockClient()
+	env.hc = &horizon.MockClient{}
 	env.notifier = NewAccountNotifier()
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
@@ -70,6 +74,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 
 	s, err := New(
 		env.sc,
+		env.hc,
 		account.NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,
 		env.tokenAccountCache,

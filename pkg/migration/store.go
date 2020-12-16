@@ -47,7 +47,7 @@ type Store interface {
 	// Get returns the recorded state, if any, for an account.
 	//
 	// ZeroState is returned if there is no persisted state.
-	Get(ctx context.Context, account ed25519.PublicKey) (State, error)
+	Get(ctx context.Context, account ed25519.PublicKey) (state State, exists bool, err error)
 
 	// Update updates the state for an account. The previous state must match
 	// what was stored. Implementations must support atomic compare-and-swap.

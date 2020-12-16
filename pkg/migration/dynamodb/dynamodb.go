@@ -27,10 +27,10 @@ func New(client dynamodbiface.ClientAPI) migration.Store {
 }
 
 // Get implements migration.Store.Get.
-func (db *db) Get(ctx context.Context, account ed25519.PublicKey) (migration.State, error) {
+func (db *db) Get(ctx context.Context, account ed25519.PublicKey) (state migration.State, exists bool, err error) {
 	address, err := strkey.Encode(strkey.VersionByteAccountID, account)
 	if err != nil {
-		return migration.State{}, errors.Wrap(err, "failed to encode address")
+		return migration.State{}, false, errors.Wrap(err, "failed to encode address")
 	}
 
 	resp, err := db.client.GetItemRequest(&dynamodb.GetItemInput{
@@ -41,14 +41,19 @@ func (db *db) Get(ctx context.Context, account ed25519.PublicKey) (migration.Sta
 		},
 	}).Send(ctx)
 	if err != nil {
-		return migration.State{}, err
+		return migration.State{}, false, err
 	}
 
 	if len(resp.Item) == 0 {
-		return migration.State{}, nil
+		return migration.State{}, false, nil
 	}
 
-	return getState(resp.Item)
+	state, err = getState(resp.Item)
+	if err != nil {
+		return migration.State{}, false, err
+	}
+
+	return state, true, err
 }
 
 // Update implements migration.Store.Update.

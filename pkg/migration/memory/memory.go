@@ -23,11 +23,12 @@ func New() migration.Store {
 }
 
 // Get implements migration.Store.Get.
-func (s *Store) Get(ctx context.Context, account ed25519.PublicKey) (migration.State, error) {
+func (s *Store) Get(ctx context.Context, account ed25519.PublicKey) (state migration.State, exists bool, err error) {
 	s.Lock()
 	defer s.Unlock()
 
-	return s.entries[string(account)], nil
+	entry, ok := s.entries[string(account)]
+	return entry, ok, nil
 }
 
 // Update implements migration.Store.Update.

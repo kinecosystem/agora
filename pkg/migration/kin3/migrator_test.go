@@ -249,12 +249,13 @@ func TestRecover(t *testing.T) {
 		assert.NoError(t, env.migrator.recover(ctx, account, migrationAccount, false, tc.commitment))
 
 		// Verify final state
-		result, err := env.store.Get(ctx, account)
+		result, exists, err := env.store.Get(ctx, account)
 		assert.NoError(t, err)
 		assert.Equal(t, tc.expectedStatus, result.Status)
 		if result.Status > migration.StatusNone {
 			assert.NotNil(t, result.Signature)
 		}
+		assert.True(t, exists)
 	}
 }
 
@@ -408,9 +409,10 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	//
 	env.hc.On("LoadAccount", mock.Anything).Return(hProtocol.Account{}, notFoundError)
 	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
-	state, err := env.store.Get(ctx, account)
+	state, exists, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
+	assert.False(t, exists)
 	count, err := env.store.GetCount(ctx, account)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
@@ -437,9 +439,10 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	env.hc.ExpectedCalls = nil
 	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
 	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
-	state, err = env.store.Get(ctx, account)
+	state, exists, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
+	assert.False(t, exists)
 	count, err = env.store.GetCount(ctx, account)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
@@ -475,9 +478,10 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	})
 
 	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
-	state, err = env.store.Get(ctx, account)
+	state, exists, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
+	assert.True(t, exists)
 	count, err = env.store.GetCount(ctx, account)
 	require.NoError(t, err)
 	assert.Equal(t, 3, count)
@@ -559,9 +563,10 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	env.sc.On("SubmitTransaction", mock.Anything, mock.Anything).Return(signature, status, nil)
 
 	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentRecent))
-	state, err := env.store.Get(ctx, account)
+	state, exists, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusInProgress, state.Status)
+	assert.True(t, exists)
 	count, err := env.store.GetCount(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, count)
@@ -571,9 +576,10 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	env.store.(*memory.Store).Reset()
 
 	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
-	state, err = env.store.Get(ctx, account)
+	state, exists, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
+	assert.True(t, exists)
 	count, err = env.store.GetCount(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, count)

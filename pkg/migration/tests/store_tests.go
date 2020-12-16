@@ -25,9 +25,10 @@ func testRoundTrip(t *testing.T, store migration.Store) {
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
 
 	// Ensure default state
-	s, err := store.Get(context.Background(), account)
+	s, exists, err := store.Get(context.Background(), account)
 	assert.NoError(t, err)
 	assert.Equal(t, prev, s)
+	assert.False(t, exists)
 
 	next.Status = migration.StatusInProgress
 	_, err = rand.Reader.Read(next.Signature[:])
@@ -38,17 +39,20 @@ func testRoundTrip(t *testing.T, store migration.Store) {
 	require.Equal(t, migration.ErrStatusMismatch, err)
 
 	// Ensure we didn't store the new entry yet
-	s, err = store.Get(context.Background(), account)
+	s, exists, err = store.Get(context.Background(), account)
 	assert.NoError(t, err)
 	assert.Equal(t, prev, s)
+	assert.False(t, exists)
 
 	// Ensure advancing works correctly
 	err = store.Update(context.Background(), account, prev, next)
 	assert.NoError(t, err)
 
-	s, err = store.Get(context.Background(), account)
+	s, exists, err = store.Get(context.Background(), account)
 	assert.NoError(t, err)
 	assert.Equal(t, next, s)
+	assert.True(t, exists)
+
 }
 
 func testCount(t *testing.T, store migration.Store) {

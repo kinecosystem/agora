@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"math/rand"
+	"net/http"
 
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/kinecosystem/go/amount"
+	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -49,15 +52,21 @@ var (
 	})
 )
 
+var (
+	errHorizonAccountNotFound = errors.New("horizon account not found")
+)
+
 type server struct {
 	log               *logrus.Entry
 	sc                solana.Client
 	tc                *token.Client
+	hc                horizon.ClientInterface
 	limiter           *account.Limiter
 	accountNotifier   *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         accountinfo.Cache
 	migrator          migration.Migrator
+	migrationStore    migration.Store
 
 	token              ed25519.PublicKey
 	subsidizer         ed25519.PrivateKey
@@ -74,6 +83,7 @@ func init() {
 
 func New(
 	sc solana.Client,
+	hc horizon.ClientInterface,
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
 	tokenAccountCache tokenaccount.Cache,
@@ -87,6 +97,7 @@ func New(
 		log:                   logrus.StandardLogger().WithField("type", "account/solana"),
 		sc:                    sc,
 		tc:                    token.NewClient(sc, mint),
+		hc:                    hc,
 		accountNotifier:       accountNotifier,
 		tokenAccountCache:     tokenAccountCache,
 		infoCache:             infoCache,
@@ -236,7 +247,32 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 
 	commitment := solanautil.CommitmentFromProto(req.Commitment)
 	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
+		log.WithError(err).Warn("failed to initiate migration")
+
+		// Check to see if migration was started at all; fallback to Horizon if it wasn't
+		_, exists, err := s.migrationStore.Get(ctx, req.AccountId.Value)
+		if err != nil {
+			log.WithError(err).Warn("failed to get migration status")
+			return nil, status.Error(codes.Internal, "failed to get migration status")
+		}
+		if !exists {
+			balance, err := s.loadHorizonBalance(req.AccountId.Value)
+			if err == errHorizonAccountNotFound {
+				return &accountpb.GetAccountInfoResponse{
+					Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
+				}, nil
+			}
+			if err != nil {
+				return nil, status.Error(codes.Internal, "failed to get account balance")
+			}
+
+			return &accountpb.GetAccountInfoResponse{
+				AccountInfo: &accountpb.AccountInfo{
+					AccountId: &commonpb.SolanaAccountId{Value: req.AccountId.Value},
+					Balance:   balance,
+				},
+			}, nil
+		}
 	}
 
 	cached, err := s.infoCache.Get(ctx, req.AccountId.Value)
@@ -490,6 +526,38 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 			return status.Error(codes.Canceled, "")
 		}
 	}
+}
+
+func (s *server) loadHorizonBalance(account ed25519.PublicKey) (int64, error) {
+	address, err := strkey.Encode(strkey.VersionByteAccountID, account)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to encode account as stellar address")
+	}
+
+	stellarAccount, err := s.hc.LoadAccount(address)
+	if err != nil {
+		if hErr, ok := err.(*horizon.Error); ok {
+			switch hErr.Problem.Status {
+			case http.StatusNotFound:
+				return 0, errHorizonAccountNotFound
+			}
+		}
+
+		return 0, errors.Wrap(err, "failed to check kin3 account balance")
+	}
+	strBalance, err := stellarAccount.GetNativeBalance()
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get native balance")
+	}
+	balance, err := amount.ParseInt64(strBalance)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to parse balance")
+	}
+	if balance < 0 {
+		return 0, errors.Errorf("cannot migrate negative balance: %d", balance)
+	}
+
+	return balance, nil
 }
 
 func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) {

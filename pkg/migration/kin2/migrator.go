@@ -101,7 +101,7 @@ func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	//
 	// Check migration state store.
 	//
-	status, err := m.store.Get(context.Background(), account)
+	status, _, err := m.store.Get(context.Background(), account)
 	if err != nil {
 		return err
 	}
@@ -275,7 +275,7 @@ func (m *kin2Migrator) recover(ctx context.Context, account, migrationAccount ed
 
 	log.Trace("Recovering migration status")
 
-	state, err := m.store.Get(context.Background(), account)
+	state, _, err := m.store.Get(context.Background(), account)
 	if err != nil {
 		return errors.Wrap(err, "failed to get status")
 	}
