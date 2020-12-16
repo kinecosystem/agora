@@ -130,8 +130,7 @@ func (s *server) GetMinimumKinVersion(ctx context.Context, _ *transactionpb.GetM
 // which should be used when crafting transactions. If a transaction fails, it
 // is recommended that a new block hash is retrieved.
 func (s *server) GetRecentBlockhash(_ context.Context, _ *transactionpb.GetRecentBlockhashRequest) (*transactionpb.GetRecentBlockhashResponse, error) {
-	// todo(perf): could cache this with some small window.
-	hash, err := s.sc.GetRecentBlockhash()
+	hash, err := s.scSubmit.GetRecentBlockhash()
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to get recent block hash")
 	}
