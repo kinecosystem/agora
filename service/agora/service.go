@@ -80,11 +80,11 @@ const (
 	keystoreTypeEnv      = "KEYSTORE_TYPE"
 
 	// Solana config
-	solanaEndpointEnv       = "SOLANA_ENDPOINT"
-	solanaPublicEndpointEnv = "SOLANA_PUBLIC_ENDPOINT"
-	kinTokenEnv             = "KIN_TOKEN"
-	airdropSourceEnv        = "AIRDROP_SOURCE"
-	subsidizerKeypairIDEnv  = "SUBSIDIZER_KEYPAIR_ID"
+	solanaEndpointEnv      = "SOLANA_ENDPOINT"
+	solanaMigratorEndpoint = "SOLANA_MIGRATOR_ENDPOINT"
+	kinTokenEnv            = "KIN_TOKEN"
+	airdropSourceEnv       = "AIRDROP_SOURCE"
+	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
 
 	// Solana kin2 migration config
 	//kin2SourceAddressEnv   = "KIN2_SOURCE_ADDRESS"
@@ -408,11 +408,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(solanaEndpointEnv) != "" {
 		solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
 
-		var solanaPubClient solana.Client
-		if os.Getenv(solanaPublicEndpointEnv) != "" {
-			solanaPubClient = solana.New(os.Getenv(solanaPublicEndpointEnv))
+		var solanaMigratorClient solana.Client
+		if os.Getenv(solanaMigratorEndpoint) != "" {
+			solanaMigratorClient = solana.New(os.Getenv(solanaMigratorEndpoint))
 		} else {
-			solanaPubClient = solanaClient
+			solanaMigratorClient = solanaClient
 		}
 
 		kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
@@ -506,7 +506,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 			kin3Migrator = kin3migrator.New(
 				migrationStore,
-				solanaPubClient,
+				solanaMigratorClient,
 				migratorHorizonClient,
 				rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationGlobalRL)),
 				kinToken,
@@ -528,7 +528,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 
 		a.accountSolana, err = accountsolana.New(
-			solanaPubClient,
+			solanaClient,
 			accountLimiter,
 			kin4AccountNotifier,
 			tokenAccountCache,
@@ -543,7 +543,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 
 		a.txnSolana = transactionsolana.New(
-			solanaPubClient,
+			solanaClient,
 			invoiceStore,
 			historyRW,
 			committer,
