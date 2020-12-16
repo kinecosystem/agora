@@ -93,3 +93,46 @@ func (db *db) Update(ctx context.Context, account ed25519.PublicKey, prev migrat
 
 	return nil
 }
+
+// GetCount implements migration.Store.GetCount
+func (db *db) GetCount(ctx context.Context, account ed25519.PublicKey) (int, error) {
+	resp, err := db.client.GetItemRequest(&dynamodb.GetItemInput{
+		TableName: requestTableStr,
+		Key: map[string]dynamodb.AttributeValue{
+			requestTableHashKey: {B: account},
+		},
+	}).Send(ctx)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get request count")
+	}
+
+	if len(resp.Item) == 0 {
+		return 0, nil
+	}
+
+	return getCount(resp.Item)
+}
+
+// IncrementCount implements migration.Store.IncrementCount
+func (db *db) IncrementCount(ctx context.Context, account ed25519.PublicKey) error {
+	_, err := db.client.UpdateItemRequest(&dynamodb.UpdateItemInput{
+		TableName:        requestTableStr,
+		UpdateExpression: requestUpdateExprStr,
+		Key: map[string]dynamodb.AttributeValue{
+			requestTableHashKey: {B: account},
+		},
+		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
+			":inc":   {N: aws.String("1")},
+			":start": {N: aws.String("0")},
+		},
+		ExpressionAttributeNames: map[string]string{
+			"#count": "count",
+		},
+	}).Send(ctx)
+
+	if err != nil {
+		return errors.Wrap(err, "failed to increment request count")
+	}
+
+	return nil
+}

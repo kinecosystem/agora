@@ -445,6 +445,9 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	state, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
+	count, err := env.store.GetCount(ctx, account)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 
 	//
 	// Found - Zero Balance
@@ -478,6 +481,9 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	state, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
+	count, err = env.store.GetCount(ctx, account)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
 
 	hAccount = hProtocol.Account{
 		Signers: []hProtocol.Signer{
@@ -520,6 +526,9 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	state, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
+	count, err = env.store.GetCount(ctx, account)
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
 
 	transfer, err := token.DecompileTransferAccount(submitted.Message, 4)
 	require.NoError(t, err)
@@ -604,6 +613,9 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	state, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusInProgress, state.Status)
+	count, err := env.store.GetCount(ctx, account)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 
 	// If we don't reset the store, the migrator will query the state first, rather than
 	// check the transaction error. This is fine, but not what we're testing for here.
@@ -613,4 +625,7 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	state, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
+	count, err = env.store.GetCount(ctx, account)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
 }

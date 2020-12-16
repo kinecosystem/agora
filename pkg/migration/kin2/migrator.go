@@ -92,6 +92,12 @@ func (m *kin2Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return err
 	}
 
+	err = m.store.IncrementCount(ctx, account)
+	if err != nil {
+		// Maybe shouldn't nuke the migration by returning error, just log instead
+		m.log.WithError(err).Warn("failed to increment request count")
+	}
+
 	//
 	// Check migration state store.
 	//

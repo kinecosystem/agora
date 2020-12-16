@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	if err := setupTestTable(dynamoClient); err != nil {
+	if err := setupTestTables(dynamoClient); err != nil {
 		log.WithError(err).Error("Error creating test table")
 		cleanUpFunc()
 		os.Exit(1)
@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 			panic(pc)
 		}
 
-		if err := resetTestTable(dynamoClient); err != nil {
+		if err := resetTestTables(dynamoClient); err != nil {
 			logrus.StandardLogger().WithError(err).Error("Error resetting test tables")
 			cleanUpFunc()
 			os.Exit(1)
@@ -68,7 +68,7 @@ func TestStore(t *testing.T) {
 	tests.RunStoreTests(t, testStore, teardown)
 }
 
-func setupTestTable(client dynamodbiface.ClientAPI) error {
+func setupTestTables(client dynamodbiface.ClientAPI) error {
 	keySchema := []dynamodb.KeySchemaElement{
 		{
 			AttributeName: stateTableHashKeyStr,
@@ -89,10 +89,34 @@ func setupTestTable(client dynamodbiface.ClientAPI) error {
 		BillingMode:          dynamodb.BillingModePayPerRequest,
 		TableName:            stateTableStr,
 	}).Send(context.Background())
+	if err != nil {
+		return err
+	}
+
+	reqKeySchema := []dynamodb.KeySchemaElement{
+		{
+			AttributeName: requestTableHashKeyStr,
+			KeyType:       dynamodb.KeyTypeHash,
+		},
+	}
+
+	reqAttrDefinitions := []dynamodb.AttributeDefinition{
+		{
+			AttributeName: requestTableHashKeyStr,
+			AttributeType: dynamodb.ScalarAttributeTypeB,
+		},
+	}
+
+	_, err = client.CreateTableRequest(&dynamodb.CreateTableInput{
+		KeySchema:            reqKeySchema,
+		AttributeDefinitions: reqAttrDefinitions,
+		BillingMode:          dynamodb.BillingModePayPerRequest,
+		TableName:            requestTableStr,
+	}).Send(context.Background())
 	return err
 }
 
-func resetTestTable(client dynamodbiface.ClientAPI) error {
+func resetTestTables(client dynamodbiface.ClientAPI) error {
 	_, err := client.DeleteTableRequest(&dynamodb.DeleteTableInput{
 		TableName: stateTableStr,
 	}).Send(context.Background())
@@ -106,5 +130,18 @@ func resetTestTable(client dynamodbiface.ClientAPI) error {
 		}
 	}
 
-	return setupTestTable(client)
+	_, err = client.DeleteTableRequest(&dynamodb.DeleteTableInput{
+		TableName: requestTableStr,
+	}).Send(context.Background())
+	if err != nil {
+		if awsErr, ok := err.(awserr.Error); ok {
+			if awsErr.Code() != dynamodb.ErrCodeResourceNotFoundException {
+				return errors.Wrap(err, "failed to delete table")
+			}
+		} else {
+			return errors.Wrap(err, "failed to delete table")
+		}
+	}
+
+	return setupTestTables(client)
 }

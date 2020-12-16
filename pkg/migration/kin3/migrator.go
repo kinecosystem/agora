@@ -99,6 +99,12 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	migrationCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
+	err = m.store.IncrementCount(migrationCtx, account)
+	if err != nil {
+		// Maybe shouldn't nuke the migration by returning error, just log instead
+		m.log.WithError(err).Warn("failed to increment request count")
+	}
+
 	//
 	// Check migration state store.
 	//

@@ -52,4 +52,10 @@ type Store interface {
 	// Update updates the state for an account. The previous state must match
 	// what was stored. Implementations must support atomic compare-and-swap.
 	Update(ctx context.Context, account ed25519.PublicKey, prev, next State) error
+
+	// IncrementCount increments the request count for an account
+	IncrementCount(ctx context.Context, account ed25519.PublicKey) error
+
+	// GetCount returns the request count for an account
+	GetCount(ctx context.Context, account ed25519.PublicKey) (int, error)
 }
