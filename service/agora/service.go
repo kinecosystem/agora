@@ -102,6 +102,7 @@ const (
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
 	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
+	migrationGlobalLimitEnv  = "MIGRATION_GLOBAL_LIMIT"
 
 	// Channel Configs
 	maxChannelsEnv = "MAX_CHANNELS"
@@ -201,8 +202,13 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return err
 	}
 
+	migrationGlobalRL, err := parseRateLimit(migrationGlobalLimitEnv)
+	if err != nil {
+		return err
+	}
+
 	var limiter *redis_rate.Limiter
-	if createAccountRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 {
+	if createAccountRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 || migrationGlobalRL > 0 {
 		rlRedisConnString := os.Getenv(rlRedisConnStringEnv)
 		if rlRedisConnString == "" {
 			return errors.Errorf("%s must be set", rlRedisConnStringEnv)
@@ -512,7 +518,12 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kin3Migrator = migration.NewNoopMigrator()
 		}
 
-		onlineMigrator := migration.NewContextAwareMigrator(kin3Migrator)
+		limitedMigrator := migration.NewRatelimitedMigrator(
+			kin3Migrator,
+			rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationGlobalRL)),
+		)
+
+		onlineMigrator := migration.NewContextAwareMigrator(limitedMigrator)
 
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
 

@@ -3,15 +3,18 @@ package migration
 import (
 	"context"
 	"crypto/ed25519"
-	"errors"
 
 	"github.com/kinecosystem/agora-common/solana"
+	"github.com/pkg/errors"
+
+	"github.com/kinecosystem/agora/pkg/rate"
 )
 
 var (
-	ErrMultisig = errors.New("multisig wallet")
-	ErrNotFound = errors.New("account not found")
-	ErrBurned   = errors.New("account was burned")
+	ErrMultisig    = errors.New("multisig wallet")
+	ErrNotFound    = errors.New("account not found")
+	ErrBurned      = errors.New("account was burned")
+	ErrRateLimited = errors.New("rate limited")
 )
 
 type Migrator interface {
@@ -50,6 +53,32 @@ func (m *contextAwareMigrator) InitiateMigration(ctx context.Context, account ed
 	}
 
 	initiateMigrationAfterCounter.Inc()
+	return m.base.InitiateMigration(ctx, account, ignoreBalance, commitment)
+}
+
+type rateLimitedMigrator struct {
+	base    Migrator
+	limiter rate.Limiter
+}
+
+func NewRatelimitedMigrator(base Migrator, limiter rate.Limiter) Migrator {
+	return &rateLimitedMigrator{
+		base:    base,
+		limiter: limiter,
+	}
+}
+
+func (m *rateLimitedMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
+	allowed, err := m.limiter.Allow("migration_global")
+	if err != nil {
+		return errors.Wrap(err, "failed to check migration rate limit")
+	}
+
+	if !allowed {
+		migrationRateLimitedCounter.Inc()
+		return ErrRateLimited
+	}
+
 	return m.base.InitiateMigration(ctx, account, ignoreBalance, commitment)
 }
 
