@@ -39,6 +39,7 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/account"
 	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
+	infocache "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	accountcache "github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/dynamodb"
 	accountstellar "github.com/kinecosystem/agora/pkg/account/stellar"
@@ -109,6 +110,8 @@ const (
 	// Token Account Cache Configs
 	tokenAccountTTLEnv      = "TOKEN_ACCOUNT_TTL"
 	consistencyCheckProbEnv = "TOKEN_ACCOUNT_CONSISTENCY_CHECK_PROBABILITY"
+
+	accountInfoTTL = 1 * time.Minute
 )
 
 type app struct {
@@ -514,9 +517,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
 
 		tokenAccountCache := accountcache.New(dynamoClient, time.Duration(tokenAccountTTLSeconds)*time.Second)
-		if err != nil {
-			return errors.Wrap(err, "failed to initialize token account cache")
-		}
 		cacheInvalidator, err := tokenaccount.NewCacheUpdater(tokenAccountCache, kinToken)
 		if err != nil {
 			return errors.Wrap(err, "faild to initialize token account cache invalidator")
@@ -527,6 +527,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			accountLimiter,
 			kin4AccountNotifier,
 			tokenAccountCache,
+			infocache.New(dynamoClient, accountInfoTTL),
 			onlineMigrator,
 			kinToken,
 			subsidizer,

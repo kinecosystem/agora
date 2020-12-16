@@ -21,6 +21,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
@@ -55,6 +56,7 @@ type server struct {
 	limiter           *account.Limiter
 	accountNotifier   *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
+	infoCache         accountinfo.Cache
 	migrator          migration.Migrator
 
 	token              ed25519.PublicKey
@@ -75,6 +77,7 @@ func New(
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
 	tokenAccountCache tokenaccount.Cache,
+	infoCache accountinfo.Cache,
 	migrator migration.Migrator,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
@@ -86,6 +89,7 @@ func New(
 		tc:                    token.NewClient(sc, mint),
 		accountNotifier:       accountNotifier,
 		tokenAccountCache:     tokenAccountCache,
+		infoCache:             infoCache,
 		migrator:              migrator,
 		limiter:               limiter,
 		token:                 mint,
@@ -228,25 +232,43 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 }
 
 func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
+	log := s.log.WithField("method", "GetAccountInfo")
+
 	commitment := solanautil.CommitmentFromProto(req.Commitment)
 	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
 	}
 
-	account, err := s.tc.GetAccount(ed25519.PublicKey(req.AccountId.Value), solanautil.CommitmentFromProto(req.Commitment))
+	cached, err := s.infoCache.Get(ctx, req.AccountId.Value)
+	if err != nil && err != accountinfo.ErrAccountInfoNotFound {
+		log.WithError(err).Warn("failed to get account cached from cache")
+	} else if cached != nil {
+		return &accountpb.GetAccountInfoResponse{
+			AccountInfo: cached,
+		}, nil
+	}
+
+	account, err := s.tc.GetAccount(req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
 	if err == token.ErrInvalidTokenAccount || err == token.ErrAccountNotFound {
 		return &accountpb.GetAccountInfoResponse{
 			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
 		}, nil
 	} else if err != nil {
-		return nil, status.Error(codes.Internal, "failed to retrieve account info")
+		return nil, status.Error(codes.Internal, "failed to retrieve account cached")
+	}
+
+	info := &accountpb.AccountInfo{
+		AccountId: req.AccountId,
+		Balance:   int64(account.Amount),
+	}
+
+	err = s.infoCache.Put(ctx, info)
+	if err != nil {
+		log.WithError(err).Warn("failed to cache get account info")
 	}
 
 	return &accountpb.GetAccountInfoResponse{
-		AccountInfo: &accountpb.AccountInfo{
-			AccountId: req.AccountId,
-			Balance:   int64(account.Amount),
-		},
+		AccountInfo: info,
 	}, nil
 }
 

@@ -24,6 +24,8 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
+	infocache "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -41,6 +43,7 @@ type testEnv struct {
 	sc                *solana.MockClient
 	notifier          *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
+	infoCache         accountinfo.Cache
 	server            *server
 }
 
@@ -59,6 +62,9 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	env.tokenAccountCache, err = memory.New(time.Second, 5)
 	require.NoError(t, err)
 
+	env.infoCache, err = infocache.New(time.Second, 5)
+	require.NoError(t, err)
+
 	env.sc.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(uint64(50), nil)
 	env.minLamports = 50
 
@@ -67,6 +73,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 		account.NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,
 		env.tokenAccountCache,
+		env.infoCache,
 		migration.NewNoopMigrator(),
 		env.token,
 		env.subsidizer,
@@ -549,7 +556,7 @@ func TestGetAccountInfo(t *testing.T) {
 
 	env.sc.On("GetAccountInfo", accounts[0], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
 	env.sc.On("GetAccountInfo", accounts[1], mock.Anything).Return(invalidAccount, nil)
-	env.sc.On("GetAccountInfo", accounts[2], mock.Anything).Return(validAccount, nil)
+	env.sc.On("GetAccountInfo", accounts[2], mock.Anything).Return(validAccount, nil).Once()
 
 	resp, err := env.client.GetAccountInfo(context.Background(), &accountpb.GetAccountInfoRequest{
 		AccountId: &commonpb.SolanaAccountId{
@@ -579,6 +586,20 @@ func TestGetAccountInfo(t *testing.T) {
 	assert.Equal(t, accountpb.GetAccountInfoResponse_OK, resp.Result)
 	assert.EqualValues(t, accounts[2], resp.AccountInfo.AccountId.Value)
 	assert.EqualValues(t, 10, resp.AccountInfo.Balance)
+
+	// Verify cached
+	resp, err = env.client.GetAccountInfo(context.Background(), &accountpb.GetAccountInfoRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accounts[2],
+		},
+		Commitment: commonpb.Commitment_MAX,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, accountpb.GetAccountInfoResponse_OK, resp.Result)
+	assert.EqualValues(t, accounts[2], resp.AccountInfo.AccountId.Value)
+	assert.EqualValues(t, 10, resp.AccountInfo.Balance)
+
+	env.sc.AssertExpectations(t)
 }
 
 func TestResolveTokenAccounts(t *testing.T) {
