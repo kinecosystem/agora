@@ -297,6 +297,13 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 		accounts = cached
 	}
 
+	if len(accounts) == 0 {
+		// We only use recent here to ensure ResolveAccounts() is still fairly quick.
+		if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentRecent); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
+		}
+	}
+
 	resp := &accountpb.ResolveTokenAccountsResponse{
 		TokenAccounts: make([]*commonpb.SolanaAccountId, len(accounts)),
 	}
