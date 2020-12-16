@@ -401,7 +401,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 		var solanaPubClient solana.Client
 		if os.Getenv(solanaPublicEndpointEnv) != "" {
-			solanaPubClient = solana.New(os.Getenv(solanaEndpointEnv))
+			solanaPubClient = solana.New(os.Getenv(solanaPublicEndpointEnv))
 		}
 
 		kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
