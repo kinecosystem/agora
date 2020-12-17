@@ -57,7 +57,7 @@ var (
 		Namespace: "agora",
 		Name:      "create_account_blocks",
 		Help:      "Number of blocked create account requests",
-	}, []string{client.UserAgentHeader})
+	}, []string{"kin_user_agent"})
 )
 
 type server struct {
