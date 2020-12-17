@@ -302,35 +302,55 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	if err != nil && err != accountinfo.ErrAccountInfoNotFound {
 		log.WithError(err).Warn("failed to get account cached from cache")
 	} else if cached != nil {
+		// The balance can never actually be zero on chain.
+		//
+		// Negative balance is what we exploit to indicate we got a negative
+		// result from a query.
+		if cached.Balance < 0 {
+			return &accountpb.GetAccountInfoResponse{
+				Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
+			}, nil
+		}
+
 		return &accountpb.GetAccountInfoResponse{
 			AccountInfo: cached,
 		}, nil
 	}
 
 	account, err := s.tc.GetAccount(req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
-	if err == token.ErrInvalidTokenAccount || err == token.ErrAccountNotFound {
-		return &accountpb.GetAccountInfoResponse{
-			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
-		}, nil
-	} else if err != nil {
+	if err != nil && err != token.ErrInvalidTokenAccount && err != token.ErrAccountNotFound {
 		return nil, status.Error(codes.Internal, "failed to retrieve account cached")
 	}
 
-	info := &accountpb.AccountInfo{
-		AccountId: req.AccountId,
-		Balance:   int64(account.Amount),
+	var info *accountpb.AccountInfo
+	var resp *accountpb.GetAccountInfoResponse
+	if err != nil {
+		// account not found
+		info = &accountpb.AccountInfo{
+			AccountId: req.AccountId,
+			Balance:   int64(-1), // sentinel value
+		}
+		resp = &accountpb.GetAccountInfoResponse{
+			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
+		}
+	} else {
+		info = &accountpb.AccountInfo{
+			AccountId: req.AccountId,
+			Balance:   int64(account.Amount),
+		}
+		resp = &accountpb.GetAccountInfoResponse{
+			AccountInfo: info,
+		}
+
+		if err := s.mapper.Add(ctx, req.AccountId.Value, account.Owner); err != nil {
+			log.WithError(err).Warn("failed to cache get account mapping")
+		}
 	}
 
 	if err = s.infoCache.Put(ctx, info); err != nil {
 		log.WithError(err).Warn("failed to cache get account info")
 	}
-	if err := s.mapper.Add(ctx, req.AccountId.Value, account.Owner); err != nil {
-		log.WithError(err).Warn("failed to cache get account mapping")
-	}
-
-	return &accountpb.GetAccountInfoResponse{
-		AccountInfo: info,
-	}, nil
+	return resp, nil
 }
 
 func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.ResolveTokenAccountsRequest) (*accountpb.ResolveTokenAccountsResponse, error) {

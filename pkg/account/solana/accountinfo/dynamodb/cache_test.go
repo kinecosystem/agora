@@ -46,7 +46,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	testStore = New(dynamoClient, tests.TestTTL)
+	testStore = New(dynamoClient, tests.TestTTL, tests.TestNegativeTTL)
 	teardown = func() {
 		if pc := recover(); pc != nil {
 			cleanUpFunc()

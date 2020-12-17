@@ -16,23 +16,34 @@ import (
 )
 
 type cache struct {
-	log     *logrus.Entry
-	client  dynamodbiface.ClientAPI
-	itemTTL time.Duration
+	log             *logrus.Entry
+	client          dynamodbiface.ClientAPI
+	itemTTL         time.Duration
+	negativeItemTTL time.Duration
 }
 
 // New returns a dynamodb-backed accountinfo.Cache
-func New(client dynamodbiface.ClientAPI, ttl time.Duration) accountinfo.Cache {
+func New(
+	client dynamodbiface.ClientAPI,
+	ttl time.Duration,
+	negativeItemTTL time.Duration,
+) accountinfo.Cache {
 	return &cache{
-		log:     logrus.StandardLogger().WithField("type", "app/dynamodb"),
-		client:  client,
-		itemTTL: ttl,
+		log:             logrus.StandardLogger().WithField("type", "app/dynamodb"),
+		client:          client,
+		itemTTL:         ttl,
+		negativeItemTTL: negativeItemTTL,
 	}
 }
 
 // Get implements accountinfo.Cache.Add
 func (c *cache) Put(ctx context.Context, info *accountpb.AccountInfo) error {
-	item, err := toItem(info, time.Now().Add(c.itemTTL))
+	ttl := c.itemTTL
+	if info.Balance < 0 {
+		ttl = c.negativeItemTTL
+	}
+
+	item, err := toItem(info, time.Now().Add(ttl))
 	if err != nil {
 		return err
 	}

@@ -16,7 +16,8 @@ import (
 type cache struct {
 	cache *lru.Cache
 
-	ttl time.Duration
+	ttl         time.Duration
+	negativeTTL time.Duration
 }
 
 type entry struct {
@@ -24,15 +25,16 @@ type entry struct {
 	info    *accountpb.AccountInfo
 }
 
-func New(itemTTL time.Duration, maxSize int) (accountinfo.Cache, error) {
+func New(itemTTL, negativeTTL time.Duration, maxSize int) (accountinfo.Cache, error) {
 	lruCache, err := lru.New(maxSize)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create account info cache")
 	}
 
 	return &cache{
-		cache: lruCache,
-		ttl:   itemTTL,
+		cache:       lruCache,
+		ttl:         itemTTL,
+		negativeTTL: negativeTTL,
 	}, nil
 }
 
@@ -52,7 +54,12 @@ func (c *cache) Get(ctx context.Context, key ed25519.PublicKey) (*accountpb.Acco
 	cached, ok := c.cache.Get(string(key))
 	if ok {
 		entry := cached.(*entry)
-		if time.Since(entry.created) < c.ttl && entry.info != nil {
+		ttl := c.ttl
+		if entry.info.Balance < 0 {
+			ttl = c.negativeTTL
+		}
+
+		if time.Since(entry.created) < ttl && entry.info != nil {
 			return entry.info, nil
 		}
 

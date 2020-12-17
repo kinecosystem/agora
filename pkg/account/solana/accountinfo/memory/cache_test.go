@@ -8,7 +8,7 @@ import (
 )
 
 func TestCache(t *testing.T) {
-	testCache, err := New(tests.TestTTL, 5)
+	testCache, err := New(tests.TestTTL, tests.TestNegativeTTL, 5)
 	require.NoError(t, err)
 
 	teardown := func() {

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,7 +18,8 @@ import (
 )
 
 const (
-	TestTTL = time.Second
+	TestTTL         = 2 * time.Second
+	TestNegativeTTL = time.Second
 )
 
 type testCase func(t *testing.T, cache accountinfo.Cache, teardown func())
@@ -77,7 +79,22 @@ func testExpiry(t *testing.T, cache accountinfo.Cache, teardown func()) {
 		require.NoError(t, err)
 		assert.True(t, proto.Equal(info, cached))
 
-		time.Sleep(TestTTL)
+		time.Sleep(TestTTL + 100*time.Millisecond)
+
+		cached, err = cache.Get(context.Background(), key)
+		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)
+		assert.Nil(t, cached)
+
+		// Test negative expiry
+		info.Balance = -1
+		fmt.Println("ver")
+		require.NoError(t, cache.Put(context.Background(), info))
+
+		cached, err = cache.Get(context.Background(), key)
+		require.NoError(t, err)
+		assert.True(t, proto.Equal(info, cached))
+
+		time.Sleep(TestNegativeTTL + 100*time.Millisecond)
 
 		cached, err = cache.Get(context.Background(), key)
 		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)

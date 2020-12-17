@@ -116,7 +116,8 @@ const (
 	tokenAccountTTLEnv      = "TOKEN_ACCOUNT_TTL"
 	consistencyCheckProbEnv = "TOKEN_ACCOUNT_CONSISTENCY_CHECK_PROBABILITY"
 
-	accountInfoTTL = 1 * time.Minute
+	accountInfoTTL         = 1 * time.Minute
+	negativeAccountInfoTTL = 15 * time.Second
 )
 
 type app struct {
@@ -564,7 +565,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			accountLimiter,
 			kin4AccountNotifier,
 			tokenAccountCache,
-			infocache.New(dynamoClient, accountInfoTTL),
+			infocache.New(dynamoClient, accountInfoTTL, negativeAccountInfoTTL),
 			kin3Migrator,
 			migrationStore,
 			mapper,

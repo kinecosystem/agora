@@ -78,7 +78,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	env.tokenAccountCache, err = memory.New(time.Second, 5)
 	require.NoError(t, err)
 
-	env.infoCache, err = infocache.New(time.Second, 5)
+	env.infoCache, err = infocache.New(time.Second, 2*time.Second, 5)
 	require.NoError(t, err)
 
 	env.migrationStore = migrationstore.New()
