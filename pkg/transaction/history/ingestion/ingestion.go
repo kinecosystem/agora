@@ -186,6 +186,7 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 
 						r := <-resultCh
 						if r.Err != nil {
+							log.WithError(r.Err).Info("failed to ingest")
 							return errors.Wrap(r.Err, "failed to ingest")
 						}
 

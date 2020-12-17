@@ -306,6 +306,85 @@ func TestTransactionFilter(t *testing.T) {
 	assert.Len(t, actualTransactions, 2)
 }
 
+func TestTransactionFilter_DeletedAccount(t *testing.T) {
+	env := setup(t)
+
+	solanaIngestor := env.ingestor.(*ingestor)
+
+	keys := testutil.GenerateSolanaKeys(t, 3)
+	accounts := []token.Account{
+		{
+			Mint:   env.token,
+			Owner:  keys[1],
+			Amount: 100,
+			State:  token.AccountStateInitialized,
+		},
+		{
+			Mint:   env.token,
+			Owner:  keys[2],
+			Amount: 100,
+			State:  token.AccountStateInitialized,
+		},
+	}
+
+	accountInfos := []solana.AccountInfo{
+		{
+			Owner: token.ProgramKey,
+			Data:  accounts[0].Marshal(),
+		},
+		{
+			Owner: token.ProgramKey,
+			Data:  accounts[1].Marshal(),
+		},
+	}
+
+	txn := solana.NewTransaction(
+		keys[0],
+		token.Transfer(
+			keys[1],
+			keys[2],
+			keys[1],
+			10,
+		),
+	)
+
+	blockTxn := solana.BlockTransaction{
+		Transaction: txn,
+	}
+
+	// Only sender returned
+	env.client.On("GetAccountInfo", keys[1], mock.Anything).Return(accountInfos[0], nil).Once()
+
+	contains, err := solanaIngestor.containsTransfer(blockTxn, 0)
+	require.NoError(t, err)
+	assert.True(t, contains)
+
+	// Only dest returned
+	env.client.On("GetAccountInfo", keys[1], mock.Anything).Return(solana.AccountInfo{}, token.ErrAccountNotFound).Once()
+	env.client.On("GetAccountInfo", keys[2], mock.Anything).Return(accountInfos[1], nil).Once()
+
+	contains, err = solanaIngestor.containsTransfer(blockTxn, 0)
+	require.NoError(t, err)
+	assert.True(t, contains)
+
+	// If we have no information on the keys, we should process the transfer anyway
+	env.client.On("GetAccountInfo", keys[1], mock.Anything).Return(solana.AccountInfo{}, token.ErrAccountNotFound).Once()
+	env.client.On("GetAccountInfo", keys[2], mock.Anything).Return(solana.AccountInfo{}, token.ErrAccountNotFound).Once()
+
+	contains, err = solanaIngestor.containsTransfer(blockTxn, 0)
+	require.NoError(t, err)
+	assert.True(t, contains)
+
+	// Both account infos returned
+	env.client.On("GetAccountInfo", keys[1], mock.Anything).Return(accountInfos[0], nil).Once()
+	env.client.On("GetAccountInfo", keys[2], mock.Anything).Return(accountInfos[1], nil).Once()
+
+	contains, err = solanaIngestor.containsTransfer(blockTxn, 0)
+	require.NoError(t, err)
+	assert.True(t, contains)
+
+}
+
 func generateBlocks(t *testing.T, num, txnsPerBlock int) []*solana.Block {
 	var blocks []*solana.Block
 

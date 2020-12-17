@@ -12,6 +12,7 @@ import (
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -72,8 +73,11 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 					// for each block), which impacts the solana RPC node.
 					blocks, err := i.client.GetConfirmedBlocksWithLimit(start, 1024)
 					if err != nil {
+						i.log.WithError(err).Info("failed to get confirmed blocks")
 						return err
 					}
+
+					i.log.WithField("block_count", len(blocks)).Debug("processing blocks")
 
 					for _, slot := range blocks {
 						blockPtr := pointerFromSlot(slot)
@@ -240,7 +244,7 @@ func (i *ingestor) containsSetAuthority(txn solana.BlockTransaction, index int) 
 		// the transfer was for. We can only infer whether or not it was an RPC error, or
 		// a transaction error.
 		if txn.Err == nil {
-			return false, errors.Wrap(err, "failed to get account for non-failed transaction")
+			return false, errors.Wrapf(err, "failed to get account for non-failed transaction (set authority instruction) (account: %s)", base58.Encode(decompiled.Account))
 		}
 
 		return false, nil
@@ -259,38 +263,45 @@ func (i *ingestor) containsTransfer(txn solana.BlockTransaction, index int) (boo
 		return false, nil
 	}
 
-	info, err := i.tokenClient.GetAccount(decompiled.Source, solana.CommitmentSingle)
-	if err == token.ErrInvalidTokenAccount {
-		// The source account is either not a token account, or it's not for
-		// our configured mint
-		return false, nil
-	} else if err != nil {
-		// If we cannot retrieve the source account, _and_ there's a transaction failure,
-		// then it is likely (but not guaranteed) that the transaction failed because the
-		// source does not exist.
-		//
-		// If, on the other hand, there is _no_ transaction error, then the we should be
-		// able to retrieve the account info, as the it was referenced in a successful
-		// token transfer instruction.
-		//
-		// In either case, we don't really have enough information to infer which mint
-		// the transfer was for. We can only infer whether or not it was an RPC error, or
-		// a transaction error.
-		//
-		// Note: we could likely check the destination account as well, but it is generally
-		// more likely that the source will be ok (rather than the dest), and we want to
-		// avoid unnecessary API calls. The side effect here is that the failed transaction
-		// will not be stored in our history.
-		if txn.Err == nil {
-			return false, errors.Wrap(err, "failed to get account for non-failed transaction")
+	sourceInfo, err := i.tokenClient.GetAccount(decompiled.Source, solana.CommitmentSingle)
+	if err == nil {
+		if !bytes.Equal(sourceInfo.Mint, i.tokenClient.Token()) {
+			return false, nil
 		}
 
+		return true, nil
+	}
+
+	// The source is clearly not a Kin token, we so ignore it.
+	if err == token.ErrInvalidTokenAccount {
 		return false, nil
 	}
 
-	if !bytes.Equal(info.Mint, i.tokenClient.Token()) {
+	// If the transaction failed, we don't really care enough to recover this information.
+	if txn.Err != nil {
 		return false, nil
 	}
 
+	destInfo, err := i.tokenClient.GetAccount(decompiled.Destination, solana.CommitmentSingle)
+	if err == nil {
+		if !bytes.Equal(destInfo.Mint, i.tokenClient.Token()) {
+			return false, nil
+		}
+
+		return true, nil
+	}
+
+	// The dest is clearly not a Kin token, we so ignore it.
+	if err == token.ErrInvalidTokenAccount {
+		return false, nil
+	}
+
+	// We don't have any information about either account. This is likely the case
+	// if both accounts were deleted before we were able to process the transaction.
+	//
+	// This can occur if the history system is lagging significantly behind. To avoid
+	// loss, we process it anyway. This can create garbage, but won't polute the server
+	// responses. On KRE ingestion, we can look for the InitializeAccount() instruction
+	// to verify.
 	return true, nil
 }
