@@ -28,6 +28,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	memorymapper "github.com/kinecosystem/agora/pkg/account/memory"
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	infocache "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
@@ -42,6 +43,7 @@ type testEnv struct {
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
 	client     accountpb.AccountClient
+	mapper     account.Mapper
 
 	minLamports uint64
 
@@ -67,6 +69,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	env.sc = solana.NewMockClient()
 	env.hc = &horizon.MockClient{}
 	env.notifier = NewAccountNotifier()
+	env.mapper = memorymapper.New()
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
 	token := testutil.GenerateSolanaKeypair(t)
@@ -92,6 +95,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 		env.infoCache,
 		migration.NewNoopMigrator(),
 		env.migrationStore,
+		env.mapper,
 		env.token,
 		env.subsidizer,
 		0.0,

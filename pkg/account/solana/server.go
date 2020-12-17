@@ -71,6 +71,7 @@ type server struct {
 	infoCache         accountinfo.Cache
 	migrator          migration.Migrator
 	migrationStore    migration.Store
+	mapper            account.Mapper
 
 	token              ed25519.PublicKey
 	subsidizer         ed25519.PrivateKey
@@ -97,6 +98,7 @@ func New(
 	infoCache accountinfo.Cache,
 	migrator migration.Migrator,
 	migrationStore migration.Store,
+	mapper account.Mapper,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	cacheCheckFreq float32,
@@ -112,6 +114,7 @@ func New(
 		infoCache:             infoCache,
 		migrator:              migrator,
 		migrationStore:        migrationStore,
+		mapper:                mapper,
 		limiter:               limiter,
 		token:                 mint,
 		subsidizer:            subsidizer,
@@ -227,6 +230,11 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		}
 	}
 
+	if err := s.mapper.Add(ctx, tokenInitialize.Account, tokenInitialize.Owner); err != nil {
+		log.WithError(err).Warn("failed to store account mapping")
+		return nil, status.Error(codes.Internal, "failed to store account mapping")
+	}
+
 	_, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
@@ -262,7 +270,8 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	log := s.log.WithField("method", "GetAccountInfo")
 
 	commitment := solanautil.CommitmentFromProto(req.Commitment)
-	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment); err != nil && err != migration.ErrNotFound {
+	err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment)
+	if err != nil && err != migration.ErrNotFound {
 		log.WithError(err).Warn("failed to initiate migration")
 
 		// Check to see if migration was started at all; fallback to Horizon if it wasn't
@@ -309,9 +318,11 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		Balance:   int64(account.Amount),
 	}
 
-	err = s.infoCache.Put(ctx, info)
-	if err != nil {
+	if err = s.infoCache.Put(ctx, info); err != nil {
 		log.WithError(err).Warn("failed to cache get account info")
+	}
+	if err := s.mapper.Add(ctx, req.AccountId.Value, account.Owner); err != nil {
+		log.WithError(err).Warn("failed to cache get account mapping")
 	}
 
 	return &accountpb.GetAccountInfoResponse{
@@ -407,14 +418,15 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 			keys := make([]ed25519.PublicKey, len(resp.TokenAccounts))
 			for i, tokenAccount := range resp.TokenAccounts {
 				keys[i] = tokenAccount.Value
+				if err = s.mapper.Add(ctx, keys[i], req.AccountId.Value); err != nil {
+					log.WithError(err).Warn("failed to add account mapping")
+				}
 			}
-			err = s.tokenAccountCache.Put(ctx, req.AccountId.Value, keys)
-			if err != nil {
+			if err = s.tokenAccountCache.Put(ctx, req.AccountId.Value, keys); err != nil {
 				log.WithError(err).Warn("failed to cache token accounts")
 			}
 		} else {
-			err = s.tokenAccountCache.Delete(ctx, req.AccountId.Value)
-			if err != nil {
+			if err = s.tokenAccountCache.Delete(ctx, req.AccountId.Value); err != nil {
 				log.WithError(err).Warn("failed to cache token accounts")
 			}
 		}

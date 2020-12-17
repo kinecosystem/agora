@@ -23,6 +23,7 @@ import (
 	"github.com/kinecosystem/agora-common/httpgateway"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/token"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/strkey"
@@ -38,6 +39,7 @@ import (
 	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/account"
+	mapperdb "github.com/kinecosystem/agora/pkg/account/dynamodb"
 	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
 	infocache "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
@@ -547,12 +549,13 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 
 		kin4AccountNotifier := accountsolana.NewAccountNotifier()
-
 		tokenAccountCache := accountcache.New(dynamoClient, time.Duration(tokenAccountTTLSeconds)*time.Second)
 		cacheInvalidator, err := tokenaccount.NewCacheUpdater(tokenAccountCache, kinToken)
 		if err != nil {
 			return errors.Wrap(err, "faild to initialize token account cache invalidator")
 		}
+		mapperStore := mapperdb.New(dynamoClient)
+		mapper := account.NewMapper(token.NewClient(solanaClient, kinToken), mapperStore)
 
 		a.accountSolana, err = accountsolana.New(
 			solanaClient,
@@ -563,6 +566,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			infocache.New(dynamoClient, accountInfoTTL),
 			kin3Migrator,
 			migrationStore,
+			mapper,
 			kinToken,
 			subsidizer,
 			float32(consistencyCheckFreq),
