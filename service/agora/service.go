@@ -547,6 +547,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			tokenAccountCache,
 			infocache.New(dynamoClient, accountInfoTTL),
 			kin3Migrator,
+			migrationStore,
 			kinToken,
 			subsidizer,
 			float32(consistencyCheckFreq),
