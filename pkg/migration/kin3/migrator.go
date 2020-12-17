@@ -131,7 +131,7 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return errors.Wrap(err, "failed to load account info")
 	}
 
-	if info.balance == 0 {
+	if !ignoreBalance && info.balance == 0 {
 		return nil
 	}
 
