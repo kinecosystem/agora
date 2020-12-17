@@ -25,7 +25,7 @@ type entry struct {
 	info    *accountpb.AccountInfo
 }
 
-func New(itemTTL, negativeTTL time.Duration, maxSize int) (accountinfo.Cache, error) {
+func NewCache(itemTTL, negativeTTL time.Duration, maxSize int) (accountinfo.Cache, error) {
 	lruCache, err := lru.New(maxSize)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create account info cache")

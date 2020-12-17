@@ -176,3 +176,8 @@ func (l *Loader) getMemos(txn solana.Transaction) (memos []memoData) {
 
 	return memos
 }
+
+type ownershipChange struct {
+	account  ed25519.PublicKey
+	newOwner ed25519.PublicKey
+}

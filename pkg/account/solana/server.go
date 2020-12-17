@@ -365,7 +365,7 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	infoCacheMissCounter.Inc()
 	account, err := s.tc.GetAccount(req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil && err != token.ErrInvalidTokenAccount && err != token.ErrAccountNotFound {
-		return nil, status.Error(codes.Internal, "failed to retrieve account cached")
+		return nil, status.Error(codes.Internal, "failed to retrieve account")
 	}
 
 	// Use a separate context to help the cache get populated

@@ -1,7 +1,9 @@
 package testutil
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"sort"
 	"testing"
 
 	"github.com/kinecosystem/agora-common/kin"
@@ -81,6 +83,10 @@ func GenerateSolanaKeys(t *testing.T, n int) []ed25519.PublicKey {
 		keys[i] = p
 	}
 	return keys
+}
+
+func SortKeys(src []ed25519.PublicKey) {
+	sort.Slice(src, func(i, j int) bool { return bytes.Compare(src[i], src[j]) < 0 })
 }
 
 func GenerateTransactionEnvelope(src xdr.AccountId, seqNum int, operations []xdr.Operation) xdr.TransactionEnvelope {

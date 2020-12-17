@@ -22,8 +22,8 @@ type cache struct {
 	negativeItemTTL time.Duration
 }
 
-// New returns a dynamodb-backed accountinfo.Cache
-func New(
+// NewCache returns a dynamodb-backed accountinfo.Cache
+func NewCache(
 	client dynamodbiface.ClientAPI,
 	ttl time.Duration,
 	negativeItemTTL time.Duration,

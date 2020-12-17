@@ -15,6 +15,7 @@ import (
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
+	infodb "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -25,6 +26,7 @@ import (
 	ingestioncommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
 	ingestionlock "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/locker"
 	"github.com/kinecosystem/agora/pkg/transaction/history/kre"
+	bqsubmitter "github.com/kinecosystem/agora/pkg/transaction/history/kre/bigquery"
 )
 
 const (
@@ -68,6 +70,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	dynamoClient := dynamodb.New(cfg)
 	hist := historyreader.New(dynamoClient)
 	committer := ingestioncommitter.New(dynamoClient)
+	accountStore := infodb.NewStore(dynamoClient)
 
 	sess, err := session.NewSession()
 	if err != nil {
@@ -114,9 +117,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 		historyLock,
 		solanaClient,
 		token.NewClient(solanaClient, kinToken),
-		bqClient,
-		os.Getenv(bqCreationsTableEnv),
-		os.Getenv(bqPaymentsTableEnv),
+		bqsubmitter.New(bqClient, os.Getenv(bqCreationsTableEnv)),
+		bqsubmitter.New(bqClient, os.Getenv(bqPaymentsTableEnv)),
+		accountStore,
 	)
 	go func() {
 		err := loader.Process(ctx, 5*time.Minute)

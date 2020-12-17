@@ -8,11 +8,11 @@ import (
 )
 
 func TestCache(t *testing.T) {
-	testCache, err := New(tests.TestTTL, tests.TestNegativeTTL, 5)
+	testCache, err := NewCache(tests.TestTTL, tests.TestNegativeTTL, 5)
 	require.NoError(t, err)
 
 	teardown := func() {
 		testCache.(*cache).reset()
 	}
-	tests.RunTests(t, testCache, teardown)
+	tests.RunCacheTests(t, testCache, teardown)
 }

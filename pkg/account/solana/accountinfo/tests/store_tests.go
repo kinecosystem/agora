@@ -1,120 +1,133 @@
 package tests
 
 import (
+	"bytes"
 	"context"
-	"fmt"
+	"crypto/ed25519"
+	"sort"
 	"testing"
-	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
-	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
-const (
-	TestTTL         = 2 * time.Second
-	TestNegativeTTL = time.Second
-)
+type testCase func(t *testing.T, store accountinfo.StateStore, teardown func())
 
-type testCase func(t *testing.T, cache accountinfo.Cache, teardown func())
-
-func RunTests(t *testing.T, cache accountinfo.Cache, teardown func()) {
-	for _, test := range []testCase{testRoundTrip, testExpiry} {
-		test(t, cache, teardown)
+func RunStateStoreTests(t *testing.T, store accountinfo.StateStore, teardown func()) {
+	for _, test := range []testCase{testStoreRoundTrip, testGetOwnersByAccount} {
+		test(t, store, teardown)
 	}
 }
 
-func testRoundTrip(t *testing.T, cache accountinfo.Cache, teardown func()) {
+func testStoreRoundTrip(t *testing.T, store accountinfo.StateStore, teardown func()) {
 	t.Run("testRoundTrip", func(t *testing.T) {
 		defer teardown()
 
-		keys := testutil.GenerateSolanaKeys(t, 2)
-		infos := []*accountpb.AccountInfo{
-			{
-				AccountId: &commonpb.SolanaAccountId{Value: keys[0]},
-				Balance:   10,
-			},
-			{
-				AccountId: &commonpb.SolanaAccountId{Value: keys[1]},
-				Balance:   10,
-			},
-		}
+		accounts := testutil.GenerateSolanaKeys(t, 2)
+		owners := testutil.GenerateSolanaKeys(t, 2)
+		balances := []int64{10, 15}
+		slot := uint64(10)
 
 		// Verify doesn't exist
-		cached, err := cache.Get(context.Background(), keys[0])
-		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)
-		assert.Nil(t, cached)
+		state, err := store.Get(context.Background(), accounts[0])
+		assert.Equal(t, accountinfo.ErrNotFound, err)
+		assert.Nil(t, state)
 
-		require.NoError(t, cache.Put(context.Background(), infos[0]))
-		require.NoError(t, cache.Put(context.Background(), infos[1]))
+		require.NoError(t, store.Put(context.Background(), &accountinfo.State{
+			Account: accounts[0],
+			Owner:   owners[0],
+			Balance: balances[0],
+			Slot:    slot,
+		}))
+		require.NoError(t, store.Put(context.Background(), &accountinfo.State{
+			Account: accounts[1],
+			Owner:   owners[1],
+			Balance: balances[1],
+			Slot:    slot,
+		}))
 
 		// Assert all added
-		for i, k := range keys {
-			info, err := cache.Get(context.Background(), k)
+		for i, k := range accounts {
+			state, err := store.Get(context.Background(), k)
 			require.NoError(t, err)
-			assert.True(t, proto.Equal(infos[i], info))
+			assert.NotNil(t, state)
+			assert.Equal(t, owners[i], state.Owner)
+			assert.Equal(t, balances[i], state.Balance)
+			assert.Equal(t, slot, state.Slot)
 		}
 
-		// Delete works
-		deleted, err := cache.Del(context.Background(), keys[0])
-		require.NoError(t, err)
-		assert.True(t, deleted)
-		_, err = cache.Get(context.Background(), keys[0])
-		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)
-
-		// Delete "deleted" is updated.
-		deleted, err = cache.Del(context.Background(), keys[0])
-		require.NoError(t, err)
-		assert.False(t, deleted)
-
-		// Other items unaffected
-		info, err := cache.Get(context.Background(), keys[1])
-		require.NoError(t, err)
-		assert.True(t, proto.Equal(infos[1], info))
+		require.NoError(t, store.Delete(context.Background(), accounts[0]))
+		state, err = store.Get(context.Background(), accounts[0])
+		assert.Equal(t, accountinfo.ErrNotFound, err)
+		assert.Nil(t, state)
 	})
 }
 
-func testExpiry(t *testing.T, cache accountinfo.Cache, teardown func()) {
-	t.Run("testExpiry", func(t *testing.T) {
+func testGetOwnersByAccount(t *testing.T, store accountinfo.StateStore, teardown func()) {
+	t.Run("testGetOwnersByAccount", func(t *testing.T) {
 		defer teardown()
 
-		key := testutil.GenerateSolanaKeys(t, 1)[0]
-		info := &accountpb.AccountInfo{
-			AccountId: &commonpb.SolanaAccountId{Value: key},
+		accounts := testutil.GenerateSolanaKeys(t, 3)
+		sortKeys(accounts) // makes validation easier later
+		owners := testutil.GenerateSolanaKeys(t, 2)
+
+		// Make owners[0] own accounts[0] and accounts[1]
+		// Make owners[1] own accounts[2]
+		require.NoError(t, store.Put(context.Background(), &accountinfo.State{
+			Account: accounts[0],
+			Owner:   owners[0],
+			Slot:    1,
+		}))
+		require.NoError(t, store.Put(context.Background(), &accountinfo.State{
+			Account: accounts[1],
+			Owner:   owners[0],
+			Slot:    1,
+		}))
+		require.NoError(t, store.Put(context.Background(), &accountinfo.State{
+			Account: accounts[2],
+			Owner:   owners[1],
+			Slot:    1,
+		}))
+
+		owner0Accounts, err := store.GetAccountsByOwner(context.Background(), owners[0])
+		require.NoError(t, err)
+		assert.Equal(t, 2, len(owner0Accounts))
+		sortKeys(owner0Accounts)
+		for i, a := range []ed25519.PublicKey{accounts[0], accounts[1]} {
+			assert.EqualValues(t, a, owner0Accounts[i])
 		}
 
-		// Test expiry
-		require.NoError(t, cache.Put(context.Background(), info))
-
-		cached, err := cache.Get(context.Background(), key)
+		owner1Accounts, err := store.GetAccountsByOwner(context.Background(), owners[1])
 		require.NoError(t, err)
-		assert.True(t, proto.Equal(info, cached))
+		assert.Equal(t, 1, len(owner1Accounts))
+		assert.EqualValues(t, accounts[2], owner1Accounts[0])
 
-		time.Sleep(TestTTL + 100*time.Millisecond)
+		// Test change in ownership
+		require.NoError(t, store.Put(context.Background(), &accountinfo.State{
+			Account: accounts[2],
+			Owner:   owners[0],
+			Slot:    1,
+		}))
 
-		cached, err = cache.Get(context.Background(), key)
-		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)
-		assert.Nil(t, cached)
-
-		// Test negative expiry
-		info.Balance = -1
-		fmt.Println("ver")
-		require.NoError(t, cache.Put(context.Background(), info))
-
-		cached, err = cache.Get(context.Background(), key)
+		owner0Accounts, err = store.GetAccountsByOwner(context.Background(), owners[0])
 		require.NoError(t, err)
-		assert.True(t, proto.Equal(info, cached))
+		assert.Equal(t, 3, len(owner0Accounts))
+		sortKeys(owner0Accounts)
+		for i, a := range accounts {
+			assert.EqualValues(t, a, owner0Accounts[i])
+		}
 
-		time.Sleep(TestNegativeTTL + 100*time.Millisecond)
+		owner1Accounts, err = store.GetAccountsByOwner(context.Background(), owners[1])
+		require.NoError(t, err)
+		assert.Equal(t, 0, len(owner1Accounts))
+	})
+}
 
-		cached, err = cache.Get(context.Background(), key)
-		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)
-		assert.Nil(t, cached)
+func sortKeys(src []ed25519.PublicKey) {
+	sort.Slice(src, func(i, j int) bool {
+		return bytes.Compare(src[i], src[j]) < 0
 	})
 }

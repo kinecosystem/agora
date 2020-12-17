@@ -31,7 +31,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/account"
 	memorymapper "github.com/kinecosystem/agora/pkg/account/memory"
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
-	infocache "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
+	infodb "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -80,7 +80,7 @@ func setup(t *testing.T, migrator migration.Migrator) (env testEnv, cleanup func
 	env.tokenAccountCache, err = memory.New(time.Hour, 5)
 	require.NoError(t, err)
 
-	env.infoCache, err = infocache.New(time.Second, 2*time.Second, 5)
+	env.infoCache, err = infodb.NewCache(time.Second, 2*time.Second, 5)
 	require.NoError(t, err)
 
 	env.migrationStore = migrationstore.New()

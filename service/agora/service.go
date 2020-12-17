@@ -41,7 +41,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/account"
 	mapperdb "github.com/kinecosystem/agora/pkg/account/dynamodb"
 	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
-	infocache "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
+	infodb "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	accountcache "github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/dynamodb"
 	accountstellar "github.com/kinecosystem/agora/pkg/account/stellar"
@@ -567,7 +567,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 		mapperStore := mapperdb.New(dynamoClient)
 		mapper := account.NewMapper(token.NewClient(solanaClient, kinToken), mapperStore)
-		infoCache := infocache.New(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
+		infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
 		deduper := deduper.New(dynamoClient, dedupeTTL)
 
 		a.accountSolana, err = accountsolana.New(

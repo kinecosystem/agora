@@ -32,7 +32,7 @@ import (
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
-	infocachememory "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
+	infomemory "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -99,7 +99,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 	env.rw = historymemory.New()
 	env.committer = ingestionmemory.New()
 	env.authorizer = &mockAuthorizer{}
-	env.infoCache, err = infocachememory.New(5*time.Second, 5*time.Second, 1000)
+	env.infoCache, err = infomemory.NewCache(5*time.Second, 5*time.Second, 1000)
 	require.NoError(t, err)
 	env.submitter = &mockSubmitter{}
 	env.deduper = dedupememory.New()
