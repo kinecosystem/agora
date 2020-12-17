@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -19,6 +21,7 @@ import (
 	xrate "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
@@ -30,6 +33,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
+	migrationstore "github.com/kinecosystem/agora/pkg/migration/memory"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
@@ -47,11 +51,16 @@ type testEnv struct {
 	notifier          *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         accountinfo.Cache
-	server            *server
+	migrationStore    migration.Store
+
+	server *server
 }
 
 func setup(t *testing.T) (env testEnv, cleanup func()) {
-	conn, serv, err := agoratestutil.NewServer()
+	conn, serv, err := agoratestutil.NewServer(
+		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
+		agoratestutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+	)
 	require.NoError(t, err)
 
 	env.client = accountpb.NewAccountClient(conn)
@@ -69,6 +78,8 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	env.infoCache, err = infocache.New(time.Second, 5)
 	require.NoError(t, err)
 
+	env.migrationStore = migrationstore.New()
+
 	env.sc.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(uint64(50), nil)
 	env.minLamports = 50
 
@@ -80,9 +91,11 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 		env.tokenAccountCache,
 		env.infoCache,
 		migration.NewNoopMigrator(),
+		env.migrationStore,
 		env.token,
 		env.subsidizer,
 		0.0,
+		"",
 	)
 	require.NoError(t, err)
 	env.server = s.(*server)
@@ -125,7 +138,7 @@ func TestCreateAccount(t *testing.T) {
 			token.AuthorityTypeCloseAccount,
 		),
 	)
-	assert.NoError(t, createTxn.Sign(env.subsidizer))
+	require.NoError(t, createTxn.Sign(env.subsidizer))
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
@@ -141,11 +154,11 @@ func TestCreateAccount(t *testing.T) {
 		},
 		Commitment: commonpb.Commitment_MAX,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
 
 	expected := createTxn
-	assert.NoError(t, createTxn.Sign(env.subsidizer))
+	require.NoError(t, createTxn.Sign(env.subsidizer))
 	assert.Equal(t, expected, submitted)
 
 	txnErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
@@ -166,7 +179,7 @@ func TestCreateAccount(t *testing.T) {
 		},
 		Commitment: commonpb.Commitment_MAX,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_EXISTS, resp.Result)
 }
 
@@ -193,7 +206,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 			owner.Public().(ed25519.PublicKey),
 		),
 	)
-	assert.NoError(t, createTxn.Sign(env.subsidizer))
+	require.NoError(t, createTxn.Sign(env.subsidizer))
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
@@ -209,11 +222,11 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 		},
 		Commitment: commonpb.Commitment_MAX,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
 
 	expected := createTxn
-	assert.NoError(t, createTxn.Sign(env.subsidizer))
+	require.NoError(t, createTxn.Sign(env.subsidizer))
 	assert.Equal(t, expected, submitted)
 
 	txnErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
@@ -234,7 +247,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 		},
 		Commitment: commonpb.Commitment_MAX,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_EXISTS, resp.Result)
 }
 
@@ -261,7 +274,7 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 			owner.Public().(ed25519.PublicKey),
 		),
 	)
-	assert.NoError(t, createTxn.Sign(env.subsidizer))
+	require.NoError(t, createTxn.Sign(env.subsidizer))
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
@@ -277,7 +290,7 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 		},
 		Commitment: commonpb.Commitment_MAX,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_BAD_NONCE, resp.Result)
 }
 
@@ -510,7 +523,7 @@ func TestCreateAccount_Limited(t *testing.T) {
 			token.AuthorityTypeCloseAccount,
 		),
 	)
-	assert.NoError(t, createTxn.Sign(env.subsidizer))
+	require.NoError(t, createTxn.Sign(env.subsidizer))
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
@@ -524,7 +537,7 @@ func TestCreateAccount_Limited(t *testing.T) {
 			},
 			Commitment: commonpb.Commitment_MAX,
 		})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 
 	_, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
@@ -534,6 +547,94 @@ func TestCreateAccount_Limited(t *testing.T) {
 		Commitment: commonpb.Commitment_MAX,
 	})
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
+func TestCreateAccount_Whitelisting(t *testing.T) {
+	env, cleanup := setup(t)
+	defer cleanup()
+
+	env.server.createWhitelistSecret = "somesecret"
+
+	account := testutil.GenerateSolanaKeypair(t)
+	owner := testutil.GenerateSolanaKeypair(t)
+
+	createTxn := solana.NewTransaction(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		system.CreateAccount(
+			env.subsidizer.Public().(ed25519.PublicKey),
+			account.Public().(ed25519.PublicKey),
+			token.ProgramKey,
+			env.minLamports,
+			token.AccountSize,
+		),
+		token.InitializeAccount(
+			account.Public().(ed25519.PublicKey),
+			env.token,
+			owner.Public().(ed25519.PublicKey),
+		),
+		token.SetAuthority(
+			account.Public().(ed25519.PublicKey),
+			owner.Public().(ed25519.PublicKey),
+			env.subsidizer.Public().(ed25519.PublicKey),
+			token.AuthorityTypeCloseAccount,
+		),
+	)
+	require.NoError(t, createTxn.Sign(env.subsidizer))
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
+
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{}, nil)
+
+	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
+		Transaction: &commonpb.Transaction{
+			Value: createTxn.Marshal(),
+		},
+		Commitment: commonpb.Commitment_MAX,
+	})
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	assert.Nil(t, resp)
+
+	for _, invalidUA := range []string{
+		"",
+		"KinSDK/xyz",
+		"JVM/xyz KinSDK/xyz",
+	} {
+		md := map[string]string{
+			"kin-user-agent": invalidUA,
+		}
+
+		ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(md))
+		resp, err := env.client.CreateAccount(ctx, &accountpb.CreateAccountRequest{
+			Transaction: &commonpb.Transaction{
+				Value: createTxn.Marshal(),
+			},
+			Commitment: commonpb.Commitment_MAX,
+		})
+		assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+		assert.Nil(t, resp)
+	}
+
+	for _, validUA := range []string{
+		env.server.createWhitelistSecret,
+		"JVM/unspecified KinSDK/xyz CID/xyz",
+		"iOS/10_1 iPad5,2 CFNetwork/808.3 Darwin/16.3.0 KinSDK/xyz CID/xyz",
+	} {
+		fmt.Println(validUA)
+		md := map[string]string{
+			"kin-user-agent": validUA,
+		}
+
+		ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(md))
+		resp, err := env.client.CreateAccount(ctx, &accountpb.CreateAccountRequest{
+			Transaction: &commonpb.Transaction{
+				Value: createTxn.Marshal(),
+			},
+			Commitment: commonpb.Commitment_MAX,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+	}
 }
 
 func TestGetAccountInfo(t *testing.T) {

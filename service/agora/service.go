@@ -93,10 +93,11 @@ const (
 	//kin2MigrationSecretEnv = "KIN2_MIGRATION_SECRET"
 
 	// Solana kin3 migration config
-	migratorHorizonURLEnv  = "MIGRATOR_HORIZON_CLIENT_URL"
-	mintEnv                = "MINT_ADDRESS"
-	mintKeyEnv             = "MINT_KEYPAIR_ID"
-	kin3MigrationSecretEnv = "KIN3_MIGRATION_SECRET"
+	migratorHorizonURLEnv    = "MIGRATOR_HORIZON_CLIENT_URL"
+	mintEnv                  = "MINT_ADDRESS"
+	mintKeyEnv               = "MINT_KEYPAIR_ID"
+	kin3MigrationSecretEnv   = "KIN3_MIGRATION_SECRET"
+	createWhitelistSecretEnv = "CREATE_WHITELIST_SECRET"
 
 	// Rate Limit Configs
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
@@ -476,6 +477,18 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Wrap(err, "secret contains a newline")
 		}
 
+		var createWhitelistSecret string
+		if len(os.Getenv(createWhitelistSecretEnv)) > 0 {
+			loaded, err := agoraapp.LoadFile(os.Getenv(createWhitelistSecretEnv))
+			if err != nil {
+				return errors.Wrap(err, "failed to get create whitelist secret")
+			}
+			if strings.Contains(string(loaded), "\n") {
+				return errors.Wrap(err, "secret contains a newline")
+			}
+			createWhitelistSecret = string(loaded)
+		}
+
 		var mint ed25519.PublicKey
 		if os.Getenv(mintEnv) != "" {
 			mint, err = base58.Decode(os.Getenv(mintEnv))
@@ -551,6 +564,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kinToken,
 			subsidizer,
 			float32(consistencyCheckFreq),
+			createWhitelistSecret,
 		)
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize v4 account serve")

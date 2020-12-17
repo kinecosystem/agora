@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"math/rand"
+	"strings"
 
+	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/kinecosystem/agora/client"
 	"github.com/kinecosystem/go/amount"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/mr-tron/base58"
@@ -49,6 +52,12 @@ var (
 		Name:      "resolve_token_account_misses",
 		Help:      "Number of times no token account was resolved for a requested account",
 	})
+
+	createAccountBlockCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "create_account_blocks",
+		Help:      "Number of blocked create account requests",
+	}, []string{client.UserAgentHeader})
 )
 
 type server struct {
@@ -68,6 +77,9 @@ type server struct {
 	minAccountLamports uint64
 
 	cacheCheckProbability float32
+
+	// If no secret is set, all requests will be whitelisted
+	createWhitelistSecret string
 }
 
 func init() {
@@ -88,6 +100,7 @@ func New(
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	cacheCheckFreq float32,
+	createWhitelistSecret string,
 ) (accountpb.AccountServer, error) {
 	s := &server{
 		log:                   logrus.StandardLogger().WithField("type", "account/solana"),
@@ -103,6 +116,7 @@ func New(
 		token:                 mint,
 		subsidizer:            subsidizer,
 		cacheCheckProbability: cacheCheckFreq,
+		createWhitelistSecret: createWhitelistSecret,
 	}
 
 	backupValue := uint64(2039280)
@@ -126,6 +140,11 @@ func New(
 
 func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
 	log := s.log.WithField("method", "CreateAccount")
+
+	if ua, ok := s.isWhitelisted(ctx); !ok {
+		createAccountBlockCounterVec.WithLabelValues(ua).Inc()
+		return nil, status.Error(codes.ResourceExhausted, "rate limited")
+	}
 
 	var txn solana.Transaction
 	if err := txn.Unmarshal(req.Transaction.Value); err != nil {
@@ -544,6 +563,27 @@ func (s *server) loadHorizonBalance(account ed25519.PublicKey) (int64, error) {
 	return balance, nil
 }
 
+func (s *server) isWhitelisted(ctx context.Context) (userAgent string, whitelisted bool) {
+	if len(s.createWhitelistSecret) == 0 {
+		return "", true
+	}
+
+	val, err := headers.GetASCIIHeaderByName(ctx, client.UserAgentHeader)
+	if err != nil {
+		return val, false
+	}
+
+	if val == s.createWhitelistSecret {
+		return val, true
+	}
+
+	if strings.Contains(val, "KinSDK/") && strings.Contains(val, "CID/") {
+		return val, true
+	}
+
+	return val, false
+}
+
 func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) {
 	if len(cached) != len(fetched) {
 		consistencyCheckFailedCounter.Inc()
@@ -583,6 +623,14 @@ func registerMetrics() (err error) {
 			resolveAccountMissCounter = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			return errors.Wrap(err, "failed to register resolve token account miss counter")
+		}
+	}
+
+	if err := prometheus.Register(createAccountBlockCounterVec); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			createAccountBlockCounterVec = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register create account block counter vec")
 		}
 	}
 

@@ -32,7 +32,7 @@ import (
 
 const (
 	SDKVersion              = "0.2.7"
-	userAgentHeader         = "kin-user-agent"
+	UserAgentHeader         = "kin-user-agent"
 	kinVersionHeader        = "kin-version"
 	desiredKinVersionHeader = "desired-kin-version"
 )
@@ -553,7 +553,7 @@ func (c *InternalClient) RequestAirdrop(ctx context.Context, publicKey PublicKey
 }
 
 func (c *InternalClient) addMetadataToCtx(ctx context.Context) context.Context {
-	ctx = metadata.AppendToOutgoingContext(ctx, userAgentHeader, userAgent, kinVersionHeader, strconv.Itoa(int(c.kinVersion)))
+	ctx = metadata.AppendToOutgoingContext(ctx, UserAgentHeader, userAgent, kinVersionHeader, strconv.Itoa(int(c.kinVersion)))
 	if c.desiredKinVersion != version.KinVersionUnknown {
 		ctx = metadata.AppendToOutgoingContext(ctx, desiredKinVersionHeader, strconv.Itoa(int(c.desiredKinVersion)))
 	}

@@ -237,7 +237,7 @@ func validateHeaders(ctx context.Context) error {
 		return status.Error(codes.Internal, "failed to parse metadata")
 	}
 
-	vals := md.Get(userAgentHeader)
+	vals := md.Get(UserAgentHeader)
 	for _, v := range vals {
 		if v == userAgent {
 			return nil
