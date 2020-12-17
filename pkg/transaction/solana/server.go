@@ -210,7 +210,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
-		transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[0].Source, transfers[0].Source})
+		transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[0].Source, transfers[0].Destination})
 	default:
 		var offset int
 		if m, err := memo.DecompileMemo(txn.Message, 0); err == nil {
@@ -224,7 +224,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			if err != nil {
 				return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 			}
-			transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[i].Source, transfers[i].Source})
+			transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[i].Source, transfers[i].Destination})
 		}
 
 		if req.InvoiceList != nil && len(req.InvoiceList.Invoices) != len(transfers) {
