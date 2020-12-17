@@ -63,6 +63,7 @@ var (
 type server struct {
 	log               *logrus.Entry
 	sc                solana.Client
+	scSubmit          solana.Client
 	tc                *token.Client
 	hc                horizon.ClientInterface
 	limiter           *account.Limiter
@@ -91,6 +92,7 @@ func init() {
 
 func New(
 	sc solana.Client,
+	scSubmit solana.Client,
 	hc horizon.ClientInterface,
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
@@ -107,6 +109,7 @@ func New(
 	s := &server{
 		log:                   logrus.StandardLogger().WithField("type", "account/solana"),
 		sc:                    sc,
+		scSubmit:              scSubmit,
 		tc:                    token.NewClient(sc, mint),
 		hc:                    hc,
 		accountNotifier:       accountNotifier,
@@ -235,7 +238,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Error(codes.Internal, "failed to store account mapping")
 	}
 
-	_, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
+	_, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
 	}

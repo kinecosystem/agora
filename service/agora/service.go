@@ -559,6 +559,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 		a.accountSolana, err = accountsolana.New(
 			solanaClient,
+			solanaSubmitClient,
 			migratorHorizonClient,
 			accountLimiter,
 			kin4AccountNotifier,
