@@ -439,8 +439,10 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 
 		consistencyCheckFreq, err := strconv.ParseFloat(os.Getenv(consistencyCheckProbEnv), 32)
-		if err != nil || consistencyCheckFreq > 1.0 {
+		if err != nil {
 			return errors.Wrap(err, "failed to parse token account consistency check frequency (should be in range [0.0, 1.0])")
+		} else if consistencyCheckFreq > 1.0 {
+			return errors.Errorf("invalid token account consistency check frequency (should be in range [0.0, 1.0]): %f", consistencyCheckFreq)
 		}
 
 		var subsidizer []byte
@@ -474,7 +476,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Wrap(err, "failed to get migration secret")
 		}
 		if strings.Contains(string(kin3MigrationSecret), "\n") {
-			return errors.Wrap(err, "secret contains a newline")
+			return errors.New("secret contains a newline")
 		}
 
 		var createWhitelistSecret string
@@ -484,7 +486,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 				return errors.Wrap(err, "failed to get create whitelist secret")
 			}
 			if strings.Contains(string(loaded), "\n") {
-				return errors.Wrap(err, "secret contains a newline")
+				return errors.New("secret contains a newline")
 			}
 			createWhitelistSecret = string(loaded)
 		}
