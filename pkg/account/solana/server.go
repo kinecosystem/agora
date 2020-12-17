@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/solana"
@@ -322,6 +323,10 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		return nil, status.Error(codes.Internal, "failed to retrieve account cached")
 	}
 
+	// Use a separate context to help the cache get populated
+	forkedCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
 	var info *accountpb.AccountInfo
 	var resp *accountpb.GetAccountInfoResponse
 	if err != nil {
@@ -342,12 +347,12 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 			AccountInfo: info,
 		}
 
-		if err := s.mapper.Add(ctx, req.AccountId.Value, account.Owner); err != nil {
+		if err := s.mapper.Add(forkedCtx, req.AccountId.Value, account.Owner); err != nil {
 			log.WithError(err).Warn("failed to cache get account mapping")
 		}
 	}
 
-	if err = s.infoCache.Put(ctx, info); err != nil {
+	if err = s.infoCache.Put(forkedCtx, info); err != nil {
 		log.WithError(err).Warn("failed to cache get account info")
 	}
 	return resp, nil
@@ -363,6 +368,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	if err != nil && err != tokenaccount.ErrTokenAccountsNotFound {
 		log.WithError(err).Warn("failed to get token accounts from cache")
 	}
+
 	if len(cached) == 0 || rand.Float32() < s.cacheCheckProbability {
 		putRequired = true
 		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
@@ -437,19 +443,21 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	}
 
 	if putRequired {
+		putCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
 		if len(resp.TokenAccounts) > 0 {
 			keys := make([]ed25519.PublicKey, len(resp.TokenAccounts))
 			for i, tokenAccount := range resp.TokenAccounts {
 				keys[i] = tokenAccount.Value
-				if err = s.mapper.Add(ctx, keys[i], req.AccountId.Value); err != nil {
+				if err = s.mapper.Add(putCtx, keys[i], req.AccountId.Value); err != nil {
 					log.WithError(err).Warn("failed to add account mapping")
 				}
 			}
-			if err = s.tokenAccountCache.Put(ctx, req.AccountId.Value, keys); err != nil {
+			if err = s.tokenAccountCache.Put(putCtx, req.AccountId.Value, keys); err != nil {
 				log.WithError(err).Warn("failed to cache token accounts")
 			}
 		} else {
-			if err = s.tokenAccountCache.Delete(ctx, req.AccountId.Value); err != nil {
+			if err = s.tokenAccountCache.Delete(putCtx, req.AccountId.Value); err != nil {
 				log.WithError(err).Warn("failed to cache token accounts")
 			}
 		}
