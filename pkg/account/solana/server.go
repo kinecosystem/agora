@@ -64,6 +64,7 @@ var (
 type server struct {
 	log               *logrus.Entry
 	sc                solana.Client
+	scResolve         solana.Client
 	scSubmit          solana.Client
 	tc                *token.Client
 	hc                horizon.ClientInterface
@@ -93,6 +94,7 @@ func init() {
 
 func New(
 	sc solana.Client,
+	scResolve solana.Client,
 	scSubmit solana.Client,
 	hc horizon.ClientInterface,
 	limiter *account.Limiter,
@@ -110,6 +112,7 @@ func New(
 	s := &server{
 		log:                   logrus.StandardLogger().WithField("type", "account/solana"),
 		sc:                    sc,
+		scResolve:             scResolve,
 		scSubmit:              scSubmit,
 		tc:                    token.NewClient(sc, mint),
 		hc:                    hc,
@@ -371,7 +374,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 
 	if len(cached) == 0 || rand.Float32() < s.cacheCheckProbability {
 		putRequired = true
-		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
+		accounts, err = s.scResolve.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
 		if err != nil {
 			log.WithError(err).Warn("failed to get token accounts")
 			return nil, status.Error(codes.Internal, err.Error())

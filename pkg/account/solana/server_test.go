@@ -89,6 +89,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	s, err := New(
 		env.sc,
 		env.sc,
+		env.sc,
 		env.hc,
 		account.NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,

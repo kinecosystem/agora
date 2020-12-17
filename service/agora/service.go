@@ -83,6 +83,7 @@ const (
 
 	// Solana config
 	solanaEndpointEnv         = "SOLANA_ENDPOINT"
+	solanaResolveEndpointEnv  = "SOLANA_RESOLVE_ENDPOINT"
 	solanaSubmitEndpointEnv   = "SOLANA_SUBMIT_ENDPOINT"
 	solanaMigratorEndpointEnv = "SOLANA_MIGRATOR_ENDPOINT"
 	kinTokenEnv               = "KIN_TOKEN"
@@ -413,11 +414,18 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(solanaEndpointEnv) != "" {
 		var (
 			solanaClient         solana.Client
+			solanaResolveClient  solana.Client
 			solanaSubmitClient   solana.Client
 			solanaMigratorClient solana.Client
 		)
 
 		solanaClient = solana.New(os.Getenv(solanaEndpointEnv))
+
+		if os.Getenv(solanaResolveEndpointEnv) != "" {
+			solanaResolveClient = solana.New(os.Getenv(solanaResolveEndpointEnv))
+		} else {
+			solanaResolveClient = solanaClient
+		}
 
 		if os.Getenv(solanaSubmitEndpointEnv) != "" {
 			solanaSubmitClient = solana.New(os.Getenv(solanaSubmitEndpointEnv))
@@ -560,6 +568,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 		a.accountSolana, err = accountsolana.New(
 			solanaClient,
+			solanaResolveClient,
 			solanaSubmitClient,
 			migratorHorizonClient,
 			accountLimiter,
