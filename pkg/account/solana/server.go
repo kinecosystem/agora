@@ -255,7 +255,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			}, nil
 		}
 
-		log.WithError(err).Warn("unexpected transaction error")
+		log.WithError(stat.ErrorResult).Warn("unexpected transaction error")
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", stat.ErrorResult)
 	}
 
