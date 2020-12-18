@@ -565,6 +565,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 		mapperStore := mapperdb.New(dynamoClient)
 		mapper := account.NewMapper(token.NewClient(solanaClient, kinToken), mapperStore)
+		infoCache := infocache.New(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
 
 		a.accountSolana, err = accountsolana.New(
 			solanaClient,
@@ -574,7 +575,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			accountLimiter,
 			kin4AccountNotifier,
 			tokenAccountCache,
-			infocache.New(dynamoClient, accountInfoTTL, negativeAccountInfoTTL),
+			infoCache,
 			kin3Migrator,
 			migrationStore,
 			mapper,
@@ -595,6 +596,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			committer,
 			authorizer,
 			kin3Migrator,
+			infoCache,
 			kinToken,
 			subsidizer,
 			migratorHorizonClient,

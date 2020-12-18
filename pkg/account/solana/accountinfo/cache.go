@@ -21,4 +21,7 @@ type Cache interface {
 	//
 	// ErrAccountInfoNotFound is returned if no account info was found for the provided key.
 	Get(ctx context.Context, key ed25519.PublicKey) (*accountpb.AccountInfo, error)
+
+	// Delete a cached entry.
+	Del(ctx context.Context, key ed25519.PublicKey) (ok bool, err error)
 }

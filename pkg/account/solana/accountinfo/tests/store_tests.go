@@ -60,6 +60,23 @@ func testRoundTrip(t *testing.T, cache accountinfo.Cache, teardown func()) {
 			require.NoError(t, err)
 			assert.True(t, proto.Equal(infos[i], info))
 		}
+
+		// Delete works
+		deleted, err := cache.Del(context.Background(), keys[0])
+		require.NoError(t, err)
+		assert.True(t, deleted)
+		_, err = cache.Get(context.Background(), keys[0])
+		assert.Equal(t, accountinfo.ErrAccountInfoNotFound, err)
+
+		// Delete "deleted" is updated.
+		deleted, err = cache.Del(context.Background(), keys[0])
+		require.NoError(t, err)
+		assert.False(t, deleted)
+
+		// Other items unaffected
+		info, err := cache.Get(context.Background(), keys[1])
+		require.NoError(t, err)
+		assert.True(t, proto.Equal(infos[1], info))
 	})
 }
 

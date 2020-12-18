@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/headers"
@@ -23,11 +24,14 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpbv3 "github.com/kinecosystem/agora-api/genproto/common/v3"
 	"github.com/kinecosystem/agora-api/genproto/common/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
+	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
+	infocachememory "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -52,6 +56,7 @@ type serverEnv struct {
 	rw           *historymemory.RW
 	committer    ingestion.Committer
 	authorizer   *mockAuthorizer
+	infoCache    accountinfo.Cache
 
 	hClient *horizon.MockClient
 }
@@ -80,6 +85,8 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 	env.rw = historymemory.New()
 	env.committer = ingestionmemory.New()
 	env.authorizer = &mockAuthorizer{}
+	env.infoCache, err = infocachememory.New(5*time.Second, 5*time.Second, 1000)
+	require.NoError(t, err)
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
 	token := testutil.GenerateSolanaKeypair(t)
@@ -97,6 +104,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 		env.committer,
 		env.authorizer,
 		migration.NewNoopMigrator(),
+		env.infoCache,
 		env.token,
 		env.subsidizer,
 		env.hClient,
@@ -297,7 +305,7 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -316,6 +324,16 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 			submitted = args.Get(0).(solana.Transaction)
 		}).
 		Return(sig, &solana.SignatureStatus{}, nil)
+
+	for _, a := range accounts {
+		info := &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: a,
+			},
+			Balance: 10,
+		}
+		assert.NoError(t, env.infoCache.Put(context.Background(), info))
+	}
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		Transaction: &commonpb.Transaction{
@@ -342,13 +360,18 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
 	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
+
+	for _, a := range accounts {
+		_, err := env.infoCache.Get(context.Background(), a)
+		assert.Equal(t, err, accountinfo.ErrAccountInfoNotFound)
+	}
 }
 
 func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -423,7 +446,7 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -474,7 +497,7 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	defer cleanup()
 
 	invoice, invoiceHash, invoiceBytes := generateInvoice(t, 1)
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, invoiceHash, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, invoiceHash, nil)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -522,7 +545,7 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	defer cleanup()
 
 	invoice, invoiceHash, invoiceBytes := generateInvoice(t, 3)
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, invoiceHash, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, invoiceHash, nil)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -570,7 +593,7 @@ func TestSubmitTransaction_Invoice_InvalidBatch(t *testing.T) {
 	defer cleanup()
 
 	invoice, invoiceHash, _ := generateInvoice(t, 5)
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, invoiceHash, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, invoiceHash, nil)
 
 	_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		Transaction: &commonpb.Transaction{
@@ -587,7 +610,7 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	defer cleanup()
 
 	memo := "test"
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, &memo)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, &memo)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -638,7 +661,7 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	defer cleanup()
 
 	memo := "---test"
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, &memo)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, &memo)
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -688,7 +711,7 @@ func TestSubmitTransaction_Rejected(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultRejected,
@@ -710,7 +733,7 @@ func TestSubmitTransaction_InvoiceErrors(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultInvoiceError,
@@ -750,7 +773,7 @@ func TestSubmitTransaction_NoPayer(t *testing.T) {
 
 	env.server.subsidizer = nil
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
@@ -772,7 +795,7 @@ func TestSubmitTransaction_SubmitError(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
@@ -868,9 +891,13 @@ func TestSubmitTransaction_BadTransaction(t *testing.T) {
 	}
 }
 
-func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceivers int, invoiceHash []byte, textMemo *string) solana.Transaction {
+func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceivers int, invoiceHash []byte, textMemo *string) (solana.Transaction, []ed25519.PublicKey) {
 	sender := testutil.GenerateSolanaKeypair(t)
 	receivers := testutil.GenerateSolanaKeys(t, numReceivers)
+
+	accounts := make([]ed25519.PublicKey, 0, len(sender)+len(receivers))
+	accounts = append(accounts, sender.Public().(ed25519.PublicKey))
+	accounts = append(accounts, receivers...)
 
 	var instructions []solana.Instruction
 
@@ -900,5 +927,5 @@ func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceiver
 	)
 	assert.NoError(t, txn.Sign(sender))
 
-	return txn
+	return txn, accounts
 }

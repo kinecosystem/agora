@@ -69,6 +69,15 @@ func (c *cache) Get(ctx context.Context, key ed25519.PublicKey) (*accountpb.Acco
 	return nil, accountinfo.ErrAccountInfoNotFound
 }
 
+func (c *cache) Del(ctx context.Context, key ed25519.PublicKey) (bool, error) {
+	_, ok := c.cache.Get(string(key))
+	if !ok {
+		return false, nil
+	}
+	c.cache.Remove(string(key))
+	return true, nil
+}
+
 func (c *cache) reset() {
 	c.cache.Purge()
 }

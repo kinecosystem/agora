@@ -88,3 +88,20 @@ func (c *cache) Get(ctx context.Context, key ed25519.PublicKey) (*accountpb.Acco
 
 	return info, nil
 }
+
+func (c *cache) Del(ctx context.Context, key ed25519.PublicKey) (bool, error) {
+	resp, err := c.client.DeleteItemRequest(&dynamodb.DeleteItemInput{
+		TableName: tableNameStr,
+		Key: map[string]dynamodb.AttributeValue{
+			tableHashKey: {
+				B: key,
+			},
+		},
+		ReturnValues: dynamodb.ReturnValueAllOld,
+	}).Send(ctx)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to delete cache entry")
+	}
+
+	return len(resp.Attributes) > 0, nil
+}

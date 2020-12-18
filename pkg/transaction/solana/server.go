@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -22,6 +23,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
+	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
@@ -40,6 +42,11 @@ var (
 		Name:      "submit_transaction_result",
 		Help:      "Number of submit transaction results for OK",
 	}, []string{"result"})
+	infoCacheInvalidations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "info_cache_invalidations",
+		Help:      "Number of info cache invalidations",
+	}, []string{"deleted"})
 )
 
 type server struct {
@@ -52,6 +59,7 @@ type server struct {
 	history      history.ReaderWriter
 	authorizer   transaction.Authorizer
 	migrator     migration.Migrator
+	infoCache    accountinfo.Cache
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
@@ -71,6 +79,7 @@ func New(
 	committer ingestion.Committer,
 	authorizer transaction.Authorizer,
 	migrator migration.Migrator,
+	infoCache accountinfo.Cache,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	hc horizon.ClientInterface,
@@ -91,6 +100,7 @@ func New(
 		invoiceStore:    invoiceStore,
 		authorizer:      authorizer,
 		migrator:        migrator,
+		infoCache:       infoCache,
 		token:           tokenAccount,
 		subsidizer:      subsidizer,
 		hc:              hc,
@@ -344,6 +354,21 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
+	// Invalidate before hand, assuming transaction will be successful.
+	invalidationKeys := make(map[string]struct{})
+	for _, pair := range transferAccountPairs {
+		for _, p := range pair {
+			invalidationKeys[string(p)] = struct{}{}
+		}
+	}
+	for k := range invalidationKeys {
+		deleted, err := s.infoCache.Del(ctx, ed25519.PublicKey(k))
+		if err != nil {
+			log.WithError(err).Warn("failed to invalidate info cache")
+		}
+		infoCacheInvalidations.WithLabelValues(fmt.Sprintf("%v", deleted)).Inc()
+	}
+
 	var submitResult transactionpb.SubmitTransactionResponse_Result
 	sig, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
@@ -467,6 +492,13 @@ func init() {
 			submitTxResultCounter = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			logrus.WithError(err).Error("failed to register submit transaction result counter")
+		}
+	}
+	if err := prometheus.Register(infoCacheInvalidations); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			infoCacheInvalidations = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register info cache invalidations")
 		}
 	}
 }
