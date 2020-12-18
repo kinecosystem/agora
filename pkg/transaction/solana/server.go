@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"strings"
 	"sync"
 
 	"github.com/kinecosystem/agora-common/kin"
@@ -13,6 +14,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,7 +34,12 @@ import (
 )
 
 var (
-	submitTxCounter = transaction.SubmitTransactionCounter.WithLabelValues("4")
+	submitTxCounter       = transaction.SubmitTransactionCounter.WithLabelValues("4")
+	submitTxResultCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_result",
+		Help:      "Number of submit transaction results for OK",
+	}, []string{"result"})
 )
 
 type server struct {
@@ -253,6 +260,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			}
 		}
 	} else if bytes.Equal(txn.Signatures[0][:], make([]byte, ed25519.SignatureSize)) {
+		submitTxResultCounter.WithLabelValues(strings.ToLower(transactionpb.SubmitTransactionResponse_PAYER_REQUIRED.String())).Inc()
 		return &transactionpb.SubmitTransactionResponse{
 			Result: transactionpb.SubmitTransactionResponse_PAYER_REQUIRED,
 		}, nil
@@ -303,6 +311,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	switch result.Result {
 	case transaction.AuthorizationResultOK:
 	case transaction.AuthorizationResultInvoiceError:
+		submitTxResultCounter.WithLabelValues(strings.ToLower(transactionpb.SubmitTransactionResponse_INVOICE_ERROR.String())).Inc()
 		return &transactionpb.SubmitTransactionResponse{
 			Result: transactionpb.SubmitTransactionResponse_INVOICE_ERROR,
 			Signature: &commonpb.TransactionSignature{
@@ -311,6 +320,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			InvoiceErrors: result.InvoiceErrors,
 		}, nil
 	case transaction.AuthorizationResultRejected:
+		submitTxResultCounter.WithLabelValues(strings.ToLower(transactionpb.SubmitTransactionResponse_REJECTED.String())).Inc()
 		return &transactionpb.SubmitTransactionResponse{
 			Result: transactionpb.SubmitTransactionResponse_REJECTED,
 			Signature: &commonpb.TransactionSignature{
@@ -356,6 +366,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				},
 			}
 
+			submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
+
 			txError, err := solanautil.MapTransactionError(*stat.ErrorResult)
 			if err != nil {
 				log.WithError(err).Warn("failed to map transaction error")
@@ -392,6 +404,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.Internal, "failed to persist transaction data")
 		}
 	}
+
+	submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
 
 	return &transactionpb.SubmitTransactionResponse{
 		Result: submitResult,
@@ -443,4 +457,14 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		Result: transactionpb.GetHistoryResponse_OK,
 		Items:  items,
 	}, nil
+}
+
+func init() {
+	if err := prometheus.Register(submitTxResultCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			submitTxResultCounter = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register submit transaction result counter")
+		}
+	}
 }
