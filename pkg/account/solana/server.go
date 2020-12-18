@@ -46,13 +46,24 @@ var (
 	resolveAccountHitCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "resolve_token_account_hits",
-		Help:      "Number of times at least one token account was resolved for a requested account",
+		Help:      "Number of token account cache hits",
 	})
 	resolveAccountMissCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "resolve_token_account_misses",
-		Help:      "Number of times no token account was resolved for a requested account",
+		Help:      "Number of token account cache misses",
 	})
+	infoCacheHitCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "account_info_cache_hits",
+		Help:      "Number of account info cache hits",
+	}, []string{"negative_hit"})
+	infoCacheMissCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "account_info_cache_misses",
+		Help:      "Number of accounts info cache misses",
+	})
+
 	nonMigratableResolveCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "non_migratable_resolves",
@@ -339,16 +350,19 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		// Negative balance is what we exploit to indicate we got a negative
 		// result from a query.
 		if cached.Balance < 0 {
+			infoCacheHitCounter.WithLabelValues("true").Inc()
 			return &accountpb.GetAccountInfoResponse{
 				Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
 			}, nil
 		}
 
+		infoCacheHitCounter.WithLabelValues("false").Inc()
 		return &accountpb.GetAccountInfoResponse{
 			AccountInfo: cached,
 		}, nil
 	}
 
+	infoCacheMissCounter.Inc()
 	account, err := s.tc.GetAccount(req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil && err != token.ErrInvalidTokenAccount && err != token.ErrAccountNotFound {
 		return nil, status.Error(codes.Internal, "failed to retrieve account cached")
@@ -806,6 +820,20 @@ func registerMetrics() (err error) {
 			resolveAccountMissCounter = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			return errors.Wrap(err, "failed to register resolve token account miss counter")
+		}
+	}
+	if err := prometheus.Register(infoCacheHitCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			infoCacheHitCounter = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register account info cache hit counter")
+		}
+	}
+	if err := prometheus.Register(infoCacheMissCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			infoCacheMissCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register account info cache miss counter")
 		}
 	}
 	if err := prometheus.Register(nonMigratableResolveCounter); err != nil {
