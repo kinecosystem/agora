@@ -33,6 +33,14 @@ func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	return args.Error(0)
 }
 
+func (m *mockMigrator) GetMigrationAccount(ctx context.Context, account ed25519.PublicKey) (ed25519.PublicKey, error) {
+	m.Lock()
+	defer m.Unlock()
+
+	args := m.Called(ctx, account)
+	return args.Get(0).(ed25519.PublicKey), args.Error(1)
+}
+
 func TestMigrateBatch(t *testing.T) {
 	ctx, err := headers.ContextWithHeaders(context.Background())
 	require.NoError(t, err)

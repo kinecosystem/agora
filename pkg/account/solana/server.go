@@ -53,6 +53,16 @@ var (
 		Name:      "resolve_token_account_misses",
 		Help:      "Number of times no token account was resolved for a requested account",
 	})
+	nonMigratableResolveCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "non_migratable_resolves",
+		Help:      "Number of times a resolve has been called for an account that cannot be migrated",
+	})
+	resolveShortCuts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "resolve_short_cuts",
+		Help:      "Number short cuts taken for resolve token account",
+	}, []string{"type"})
 
 	createAccountBlockCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
@@ -242,6 +252,16 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Error(codes.Internal, "failed to store account mapping")
 	}
 
+	info := &accountpb.AccountInfo{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: sysCreate.Address,
+		},
+	}
+	if err := s.infoCache.Put(ctx, info); err != nil {
+		// Don't fail here since it's for perf only
+		log.WithError(err).Warn("failed to store info cache")
+	}
+
 	_, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
@@ -364,15 +384,139 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.ResolveTokenAccountsRequest) (*accountpb.ResolveTokenAccountsResponse, error) {
 	log := s.log.WithField("method", "ResolveTokenAccounts")
 
-	var accounts []ed25519.PublicKey
+	// Problem:
+	//   GetTokensByOwner is _super_ expensive. It does a table scan.
+	//   Therefore, we need to avoid this call at all costs.
+	//
+	// Assumptions:
+	//   1. SetAuthority is low to non-existent.
+	//     - That is, ownership rarely changes.
+	//   2. Key collision is unlikely, and protected by CreateAccount. If we resolve
+	//      an incorrect account; it must exist for the kin to be sent to the wrong person.
+	//   3. If the account was migrated, we know the mapping happened, and can optimistically return the mapping.
+	//   4. If the account was _not_ migrated, then either:
+	//     a) it has yet to be migrated.
+	//     b) it is a non-migratable kin account.
+	//     c) it does not exist.
+	//   5. Almost all users of this RPC is from consistent agora users.
+	//
+	// (1) allows us to cache heavily, so we will do so. If we can invalidate this by observing side
+	// operations, we can hopefully keep this.
+	//
+	// (2) consider the cases that we only return (without verification) the following:
+	//    a) Identity
+	//    b) Migrated
+	//    c) None
+	// - If we send to identity, then either the identity was a temporary keypair, or it is a correct
+	//   account. To prevent the former, we load GetAccountInfo() to verify.
+	// - If we return a migrated account, it must mean that the requested account _was_ a migrated account.
+	//   Therefore, this is safe, at least as long as, at least as long as (1) holds true.
+	// - None is trivially not a problem in terms of loosing the kin.
+	//
+	// (3) we can just return the mapping. We know a migration occurred if an entry exists in the migration table.
+	//
+	// (4a) we can check horizon to know whether or not it _would_ be migrated.
+	// (4b) we know from the account-mapper-table, since we write on creation. Note, this requires (5) until
+	//      we have a side updater.
+	// (4c) to know whether or not it does not exist, we have to assume:
+	//   1) a migration did _not_ occur.
+	//   2) a native create did not occur.
+	//
+	// Since we don't have total history for (4c2), we should not make any assumption.
+	//
+	// Therefore, until we have caught up history, we should:
+	//
+	// 1. If the account has been migrated, return the map.
+	// 2. If the account is not known to be migrated (i.e. not complete):
+	//    a) If the account exists in Horizon: GetAccount() on the _derived_ account. Worst case they've sent
+	//       to an address that doesn't exist. Note this is protected by the fact that only we can determine
+	//       the migration account.
+	//    b) else, fall back to the "query the chain" path.
+	//
+	// Note: we want to do this _after_ the cache, since the cache will (should?) contain values that
+	//       have been verified by the chain (at some point).
 	var putRequired bool
+	var accounts []ed25519.PublicKey
 
+	// If we have a cached entry, return it.
 	cached, err := s.tokenAccountCache.Get(ctx, req.AccountId.Value)
 	if err != nil && err != tokenaccount.ErrTokenAccountsNotFound {
 		log.WithError(err).Warn("failed to get token accounts from cache")
 	}
 
-	if len(cached) == 0 || rand.Float32() < s.cacheCheckProbability {
+	var shouldMigrate bool
+	if len(cached) == 0 {
+		resolveAccountMissCounter.Inc()
+
+		migratedAccount, err := s.migrator.GetMigrationAccount(ctx, req.AccountId.Value)
+		switch err {
+		case nil:
+			if len(migratedAccount) > 0 {
+				shouldMigrate = true
+			}
+		case migration.ErrNotFound:
+		case migration.ErrMultisig, migration.ErrBurned:
+			// Meter, but we don't care (i.e. pretend no resolve)
+			nonMigratableResolveCounter.Inc()
+		default:
+			// Not great, but we can fall back
+			log.WithError(err).Warn("failed to check migration status")
+		}
+
+		// (1) and (2a) from above have the same resultant behavior, so we
+		// combine the two.
+		if len(migratedAccount) != 0 {
+			resolveShortCuts.WithLabelValues("migration").Inc()
+			accounts = []ed25519.PublicKey{migratedAccount}
+		} else {
+			// We assume at this point that we're not resolving a migration account.
+			// We could, however be resolving the result of a migration account.
+			//
+			// For example:
+			//
+			//   1. Resolve(kin3) -> [kin4]
+			//   2. Submit(kin4); fails, migration is delayed
+			//   3. Resolve(kin4) -> [kin4]
+			//
+			// We can detect this case by looking up the owner map, which has precomputed
+			// kin4 -> kin3 values, _along with_ the CreateAccount() values.
+			//
+			// Note: this (if configured) will load the solana raw account on miss.
+			owner, err := s.mapper.Get(ctx, req.AccountId.Value, solana.CommitmentSingle)
+			switch err {
+			case nil:
+				// We look up the mapping of the owner to see if it's us. If so, we know
+				// this is a kin3 -> kin4 case.
+				derived, err := s.migrator.GetMigrationAccount(ctx, owner)
+				if err == nil && bytes.Equal(req.AccountId.Value, derived) {
+					resolveShortCuts.WithLabelValues("lookup").Inc()
+					accounts = []ed25519.PublicKey{req.AccountId.Value}
+				}
+			case account.ErrNotFound:
+				// fall back
+			default:
+				log.WithError(err).Warn("failed to check account existence directly, falling back")
+			}
+		}
+	} else {
+		resolveAccountHitCounter.Inc()
+		accounts = cached
+
+		// This helps with recovery of migrations. Since the GetStatus table
+		// is well scaled, we can do this safely.
+		shouldMigrate = true
+	}
+
+	if shouldMigrate {
+		// We only use recent here to ensure ResolveAccounts() is still fairly quick.
+		//
+		// Note: it's important we use the non-mapped value here.
+		if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentRecent); err != nil && err != migration.ErrNotFound {
+			return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
+		}
+	}
+
+	if len(accounts) == 0 || rand.Float32() < s.cacheCheckProbability {
 		putRequired = true
 		accounts, err = s.scResolve.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
 		if err != nil {
@@ -382,15 +526,6 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 
 		if len(cached) != 0 {
 			checkCacheConsistency(cached, accounts)
-		}
-	} else {
-		accounts = cached
-	}
-
-	if len(accounts) == 0 {
-		// We only use recent here to ensure ResolveAccounts() is still fairly quick.
-		if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentRecent); err != nil && err != migration.ErrNotFound {
-			return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
 		}
 	}
 
@@ -464,12 +599,6 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 				log.WithError(err).Warn("failed to cache token accounts")
 			}
 		}
-	}
-
-	if len(resp.TokenAccounts) == 0 {
-		resolveAccountMissCounter.Inc()
-	} else {
-		resolveAccountHitCounter.Inc()
 	}
 
 	return resp, nil
@@ -669,6 +798,20 @@ func registerMetrics() (err error) {
 			resolveAccountMissCounter = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			return errors.Wrap(err, "failed to register resolve token account miss counter")
+		}
+	}
+	if err := prometheus.Register(nonMigratableResolveCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			nonMigratableResolveCounter = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			return errors.Wrap(err, "failed to register resolve non migratable resolve counter")
+		}
+	}
+	if err := prometheus.Register(resolveShortCuts); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			resolveShortCuts = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register resolve token short cuts counter")
 		}
 	}
 

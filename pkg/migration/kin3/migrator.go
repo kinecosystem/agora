@@ -157,6 +157,24 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	return err
 }
 
+func (m *kin3Migrator) GetMigrationAccount(ctx context.Context, account ed25519.PublicKey) (ed25519.PublicKey, error) {
+	migrationAccount, migrationAccountKey, err := migration.DeriveMigrationAccount(account, m.migrationSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = m.loadAccount(ctx, account, migrationAccountKey)
+	switch err {
+	case nil:
+	case migration.ErrBurned, migration.ErrMultisig, migration.ErrNotFound:
+		return nil, err
+	default:
+		return nil, errors.Wrap(err, "failed to load account info")
+	}
+
+	return migrationAccount, nil
+}
+
 func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, commitment solana.Commitment) (err error) {
 	log := m.log.WithField("method", "createMigrationAccount")
 

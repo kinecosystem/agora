@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,11 +55,12 @@ type testEnv struct {
 	tokenAccountCache tokenaccount.Cache
 	infoCache         accountinfo.Cache
 	migrationStore    migration.Store
+	migrator          migration.Migrator
 
 	server *server
 }
 
-func setup(t *testing.T) (env testEnv, cleanup func()) {
+func setup(t *testing.T, migrator migration.Migrator) (env testEnv, cleanup func()) {
 	conn, serv, err := agoratestutil.NewServer(
 		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
 		agoratestutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
@@ -75,13 +77,18 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 	token := testutil.GenerateSolanaKeypair(t)
 	env.token = token.Public().(ed25519.PublicKey)
 
-	env.tokenAccountCache, err = memory.New(time.Second, 5)
+	env.tokenAccountCache, err = memory.New(time.Hour, 5)
 	require.NoError(t, err)
 
 	env.infoCache, err = infocache.New(time.Second, 2*time.Second, 5)
 	require.NoError(t, err)
 
 	env.migrationStore = migrationstore.New()
+	if migrator != nil {
+		env.migrator = migrator
+	} else {
+		env.migrator = migration.NewNoopMigrator()
+	}
 
 	env.sc.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(uint64(50), nil)
 	env.minLamports = 50
@@ -95,7 +102,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 		env.notifier,
 		env.tokenAccountCache,
 		env.infoCache,
-		migration.NewNoopMigrator(),
+		env.migrator,
 		env.migrationStore,
 		env.mapper,
 		env.token,
@@ -117,7 +124,7 @@ func setup(t *testing.T) (env testEnv, cleanup func()) {
 }
 
 func TestCreateAccount(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -163,6 +170,15 @@ func TestCreateAccount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
 
+	mappedOwner, err := env.mapper.Get(context.Background(), account.Public().(ed25519.PublicKey), solana.CommitmentRecent)
+	assert.NoError(t, err)
+	assert.Equal(t, owner.Public().(ed25519.PublicKey), mappedOwner)
+
+	cachedInfo, err := env.infoCache.Get(context.Background(), account.Public().(ed25519.PublicKey))
+	assert.NoError(t, err)
+	assert.EqualValues(t, account.Public().(ed25519.PublicKey), cachedInfo.AccountId.Value)
+	assert.Zero(t, cachedInfo.Balance)
+
 	expected := createTxn
 	require.NoError(t, createTxn.Sign(env.subsidizer))
 	assert.Equal(t, expected, submitted)
@@ -190,7 +206,7 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestCreateAccount_NoSubsidizer(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -258,7 +274,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 }
 
 func TestCreateAccount_InvalidBlockhash(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -301,7 +317,7 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 }
 
 func TestCreateAccount_Invalid(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	var txns []solana.Transaction
@@ -502,7 +518,7 @@ func TestCreateAccount_Invalid(t *testing.T) {
 }
 
 func TestCreateAccount_Limited(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -556,7 +572,7 @@ func TestCreateAccount_Limited(t *testing.T) {
 }
 
 func TestCreateAccount_Whitelisting(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	env.server.createWhitelistSecret = "somesecret"
@@ -644,7 +660,7 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 }
 
 func TestGetAccountInfo(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
@@ -715,7 +731,7 @@ func TestGetAccountInfo(t *testing.T) {
 }
 
 func TestResolveTokenAccounts(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	// note: we create a reverse() function to ensure that the impl
@@ -735,6 +751,10 @@ func TestResolveTokenAccounts(t *testing.T) {
 	env.sc.On("GetTokenAccountsByOwner", accounts[1], env.token).Return(reverse(accounts[1:]), nil)
 	// Fallback
 	env.sc.On("GetTokenAccountsByOwner", mock.Anything, env.token).Return([]ed25519.PublicKey{}, nil)
+	// Existence check to see if the account requested exists
+	for i := 0; i < 3; i++ {
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+	}
 
 	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
 		AccountId: &commonpb.SolanaAccountId{
@@ -781,7 +801,7 @@ func TestResolveTokenAccounts(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_Cached(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 5)
@@ -844,7 +864,7 @@ func TestResolveTokenAccounts_Cached(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	// Always check
@@ -894,8 +914,130 @@ func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
 	env.sc.AssertExpectations(t)
 }
 
+func TestResolveTokenAccounts_MigrationSkip(t *testing.T) {
+	mig := &mockMigrator{}
+	env, cleanup := setup(t, mig)
+	defer cleanup()
+
+	// Horizon client will be...called?
+	migrated := testutil.GenerateSolanaKeys(t, 2)
+	notMigrated := testutil.GenerateSolanaKeys(t, 2)
+
+	mig.On("InitiateMigration", mock.Anything, migrated[0], false, solana.CommitmentRecent).Return(nil)
+	mig.On("InitiateMigration", mock.Anything, notMigrated[0], false, solana.CommitmentRecent).Return(nil)
+
+	mig.On("GetMigrationAccount", mock.Anything, migrated[0]).Return(migrated[1], nil)
+	mig.On("GetMigrationAccount", mock.Anything, notMigrated[0]).Return(ed25519.PublicKey{}, migration.ErrNotFound)
+	env.sc.On("GetAccountInfo", notMigrated[0], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo).Times(1)
+	env.sc.On("GetTokenAccountsByOwner", notMigrated[0], env.token).Return(notMigrated[1:], nil).Times(1)
+
+	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: migrated[0],
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, resp.TokenAccounts, 1)
+	assert.EqualValues(t, migrated[1], resp.TokenAccounts[0].Value)
+
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: notMigrated[0],
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, resp.TokenAccounts, 1)
+	assert.EqualValues(t, notMigrated[1], resp.TokenAccounts[0].Value)
+}
+
+func TestResolveTokenAccounts_ReverseMap(t *testing.T) {
+	mig := &mockMigrator{}
+	env, cleanup := setup(t, mig)
+	defer cleanup()
+
+	kin3 := testutil.GenerateSolanaKeys(t, 1)[0]
+	kin4 := testutil.GenerateSolanaKeys(t, 1)[0]
+	misc := testutil.GenerateSolanaKeys(t, 1)[0]
+	miscToken := testutil.GenerateSolanaKeys(t, 1)
+
+	kin4Account := token.Account{
+		Mint:   env.token,
+		Owner:  kin3,
+		Amount: 100,
+		State:  token.AccountStateInitialized,
+	}
+	miscAccount := token.Account{
+		Mint:   env.token,
+		Owner:  misc,
+		Amount: 100,
+		State:  token.AccountStateInitialized,
+	}
+	accountInfos := []solana.AccountInfo{
+		{
+			Owner: token.ProgramKey,
+			Data:  kin4Account.Marshal(),
+		},
+		{
+			Owner: token.ProgramKey,
+			Data:  miscAccount.Marshal(),
+		},
+	}
+
+	assert.NoError(t, env.mapper.Add(context.Background(), kin4, kin3))
+
+	// Kin3 migration hooks.
+	mig.On("InitiateMigration", mock.Anything, kin3, false, solana.CommitmentRecent).Return(nil)
+	mig.On("InitiateMigration", mock.Anything, misc, false, solana.CommitmentRecent).Return(migration.ErrNotFound)
+	mig.On("GetMigrationAccount", mock.Anything, kin3).Return(kin4, nil)
+	mig.On("GetMigrationAccount", mock.Anything, kin4).Return(ed25519.PublicKey{}, migration.ErrNotFound)
+	mig.On("GetMigrationAccount", mock.Anything, misc).Return(ed25519.PublicKey{}, migration.ErrNotFound)
+	mig.On("GetMigrationAccount", mock.Anything, miscToken[0]).Return(ed25519.PublicKey{}, migration.ErrNotFound)
+	env.sc.On("GetAccountInfo", kin4Account, mock.Anything).Return(accountInfos[0], nil).Times(1)
+	env.sc.On("GetAccountInfo", misc, mock.Anything).Return(accountInfos[1], nil).Times(1)
+	env.sc.On("GetTokenAccountsByOwner", misc, env.token).Return(miscToken, nil).Times(1)
+	env.sc.On("GetTokenAccountsByOwner", miscToken[0], env.token).Return([]ed25519.PublicKey{}, nil).Times(1)
+
+	// Resolving kin3 should work from here, no other calls
+	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: kin3,
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, resp.TokenAccounts, 1)
+	assert.EqualValues(t, kin4, resp.TokenAccounts[0].Value)
+
+	// Resolving kin4 should return itself.
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: kin4,
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, resp.TokenAccounts, 1)
+	assert.EqualValues(t, kin4, resp.TokenAccounts[0].Value)
+
+	// Resolving misc, and miscs token, by itself should be fine
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: misc,
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, resp.TokenAccounts, 1)
+	assert.EqualValues(t, miscToken[0], resp.TokenAccounts[0].Value)
+
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: miscToken[0],
+		},
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, resp.TokenAccounts)
+}
+
 func TestGetEvents(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
@@ -969,7 +1111,7 @@ func TestGetEvents(t *testing.T) {
 }
 
 func TestGetEvents_NotFound(t *testing.T) {
-	env, cleanup := setup(t)
+	env, cleanup := setup(t, nil)
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
@@ -985,4 +1127,25 @@ func TestGetEvents_NotFound(t *testing.T) {
 	resp, err := stream.Recv()
 	assert.NoError(t, err)
 	assert.Equal(t, accountpb.Events_NOT_FOUND, resp.Result)
+}
+
+type mockMigrator struct {
+	sync.Mutex
+	mock.Mock
+}
+
+func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
+	m.Lock()
+	defer m.Unlock()
+
+	args := m.Called(ctx, account, ignoreBalance, commitment)
+	return args.Error(0)
+}
+
+func (m *mockMigrator) GetMigrationAccount(ctx context.Context, account ed25519.PublicKey) (ed25519.PublicKey, error) {
+	m.Lock()
+	defer m.Unlock()
+
+	args := m.Called(ctx, account)
+	return args.Get(0).(ed25519.PublicKey), args.Error(1)
 }
