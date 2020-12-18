@@ -77,3 +77,15 @@ func IsAccountAlreadyExistsError(err *solana.TransactionError) bool {
 	// todo: perhaps we want to formalize the error codes in the system library?
 	return ie.Index == 0 && ie.CustomError() != nil && *ie.CustomError() == 0
 }
+
+func IsDuplicateSignature(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if solErr, ok := err.(*solana.TransactionError); ok {
+		return solErr.ErrorKey() == solana.TransactionErrorDuplicateSignature
+	}
+
+	return false
+}

@@ -353,7 +353,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	if stat.ErrorResult != nil {
 		// If it's a duplicate signature, we still want to process the Write()
 		// in case that's what failed on an earlier call.
-		if stat.ErrorResult.ErrorKey() == solana.TransactionErrorDuplicateSignature {
+		if solanautil.IsDuplicateSignature(stat.ErrorResult) {
 			submitResult = transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED
 		} else {
 			// todo: do we want to persist failed transactions at this stage?
@@ -365,6 +365,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 					Value: sig[:],
 				},
 			}
+
+			log.WithError(stat.ErrorResult).Info("failed to submit transaction")
 
 			submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
 
