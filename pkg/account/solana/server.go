@@ -69,6 +69,11 @@ var (
 		Name:      "create_account_blocks",
 		Help:      "Number of blocked create account requests",
 	}, []string{"kin_user_agent"})
+	createAccountResultCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "create_account_result",
+		Help:      "Number of create account OKs by result",
+	}, []string{"result"})
 )
 
 type server struct {
@@ -268,11 +273,13 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	}
 	if stat.ErrorResult != nil {
 		if solanautil.IsAccountAlreadyExistsError(stat.ErrorResult) {
+			createAccountResultCounterVec.WithLabelValues("exists").Inc()
 			return &accountpb.CreateAccountResponse{
 				Result: accountpb.CreateAccountResponse_EXISTS,
 			}, nil
 		}
 		if stat.ErrorResult.ErrorKey() == solana.TransactionErrorBlockhashNotFound {
+			createAccountResultCounterVec.WithLabelValues("bad_nonce").Inc()
 			return &accountpb.CreateAccountResponse{
 				Result: accountpb.CreateAccountResponse_BAD_NONCE,
 			}, nil
@@ -282,6 +289,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", stat.ErrorResult)
 	}
 
+	createAccountResultCounterVec.WithLabelValues("ok").Inc()
 	return &accountpb.CreateAccountResponse{
 		Result: accountpb.CreateAccountResponse_OK,
 		AccountInfo: &accountpb.AccountInfo{
@@ -820,6 +828,13 @@ func registerMetrics() (err error) {
 			createAccountBlockCounterVec = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			return errors.Wrap(err, "failed to register create account block counter vec")
+		}
+	}
+	if err := prometheus.Register(createAccountResultCounterVec); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			createAccountResultCounterVec = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register create account result counter vec")
 		}
 	}
 
