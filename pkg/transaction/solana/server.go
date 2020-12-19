@@ -53,6 +53,11 @@ var (
 		Name:      "submit_transaction_webhook_failures",
 		Help:      "Number of submit transaction webhook failures",
 	})
+	submitTransactionsCancelled = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transactions_cancelled",
+		Help:      "Number of submit transactions cancelled",
+	})
 )
 
 type server struct {
@@ -378,6 +383,13 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		infoCacheInvalidations.WithLabelValues(fmt.Sprintf("%v", deleted)).Inc()
 	}
 
+	select {
+	case <-ctx.Done():
+		submitTransactionsCancelled.Inc()
+		return nil, status.Error(codes.Canceled, "caller cancelled")
+	default:
+	}
+
 	var submitResult transactionpb.SubmitTransactionResponse_Result
 	sig, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
@@ -520,6 +532,13 @@ func init() {
 			eventsWebhookFailures = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			logrus.WithError(err).Error("failed to register info events webhook failures")
+		}
+	}
+	if err := prometheus.Register(submitTransactionsCancelled); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			submitTransactionsCancelled = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			logrus.WithError(err).Error("failed to register submit transaction cancellations")
 		}
 	}
 }
