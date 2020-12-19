@@ -82,6 +82,11 @@ func (d *db) Get(ctx context.Context, txHash []byte) (*commonpb.InvoiceList, err
 		Key: map[string]dynamodb.AttributeValue{
 			hashKey: {B: txHash},
 		},
+		// We use consistent reads here, just in case the events webhook
+		// is super quick on the 'unconfirmed case'.
+		//
+		// todo: maybe not needed, but let's be safe for now.
+		ConsistentRead: aws.Bool(true),
 	}).Send(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get invoice")

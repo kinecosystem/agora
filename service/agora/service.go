@@ -597,21 +597,35 @@ func (a *app) Init(_ agoraapp.Config) error {
 			authorizer,
 			kin3Migrator,
 			infoCache,
+			eventsProcessor,
 			kinToken,
 			subsidizer,
 			migratorHorizonClient,
 		)
 
 		kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
-		kin4EventsIngestor := solanaingestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
+
+		/*
+			Currently supported by "insta events" (i.e. triggered from Submit()).
+
+			kin4EventsIngestor := solanaingestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
+			kin4EventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin4", 10*time.Second)
+			if err != nil {
+				return errors.Wrap(err, "failed to init kin 4 events ingestion lock")
+			}
+			go func() {
+				err := ingestion.Run(ctx, kin4EventsLock, committer, eventsProcessor, kin4EventsIngestor)
+				if err != nil && err != context.Canceled {
+					log.WithError(err).Warn("kin 4 events ingestion loop terminated")
+				} else {
+					log.WithError(err).Info("kin 4 events ingestion loop terminated")
+				}
+			}()
+		*/
 
 		kin4HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin4", 10*time.Second)
 		if err != nil {
 			return errors.Wrap(err, "failed to init kin 4 history ingestion lock")
-		}
-		kin4EventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin4", 10*time.Second)
-		if err != nil {
-			return errors.Wrap(err, "failed to init kin 4 events ingestion lock")
 		}
 
 		//
@@ -631,14 +645,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 				log.WithError(err).Warn("kin 4 history ingestion loop terminated")
 			} else {
 				log.WithError(err).Info("kin 4 history ingestion loop terminated")
-			}
-		}()
-		go func() {
-			err := ingestion.Run(ctx, kin4EventsLock, committer, eventsProcessor, kin4EventsIngestor)
-			if err != nil && err != context.Canceled {
-				log.WithError(err).Warn("kin 4 events ingestion loop terminated")
-			} else {
-				log.WithError(err).Info("kin 4 events ingestion loop terminated")
 			}
 		}()
 	} else {

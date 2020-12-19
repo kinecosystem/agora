@@ -32,6 +32,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora/pkg/webhook/events"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
@@ -47,19 +48,25 @@ var (
 		Name:      "info_cache_invalidations",
 		Help:      "Number of info cache invalidations",
 	}, []string{"deleted"})
+	eventsWebhookFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_webhook_failures",
+		Help:      "Number of submit transaction webhook failures",
+	})
 )
 
 type server struct {
-	log          *logrus.Entry
-	sc           solana.Client
-	scSubmit     solana.Client
-	tc           *token.Client
-	loader       *loader
-	invoiceStore invoice.Store
-	history      history.ReaderWriter
-	authorizer   transaction.Authorizer
-	migrator     migration.Migrator
-	infoCache    accountinfo.Cache
+	log             *logrus.Entry
+	sc              solana.Client
+	scSubmit        solana.Client
+	tc              *token.Client
+	loader          *loader
+	invoiceStore    invoice.Store
+	history         history.ReaderWriter
+	authorizer      transaction.Authorizer
+	migrator        migration.Migrator
+	infoCache       accountinfo.Cache
+	eventsSubmitter events.Submitter
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
@@ -80,6 +87,7 @@ func New(
 	authorizer transaction.Authorizer,
 	migrator migration.Migrator,
 	infoCache accountinfo.Cache,
+	eventsSubmitter events.Submitter,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	hc horizon.ClientInterface,
@@ -101,6 +109,7 @@ func New(
 		authorizer:      authorizer,
 		migrator:        migrator,
 		infoCache:       infoCache,
+		eventsSubmitter: eventsSubmitter,
 		token:           tokenAccount,
 		subsidizer:      subsidizer,
 		hc:              hc,
@@ -432,6 +441,11 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
+	if err := s.eventsSubmitter.Submit(ctx, entry); err != nil {
+		log.WithError(err).Warn("failed to forward webhook")
+		eventsWebhookFailures.Inc()
+	}
+
 	submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
 
 	return &transactionpb.SubmitTransactionResponse{
@@ -499,6 +513,13 @@ func init() {
 			infoCacheInvalidations = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			logrus.WithError(err).Error("failed to register info cache invalidations")
+		}
+	}
+	if err := prometheus.Register(eventsWebhookFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			eventsWebhookFailures = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			logrus.WithError(err).Error("failed to register info events webhook failures")
 		}
 	}
 }

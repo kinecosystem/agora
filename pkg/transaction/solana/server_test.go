@@ -57,6 +57,7 @@ type serverEnv struct {
 	committer    ingestion.Committer
 	authorizer   *mockAuthorizer
 	infoCache    accountinfo.Cache
+	submitter    *mockSubmitter
 
 	hClient *horizon.MockClient
 }
@@ -68,6 +69,15 @@ type mockAuthorizer struct {
 func (m *mockAuthorizer) Authorize(ctx context.Context, txn transaction.Transaction) (transaction.Authorization, error) {
 	args := m.Called(ctx, txn)
 	return args.Get(0).(transaction.Authorization), args.Error(1)
+}
+
+type mockSubmitter struct {
+	mock.Mock
+}
+
+func (m *mockSubmitter) Submit(ctx context.Context, e *model.Entry) error {
+	args := m.Called(ctx, e)
+	return args.Error(0)
 }
 
 func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
@@ -87,6 +97,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 	env.authorizer = &mockAuthorizer{}
 	env.infoCache, err = infocachememory.New(5*time.Second, 5*time.Second, 1000)
 	require.NoError(t, err)
+	env.submitter = &mockSubmitter{}
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
 	token := testutil.GenerateSolanaKeypair(t)
@@ -105,6 +116,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 		env.authorizer,
 		migration.NewNoopMigrator(),
 		env.infoCache,
+		env.submitter,
 		env.token,
 		env.subsidizer,
 		env.hClient,
@@ -315,6 +327,8 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
 
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
+
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
 
@@ -365,6 +379,10 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 		_, err := env.infoCache.Get(context.Background(), a)
 		assert.Equal(t, err, accountinfo.ErrAccountInfoNotFound)
 	}
+
+	env.submitter.AssertExpectations(t)
+	submittedEntry := env.submitter.Calls[0].Arguments.Get(1).(*model.Entry)
+	assert.EqualValues(t, txn.Marshal(), submittedEntry.GetSolana().Transaction)
 }
 
 func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
@@ -380,6 +398,7 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -455,6 +474,7 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -506,6 +526,7 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -554,6 +575,7 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -619,6 +641,7 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -670,6 +693,7 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))

@@ -30,6 +30,10 @@ const (
 	IngestionQueueName = "events-ingestion-queue"
 )
 
+type Submitter interface {
+	Submit(context.Context, *model.Entry) error
+}
+
 // Processor processes transactions as a history.Writer, and notifies
 // webhooks about said transactions via a taskqueue.
 type Processor struct {
@@ -64,6 +68,11 @@ func NewProcessor(
 	}
 
 	return p, nil
+}
+
+// Submit implements Submitter.Submit.
+func (p *Processor) Submit(ctx context.Context, entry *model.Entry) error {
+	return p.Write(ctx, entry)
 }
 
 // Write implements history.Writer.Write.
