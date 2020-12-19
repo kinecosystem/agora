@@ -1,9 +1,10 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
+	"encoding/csv"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -41,7 +42,7 @@ func queueRun(_ *cobra.Command, args []string) error {
 
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "file://") {
-			files = append(files, arg)
+			files = append(files, arg[len("file://"):])
 			continue
 		}
 
@@ -83,14 +84,14 @@ func queueRun(_ *cobra.Command, args []string) error {
 	}
 
 	for _, url := range postgresURLs {
-		log.Println("Processing:", url)
+		log.Println("Processing postgres:", url)
 		if err := queuePostgres(url); err != nil {
 			return err
 		}
 	}
 
 	for _, f := range files {
-		log.Println("Processing:", f)
+		log.Println("Processing file:", f)
 		if err := queueFile(f, ignoreZeroBalance); err != nil {
 			return err
 		}
@@ -106,14 +107,18 @@ func queueFile(path string, ignoreZeroBalance bool) error {
 	}
 
 	req := &migrationpb.QueueRequest{}
+	csvr := csv.NewReader(f)
 
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		k, err := strkey.Decode(strkey.VersionByteAccountID, s.Text())
+	var count int
+	var fields []string
+	for fields, err = csvr.Read(); err == nil; fields, err = csvr.Read() {
+		count++
+		accountField := fields[0]
+		k, err := strkey.Decode(strkey.VersionByteAccountID, accountField)
 		if err != nil {
-			k, err = base58.Decode(s.Text())
+			k, err = base58.Decode(accountField)
 			if err != nil {
-				return errors.Wrap(err, "invalid key")
+				return errors.Wrapf(err, "invalid key: %s", accountField)
 			}
 		}
 
@@ -129,6 +134,10 @@ func queueFile(path string, ignoreZeroBalance bool) error {
 			}
 
 			req = &migrationpb.QueueRequest{}
+		}
+
+		if count%10000 == 0 {
+			fmt.Println("Processed:", count)
 		}
 	}
 

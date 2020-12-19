@@ -73,7 +73,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(solanaEndpointEnv) == "" {
 		return errors.New("must specify solana endpoint")
 	}
-	if os.Getenv(horizonURLEnv) != "" {
+	if os.Getenv(horizonURLEnv) == "" {
 		return errors.New("must specify horizon endpoint")
 	}
 	if os.Getenv(subsidizerKeypairIDEnv) == "" {
