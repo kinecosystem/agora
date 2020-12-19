@@ -14,6 +14,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
@@ -58,7 +59,23 @@ var (
 		Name:      "submit_transactions_cancelled",
 		Help:      "Number of submit transactions cancelled",
 	})
+	transferByDest = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "transfer_by_dest",
+		Help:      "Number of transfers by destination",
+	}, []string{"dest"})
 )
+
+var destWhitelist = map[string]struct{}{
+	"Fapzahf3E91zAvr1yvNw3mYLv7t2DR6EnT8xjY74fT7C": {}, // Rave
+	"4bRrapNAChmZMLugZacanKfqW5KyHygcWEReBVNiMTUU": {}, // Rave (owner)
+	"CncYnFygz323VNY6okoiv6ycByLumgHzXSBFzXDDFNEZ": {}, // Peerbet
+	"BUS5SyrVLhgakivdRcmZE5F69HdR8xJBjHTiF2mqdKpt": {}, // Peerbet (owner)
+	"2K8XpTqVAheX9cF2niwkTQQBajEwr84TeP34wiYUCoLy": {}, // PauseFor
+	"3rad7aFPdJS3CkYPSphtDAWCNB8BYpV2yc7o5ZjFQbDb": {}, // PauseFor (owner)
+	"7cqCpmzfZphbhzctXLJVabxQecFtYp6Bg4vQXo11SiNM": {}, // Poppin
+	"ejsuFLdZo3YBu4qeuSw9ozbFPwPaUd3Xc2PPuDRpPdS":  {}, // Poppin (owner)
+}
 
 type server struct {
 	log             *logrus.Entry
@@ -242,6 +259,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
 		transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[0].Source, transfers[0].Destination})
+
+		// note: this really should be 'unique', but let's go by transfer for now.
+		destKey := base58.Encode(transfers[0].Destination)
+		if _, ok := destWhitelist[destKey]; ok {
+			transferByDest.WithLabelValues(destKey).Inc()
+		}
 	default:
 		var offset int
 		if m, err := memo.DecompileMemo(txn.Message, 0); err == nil {
@@ -256,6 +279,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 			}
 			transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[i].Source, transfers[i].Destination})
+
+			// note: this really should be 'unique', but let's go by transfer for now.
+			destKey := base58.Encode(transfers[i].Destination)
+			if _, ok := destWhitelist[destKey]; ok {
+				transferByDest.WithLabelValues(destKey).Inc()
+			}
 		}
 
 		if req.InvoiceList != nil && len(req.InvoiceList.Invoices) != len(transfers) {
@@ -539,6 +568,13 @@ func init() {
 			submitTransactionsCancelled = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			logrus.WithError(err).Error("failed to register submit transaction cancellations")
+		}
+	}
+	if err := prometheus.Register(transferByDest); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			transferByDest = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register transfer by dest")
 		}
 	}
 }
