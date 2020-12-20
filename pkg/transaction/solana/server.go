@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
@@ -46,30 +46,31 @@ var (
 		Name:      "submit_transaction_result",
 		Help:      "Number of submit transaction results for OK",
 	}, []string{"result"})
-	infoCacheInvalidations = prometheus.NewCounterVec(prometheus.CounterOpts{
+	infoCacheSpeculativeUpdates = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
-		Name:      "info_cache_invalidations",
-		Help:      "Number of info cache invalidations",
-	}, []string{"deleted"})
+		Name:      "info_cache_speculative_updates",
+	})
+	infoCacheFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "info_cache_failures",
+	}, []string{"type"})
 	eventsWebhookFailures = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "submit_transaction_webhook_failures",
-		Help:      "Number of submit transaction webhook failures",
 	})
 	submitTransactionsCancelled = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "submit_transactions_cancelled",
-		Help:      "Number of submit transactions cancelled",
 	})
 	transferByDest = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "transfer_by_dest",
-		Help:      "Number of transfers by destination",
+		Help:      "Number of transfers by destination (whitelisted)",
 	}, []string{"dest"})
 	dedupesByType = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
-		Name:      "dedupes",
-		Help:      "Number of transfers by type",
+		Name:      "transfer_dedupes",
+		Help:      "Number of deuplications by type",
 	}, []string{"type"})
 	dedupeTransitionFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
@@ -261,6 +262,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	var transfers []*token.DecompiledTransferAccount
 	var transferAccountPairs [][]ed25519.PublicKey
 
+	transferStates := make(map[string]int64)
+
 	//
 	// Parse out Transfer() and Memo() instructions.
 	//
@@ -274,6 +277,9 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
 		transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[0].Source, transfers[0].Destination})
+
+		transferStates[string(transfers[0].Source)] -= int64(transfers[0].Amount)
+		transferStates[string(transfers[0].Destination)] += int64(transfers[0].Amount)
 
 		// note: this really should be 'unique', but let's go by transfer for now.
 		destKey := base58.Encode(transfers[0].Destination)
@@ -294,6 +300,9 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 			}
 			transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfers[i].Source, transfers[i].Destination})
+
+			transferStates[string(transfers[i].Source)] -= int64(transfers[i].Amount)
+			transferStates[string(transfers[i].Destination)] += int64(transfers[i].Amount)
 
 			// note: this really should be 'unique', but let's go by transfer for now.
 			destKey := base58.Encode(transfers[i].Destination)
@@ -467,19 +476,23 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
-	// Invalidate before hand, assuming transaction will be successful.
-	invalidationKeys := make(map[string]struct{})
-	for _, pair := range transferAccountPairs {
-		for _, p := range pair {
-			invalidationKeys[string(p)] = struct{}{}
+	// Instead of directly invalidating, we update it to the predicted amount.
+	//
+	// todo: parallelize for larger sizes (earns)
+	for k := range transferStates {
+		account, err := s.tc.GetAccount(ed25519.PublicKey(k), solanautil.CommitmentFromProto(req.Commitment))
+		if err == token.ErrAccountNotFound || err == token.ErrInvalidTokenAccount {
+			continue
+		} else if err != nil {
+			infoCacheFailures.WithLabelValues("speculative_load").Inc()
+			continue
+		} else if account == nil {
+			log.Warn("successful load of account, but no account info!")
+			continue
 		}
-	}
-	for k := range invalidationKeys {
-		deleted, err := s.infoCache.Del(ctx, ed25519.PublicKey(k))
-		if err != nil {
-			log.WithError(err).Warn("failed to invalidate info cache")
-		}
-		infoCacheInvalidations.WithLabelValues(fmt.Sprintf("%v", deleted)).Inc()
+
+		// Add the balance to the difference, resulting in the predicted balance.
+		transferStates[k] += int64(account.Amount)
 	}
 
 	select {
@@ -541,6 +554,23 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				Transaction: txn.Marshal(),
 			},
 		},
+	}
+
+	if submitResult == transactionpb.SubmitTransactionResponse_OK {
+		for k, balance := range transferStates {
+			err := s.infoCache.Put(ctx, &accountpb.AccountInfo{
+				AccountId: &commonpb.SolanaAccountId{
+					Value: ed25519.PublicKey(k),
+				},
+				Balance: balance,
+			})
+			if err != nil {
+				infoCacheFailures.WithLabelValues("speculative_write").Inc()
+				log.WithError(err).Warn("failed to update info cache")
+			} else {
+				infoCacheSpeculativeUpdates.Inc()
+			}
+		}
 	}
 
 	if err := s.history.Write(ctx, entry); err != nil {
@@ -630,49 +660,56 @@ func init() {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			submitTxResultCounter = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
-			logrus.WithError(err).Error("failed to register submit transaction result counter")
+			logrus.WithError(err).Error("failed to register submitTxResultCounter")
 		}
 	}
-	if err := prometheus.Register(infoCacheInvalidations); err != nil {
+	if err := prometheus.Register(infoCacheSpeculativeUpdates); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			infoCacheInvalidations = e.ExistingCollector.(*prometheus.CounterVec)
+			infoCacheSpeculativeUpdates = e.ExistingCollector.(prometheus.Counter)
 		} else {
-			logrus.WithError(err).Error("failed to register info cache invalidations")
+			logrus.WithError(err).Error("failed to register infoCacheSpeculativeUpdates")
+		}
+	}
+	if err := prometheus.Register(infoCacheFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			infoCacheFailures = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register infoCacheFailures")
 		}
 	}
 	if err := prometheus.Register(eventsWebhookFailures); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			eventsWebhookFailures = e.ExistingCollector.(prometheus.Counter)
 		} else {
-			logrus.WithError(err).Error("failed to register info events webhook failures")
+			logrus.WithError(err).Error("failed to register eventsWebhookFailures")
 		}
 	}
 	if err := prometheus.Register(submitTransactionsCancelled); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			submitTransactionsCancelled = e.ExistingCollector.(prometheus.Counter)
 		} else {
-			logrus.WithError(err).Error("failed to register submit transaction cancellations")
+			logrus.WithError(err).Error("failed to register submitTransactionsCancelled")
 		}
 	}
 	if err := prometheus.Register(transferByDest); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			transferByDest = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
-			logrus.WithError(err).Error("failed to register transfer by dest")
+			logrus.WithError(err).Error("failed to register transferByDest")
 		}
 	}
 	if err := prometheus.Register(dedupesByType); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			dedupesByType = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
-			logrus.WithError(err).Error("failed to register dedupes by dedupes")
+			logrus.WithError(err).Error("failed to register dedupesByType")
 		}
 	}
 	if err := prometheus.Register(dedupeTransitionFailures); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			dedupeTransitionFailures = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
-			logrus.WithError(err).Error("failed to register dedupe transition failures")
+			logrus.WithError(err).Error("failed to register dedupeTransitionFailures")
 		}
 	}
 }

@@ -335,6 +335,32 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
 
+	senderInfo := token.Account{
+		Mint:   env.token,
+		Owner:  accounts[0],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	receiverInfo := token.Account{
+		Mint:   env.token,
+		Owner:  accounts[1],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	accountInfos := []solana.AccountInfo{
+		{
+			Owner: token.ProgramKey,
+			Data:  senderInfo.Marshal(),
+		},
+		{
+			Owner: token.ProgramKey,
+			Data:  receiverInfo.Marshal(),
+		},
+	}
+
+	env.sc.On("GetAccountInfo", accounts[0], mock.Anything).Return(accountInfos[0], nil)
+	env.sc.On("GetAccountInfo", accounts[1], mock.Anything).Return(accountInfos[1], nil)
+
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
 
@@ -381,9 +407,16 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
 	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 
-	for _, a := range accounts {
-		_, err := env.infoCache.Get(context.Background(), a)
-		assert.Equal(t, err, accountinfo.ErrAccountInfoNotFound)
+	// Ensure speculative updates is working
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, 9, info.Balance)
+		} else {
+			assert.EqualValues(t, 11, info.Balance)
+		}
 	}
 
 	env.submitter.AssertExpectations(t)
@@ -405,6 +438,7 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -478,6 +512,7 @@ func TestSubmitTransaction_DedupeSuccess(t *testing.T) {
 	}
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Once()
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Once()
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -533,6 +568,7 @@ func TestSubmitTransaction_DedupeFailed(t *testing.T) {
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
 
 	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).Return(sig, &solana.SignatureStatus{}, errors.New("unexpected")).Times(2)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	for _, a := range accounts {
 		info := &accountpb.AccountInfo{
@@ -588,6 +624,7 @@ func TestSubmitTransaction_DedupeConcurrent(t *testing.T) {
 	}
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(2)
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(2)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -657,7 +694,20 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
+
+	for _, a := range accounts {
+		tokenAccountInfo := token.Account{
+			Mint:   env.token,
+			Owner:  a,
+			Amount: 100,
+		}
+		accountInfo := solana.AccountInfo{
+			Owner: token.ProgramKey,
+			Data:  tokenAccountInfo.Marshal(),
+		}
+		env.sc.On("GetAccountInfo", a, mock.Anything).Return(accountInfo, nil)
+	}
 
 	var authTx transaction.Transaction
 	auth := transaction.Authorization{
@@ -698,6 +748,99 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 
 	assert.NoError(t, txn.Sign(env.subsidizer))
 
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			// Receivers get: 1, 2, and 3. We could use (n/2)(n[0]+n[len(n)]),
+			// but we're not actually changing this, and it makes it less clear
+			assert.EqualValues(t, 94, info.Balance)
+		} else {
+			assert.EqualValues(t, 100+i, info.Balance)
+		}
+	}
+
+	assert.NotNil(t, authTx.SignRequest)
+	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
+	assert.Nil(t, authTx.SignRequest.InvoiceList)
+	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
+}
+
+func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
+
+	for i, a := range accounts {
+		if i == 0 {
+			env.sc.On("GetAccountInfo", a, mock.Anything).Return(solana.AccountInfo{}, errors.New("failure"))
+			continue
+		}
+
+		tokenAccountInfo := token.Account{
+			Mint:   env.token,
+			Owner:  a,
+			Amount: 100,
+		}
+		accountInfo := solana.AccountInfo{
+			Owner: token.ProgramKey,
+			Data:  tokenAccountInfo.Marshal(),
+		}
+		env.sc.On("GetAccountInfo", a, mock.Anything).Return(accountInfo, nil)
+	}
+
+	var authTx transaction.Transaction
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+	}
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
+		authTx = args.Get(1).(transaction.Transaction)
+	})
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	var submitted solana.Transaction
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).
+		Run(func(args mock.Arguments) {
+			submitted = args.Get(0).(solana.Transaction)
+		}).
+		Return(sig, &solana.SignatureStatus{}, nil)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, sig[:], resp.Signature.Value)
+	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
+	assert.Len(t, env.rw.Writes, 1)
+
+	assert.EqualValues(t, 4, authTx.Version)
+	assert.EqualValues(t, 3, authTx.OpCount)
+	assert.EqualValues(t, sig[:], authTx.ID)
+	assert.Nil(t, authTx.InvoiceList)
+	assert.Nil(t, authTx.Memo.Memo)
+	assert.Nil(t, authTx.Memo.Text)
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+
+		if i == 0 {
+			assert.Error(t, accountinfo.ErrAccountInfoNotFound)
+		} else {
+			assert.NoError(t, err)
+			assert.EqualValues(t, 100+i, info.Balance)
+		}
+	}
+
 	assert.NotNil(t, authTx.SignRequest)
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
@@ -719,6 +862,7 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -772,6 +916,7 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
 	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).Return(sig, &solana.SignatureStatus{}, nil)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		Transaction: &commonpb.Transaction{
@@ -834,6 +979,7 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -886,6 +1032,7 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
 	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -1017,6 +1164,7 @@ func TestSubmitTransaction_SubmitError(t *testing.T) {
 		Result: transaction.AuthorizationResultOK,
 	}
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil)
+	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
