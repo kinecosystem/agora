@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
@@ -29,6 +30,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/transaction/dedupe"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
@@ -64,6 +66,16 @@ var (
 		Name:      "transfer_by_dest",
 		Help:      "Number of transfers by destination",
 	}, []string{"dest"})
+	dedupesByType = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "dedupes",
+		Help:      "Number of transfers by type",
+	}, []string{"type"})
+	dedupeTransitionFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "dedupe_transition_failures",
+		Help:      "Number of failures to update dedupe info",
+	}, []string{"op"})
 )
 
 var destWhitelist = map[string]struct{}{
@@ -89,6 +101,7 @@ type server struct {
 	migrator        migration.Migrator
 	infoCache       accountinfo.Cache
 	eventsSubmitter events.Submitter
+	deduper         dedupe.Deduper
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
@@ -110,6 +123,7 @@ func New(
 	migrator migration.Migrator,
 	infoCache accountinfo.Cache,
 	eventsSubmitter events.Submitter,
+	deduper dedupe.Deduper,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	hc horizon.ClientInterface,
@@ -132,6 +146,7 @@ func New(
 		migrator:        migrator,
 		infoCache:       infoCache,
 		eventsSubmitter: eventsSubmitter,
+		deduper:         deduper,
 		token:           tokenAccount,
 		subsidizer:      subsidizer,
 		hc:              hc,
@@ -354,6 +369,61 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	//
+	// Check our duplicate stores to see if a transaction has already been submitted
+	// with this id.
+	//
+	// Note: empty dedupe id is a noop to dedupers.
+	//
+	dedupeInfo := &dedupe.Info{
+		Signature:      txn.Signature(),
+		SubmissionTime: time.Now(),
+	}
+	prev, err := s.deduper.Dedupe(ctx, req.DedupeId, dedupeInfo)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to check deduper")
+	}
+
+	// If there is a previous 'claim' to the dedupe 'session', then we should
+	// not proceed with processing here.
+	if prev != nil {
+		var resp *transactionpb.SubmitTransactionResponse
+
+		// If we have a previous response, then we're terminal and can just
+		// return that.
+		//
+		// Otherwise, we only continue if the transaction was
+		// the same as before, allowing retries
+		if prev.Response != nil {
+			dedupesByType.WithLabelValues("final").Inc()
+			resp = prev.Response
+		} else {
+			dedupesByType.WithLabelValues("concurrent").Inc()
+			resp = &transactionpb.SubmitTransactionResponse{
+				Result: transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED,
+				Signature: &commonpb.TransactionSignature{
+					Value: prev.Signature,
+				},
+			}
+		}
+
+		return resp, nil
+	}
+
+	var noClearDedupe bool
+	defer func() {
+		if noClearDedupe {
+			return
+		}
+
+		if err := s.deduper.Delete(context.Background(), req.DedupeId); err != nil {
+			dedupeTransitionFailures.WithLabelValues("delete").Inc()
+			log.WithError(err).
+				WithField("id", base64.StdEncoding.EncodeToString(req.DedupeId)).
+				Warn("failed to delete dedupe")
+		}
+	}()
+
+	//
 	// Authorization
 	//
 	result, err := s.authorizer.Authorize(ctx, tx)
@@ -455,6 +525,10 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				resp.TransactionError = txError
 			}
 
+			dedupeInfo.Response = resp
+			if err := s.deduper.Update(ctx, req.DedupeId, dedupeInfo); err != nil {
+				log.WithError(err).Warn("failed to update dedupe info")
+			}
 			return resp, nil
 		}
 	}
@@ -489,12 +563,22 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 
 	submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
 
-	return &transactionpb.SubmitTransactionResponse{
+	resp := &transactionpb.SubmitTransactionResponse{
 		Result: submitResult,
 		Signature: &commonpb.TransactionSignature{
 			Value: sig[:],
 		},
-	}, nil
+	}
+
+	// Since we have a 'success' response, we do not want to clear the dedupe info.
+	noClearDedupe = true
+	dedupeInfo.Response = resp
+	if err := s.deduper.Update(ctx, req.DedupeId, dedupeInfo); err != nil {
+		dedupeTransitionFailures.WithLabelValues("update").Inc()
+		log.WithError(err).Warn("failed to update dedupe info")
+	}
+
+	return resp, nil
 }
 
 // GetTransaction returns a transaction and additional off-chain
@@ -575,6 +659,20 @@ func init() {
 			transferByDest = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			logrus.WithError(err).Error("failed to register transfer by dest")
+		}
+	}
+	if err := prometheus.Register(dedupesByType); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			dedupesByType = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register dedupes by dedupes")
+		}
+	}
+	if err := prometheus.Register(dedupeTransitionFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			dedupeTransitionFailures = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register dedupe transition failures")
 		}
 	}
 }

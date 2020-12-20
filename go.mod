@@ -13,7 +13,7 @@ require (
 	github.com/golang/protobuf v1.4.3
 	github.com/hashicorp/golang-lru v0.5.1
 	github.com/jackc/pgx/v4 v4.9.2
-	github.com/kinecosystem/agora-api v0.23.0
+	github.com/kinecosystem/agora-api v0.25.0
 	github.com/kinecosystem/agora-common v0.59.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/mr-tron/base58 v1.2.0
@@ -25,13 +25,11 @@ require (
 	github.com/stellar/go v0.0.0-20191211203732-552e507ffa37
 	github.com/stretchr/testify v1.5.1
 	github.com/ybbus/jsonrpc v2.1.2+incompatible
-	go.uber.org/atomic v1.6.0
 	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
 	google.golang.org/api v0.36.0
 	google.golang.org/grpc v1.33.2
-	gotest.tools v2.2.0+incompatible
 )
 
 // This dependency of stellar/go no longer exists; use a forked version of the repo instead.

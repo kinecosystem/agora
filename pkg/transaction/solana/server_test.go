@@ -16,6 +16,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana/token"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	"github.com/kinecosystem/agora/pkg/transaction/dedupe"
+	dedupememory "github.com/kinecosystem/agora/pkg/transaction/dedupe/memory"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	ingestionmemory "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/memory"
 	historymemory "github.com/kinecosystem/agora/pkg/transaction/history/memory"
@@ -58,6 +61,7 @@ type serverEnv struct {
 	authorizer   *mockAuthorizer
 	infoCache    accountinfo.Cache
 	submitter    *mockSubmitter
+	deduper      dedupe.Deduper
 
 	hClient *horizon.MockClient
 }
@@ -98,6 +102,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 	env.infoCache, err = infocachememory.New(5*time.Second, 5*time.Second, 1000)
 	require.NoError(t, err)
 	env.submitter = &mockSubmitter{}
+	env.deduper = dedupememory.New()
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
 	token := testutil.GenerateSolanaKeypair(t)
@@ -117,6 +122,7 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 		migration.NewNoopMigrator(),
 		env.infoCache,
 		env.submitter,
+		env.deduper,
 		env.token,
 		env.subsidizer,
 		env.hClient,
@@ -459,6 +465,192 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	assert.Equal(t, sig[:], resp.Signature.Value)
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 2)
+}
+
+func TestSubmitTransaction_DedupeSuccess(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+	}
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Once()
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Once()
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).Return(sig, &solana.SignatureStatus{}, nil).Once()
+
+	for _, a := range accounts {
+		info := &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: a,
+			},
+			Balance: 10,
+		}
+		assert.NoError(t, env.infoCache.Put(context.Background(), info))
+	}
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+		DedupeId:   []byte("dupe1"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	require.NotEmpty(t, sig[:], resp.Signature.Value)
+
+	resp, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+		DedupeId:   []byte("dupe1"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	require.NotEmpty(t, sig[:], resp.Signature.Value)
+}
+
+func TestSubmitTransaction_DedupeFailed(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+
+	// Since the calls fail, we expect that retries at a higher level go through.
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+	}
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(4)
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).Return(sig, &solana.SignatureStatus{}, errors.New("unexpected")).Times(2)
+
+	for _, a := range accounts {
+		info := &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: a,
+			},
+			Balance: 10,
+		}
+		assert.NoError(t, env.infoCache.Put(context.Background(), info))
+	}
+
+	for i := 0; i < 2; i++ {
+		_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			Transaction: &commonpb.Transaction{
+				Value: txn.Marshal(),
+			},
+			Commitment: common.Commitment_ROOT,
+			DedupeId:   []byte("failed"),
+		})
+		assert.Error(t, err)
+	}
+
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{
+		ErrorResult: solana.NewTransactionError(solana.TransactionErrorAccountNotFound),
+	}, nil).Times(2)
+
+	for i := 0; i < 2; i++ {
+		resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			Transaction: &commonpb.Transaction{
+				Value: txn.Marshal(),
+			},
+			Commitment: common.Commitment_MAX,
+			DedupeId:   []byte("failed"),
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, transactionpb.SubmitTransactionResponse_FAILED, resp.Result)
+		assert.NotNil(t, resp.TransactionError)
+		require.NotEmpty(t, sig[:], resp.Signature.Value)
+	}
+
+	env.authorizer.AssertExpectations(t)
+	env.submitter.AssertExpectations(t)
+}
+
+func TestSubmitTransaction_DedupeConcurrent(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+	}
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(2)
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(2)
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).Return(sig, &solana.SignatureStatus{}, nil).Times(2)
+
+	for _, a := range accounts {
+		info := &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: a,
+			},
+			Balance: 10,
+		}
+		assert.NoError(t, env.infoCache.Put(context.Background(), info))
+	}
+
+	assert.NoError(t, env.deduper.Update(context.Background(), []byte("limbo"), &dedupe.Info{
+		Signature:      sig[:],
+		Response:       nil,
+		SubmissionTime: time.Now(),
+	}))
+
+	for i := 0; i < 5; i++ {
+		resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+			Transaction: &commonpb.Transaction{
+				Value: txn.Marshal(),
+			},
+			Commitment: common.Commitment_ROOT,
+			DedupeId:   []byte("limbo"),
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, transactionpb.SubmitTransactionResponse_ALREADY_SUBMITTED, resp.Result)
+		require.NotEmpty(t, sig[:], resp.Signature.Value)
+	}
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+		DedupeId:   []byte("unrelated"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	assert.Nil(t, resp.TransactionError)
+	require.NotEmpty(t, sig[:], resp.Signature.Value)
+
+	assert.NoError(t, env.deduper.Delete(context.Background(), []byte("limbo")))
+
+	resp, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+		DedupeId:   []byte("limbo"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	assert.Nil(t, resp.TransactionError)
+	require.NotEmpty(t, sig[:], resp.Signature.Value)
+
+	env.authorizer.AssertExpectations(t)
+	env.submitter.AssertExpectations(t)
 }
 
 func TestSubmitTransaction_Plain_Batch(t *testing.T) {

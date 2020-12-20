@@ -57,6 +57,7 @@ import (
 	kin3migrator "github.com/kinecosystem/agora/pkg/migration/kin3"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/transaction"
+	deduper "github.com/kinecosystem/agora/pkg/transaction/dedupe/dynamodb"
 	historyrw "github.com/kinecosystem/agora/pkg/transaction/history/dynamodb"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	ingestioncommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
@@ -119,6 +120,7 @@ const (
 
 	accountInfoTTL         = 1 * time.Minute
 	negativeAccountInfoTTL = 15 * time.Second
+	dedupeTTL              = 24 * time.Hour
 )
 
 type app struct {
@@ -566,6 +568,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		mapperStore := mapperdb.New(dynamoClient)
 		mapper := account.NewMapper(token.NewClient(solanaClient, kinToken), mapperStore)
 		infoCache := infocache.New(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
+		deduper := deduper.New(dynamoClient, dedupeTTL)
 
 		a.accountSolana, err = accountsolana.New(
 			solanaClient,
@@ -598,6 +601,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kin3Migrator,
 			infoCache,
 			eventsProcessor,
+			deduper,
 			kinToken,
 			subsidizer,
 			migratorHorizonClient,
