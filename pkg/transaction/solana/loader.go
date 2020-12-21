@@ -146,30 +146,31 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 			return nil, errors.Wrap(err, "failed to query signature status")
 		}
 
-		entry.GetSolana().Slot = stat.Slot
+		// If the signature is not found, we don't necessarily know if we asked
+		// too soon, or if the signature is so old there's no record. Since we have
+		// the history ingestor to assist, we will play it safe and assume it's not
+		// complete yet.
+		if err != solana.ErrSignatureNotFound {
+			entry.GetSolana().Slot = stat.Slot
 
-		// no signature status simply means there is no entry in Solana's
-		// signature status cache. This either means the transaction does not exist,
-		// or is old enough to be evicted. Since we already have an entry, we know it's
-		// the latter.
-		//
-		// Alternatively, if we have the status, and confirmations isn't set, it
-		// means the transaction was rooted, and therefore confirmed.
-		if err == solana.ErrSignatureNotFound || stat.Confirmations == nil {
-			blockTime, err := l.sc.GetBlockTime(stat.Slot)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to get transaction time")
-			}
-			ts, err := ptypes.TimestampProto(blockTime)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to marshal transaction time")
-			}
+			// If there are no confirmations, it means it's root, and therefore
+			// we can retrieve block times, and mark it as confirmed
+			if stat.Confirmations == nil {
+				blockTime, err := l.sc.GetBlockTime(stat.Slot)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to get transaction time")
+				}
+				ts, err := ptypes.TimestampProto(blockTime)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to marshal transaction time")
+				}
 
-			writeback = true
-			entry.GetSolana().BlockTime = ts
-			entry.GetSolana().Confirmed = true
-		} else if stat.Confirmations != nil {
-			confirmations = *stat.Confirmations
+				writeback = true
+				entry.GetSolana().BlockTime = ts
+				entry.GetSolana().Confirmed = true
+			} else if stat.Confirmations != nil {
+				confirmations = *stat.Confirmations
+			}
 		}
 	}
 

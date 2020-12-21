@@ -253,6 +253,33 @@ func TestLoadTransaction_UpgradeConfirmed(t *testing.T) {
 	assert.EqualValues(t, 0, resp.Confirmations)
 }
 
+func TestLoadTransaction_UpgradeNotConfirmed(t *testing.T) {
+	env := setup(t)
+
+	invoice, invoiceHash, _ := generateInvoice(t, 1)
+	sender := testutil.GenerateSolanaKeypair(t)
+	receivers := testutil.GenerateSolanaKeys(t, 1)
+	entry, hash := historytestutil.GenerateSolanaEntry(t, 1, false, sender, receivers, invoiceHash, nil)
+
+	require.NoError(t, env.rw.Write(context.Background(), entry))
+	require.NoError(t, env.invoiceStore.Put(context.Background(), hash, invoice))
+
+	txID, err := entry.GetTxID()
+	assert.NoError(t, err)
+	var sig solana.Signature
+	copy(sig[:], txID)
+
+	// Ensure we handle no signature gracefully
+	var sigStatus *solana.SignatureStatus
+	env.client.On("GetSignatureStatus", sig, mock.Anything).Return(sigStatus, solana.ErrSignatureNotFound)
+
+	resp, err := env.loader.loadTransaction(context.Background(), hash)
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.GetTransactionResponse_PENDING, resp.State)
+	assert.EqualValues(t, 1, resp.Slot)
+	assert.EqualValues(t, 0, resp.Confirmations)
+}
+
 func TestGetItems_Query(t *testing.T) {
 	env := setup(t)
 
