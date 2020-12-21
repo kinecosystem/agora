@@ -234,7 +234,7 @@ func TestLoadTransaction_UpgradeConfirmed(t *testing.T) {
 		Confirmations: &confirmations,
 	}
 
-	env.client.On("GetSignatureStatus", sig, mock.Anything).Return(status, nil)
+	env.client.On("GetSignatureStatuses", []solana.Signature{sig}, mock.Anything).Return([]*solana.SignatureStatus{status}, nil)
 	env.client.On("GetBlockTime", uint64(1)).Return(time.Now(), nil)
 
 	resp, err := env.loader.loadTransaction(context.Background(), hash)
@@ -270,8 +270,7 @@ func TestLoadTransaction_UpgradeNotConfirmed(t *testing.T) {
 	copy(sig[:], txID)
 
 	// Ensure we handle no signature gracefully
-	var sigStatus *solana.SignatureStatus
-	env.client.On("GetSignatureStatus", sig, mock.Anything).Return(sigStatus, solana.ErrSignatureNotFound)
+	env.client.On("GetSignatureStatuses", []solana.Signature{sig}, mock.Anything).Return([]*solana.SignatureStatus{nil}, nil)
 
 	resp, err := env.loader.loadTransaction(context.Background(), hash)
 	assert.NoError(t, err)

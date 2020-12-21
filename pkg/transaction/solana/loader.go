@@ -140,17 +140,24 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 
 	var confirmations int
 	if !entry.GetSolana().Confirmed {
-		// todo: should we allow commitment specification here? it's not super important.
-		stat, err := l.sc.GetSignatureStatus(sig, solana.CommitmentRecent)
-		if err != nil && err != solana.ErrSignatureNotFound {
+		// note: we use GetSignatureStatuses here instead of GetSignatureStatus
+		// since GetSignatureStatus retries on ErrSignatureNotFound. This is actually
+		// desired behavior for SubmitTransaction, as it waits for the signature to
+		// become visible before returning.
+		stats, err := l.sc.GetSignatureStatuses([]solana.Signature{sig})
+		if err != nil {
 			return nil, errors.Wrap(err, "failed to query signature status")
 		}
 
+		// Stat will be nil if the signature was not found.
+		//
 		// If the signature is not found, we don't necessarily know if we asked
 		// too soon, or if the signature is so old there's no record. Since we have
 		// the history ingestor to assist, we will play it safe and assume it's not
 		// complete yet.
-		if err != solana.ErrSignatureNotFound {
+		stat := stats[0]
+
+		if stat != nil {
 			entry.GetSolana().Slot = stat.Slot
 
 			// If there are no confirmations, it means it's root, and therefore

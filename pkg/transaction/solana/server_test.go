@@ -1044,12 +1044,12 @@ func TestSpeculativeLoad_Failures(t *testing.T) {
 	// No chain data at all for 6 -> 8, but cache data
 	for i := 6; i < len(accounts); i++ {
 		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
-		env.infoCache.Put(context.Background(), &accountpb.AccountInfo{
+		assert.NoError(t, env.infoCache.Put(context.Background(), &accountpb.AccountInfo{
 			AccountId: &commonpb.SolanaAccountId{
 				Value: accounts[i],
 			},
 			Balance: int64(10 + i),
-		})
+		}))
 	}
 
 	transferStates := make(map[string]int64)
