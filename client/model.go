@@ -90,6 +90,17 @@ type Payment struct {
 
 	Invoice *commonpb.Invoice
 	Memo    string
+
+	// DedupeID is a unique identifier used by the service to help prevent the
+	// accidental submission of the same intended transaction twice.
+
+	// If DedupeID is set, the service will check to see if a transaction
+	// was previously submitted with the same DedupeID. If one is found,
+	// it will NOT submit the transaction again, and will return the status
+	// of the previously submitted transaction.
+	//
+	// Only available on Kin 4.
+	DedupeID []byte
 }
 
 // ReadOnlyPayment represents a kin payment, where
@@ -247,9 +258,9 @@ func parsePaymentsFromTransaction(tx solana.Transaction, invoiceList *commonpb.I
 	return payments, nil
 }
 
-func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPayment, error) {
+func parseHistoryItem(item *transactionpbv4.HistoryItem) ([]ReadOnlyPayment, TransactionErrors, error) {
 	if item.InvoiceList != nil && len(item.InvoiceList.Invoices) != len(item.Payments) {
-		return nil, errors.Errorf(
+		return nil, TransactionErrors{}, errors.Errorf(
 			"provided invoice count (%d) does not match payment count (%d)",
 			len(item.InvoiceList.Invoices),
 			len(item.Payments),
@@ -258,19 +269,20 @@ func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPaymen
 
 	var textMemo string
 	var txType kin.TransactionType
+	var txErrors TransactionErrors
 
 	switch t := item.RawTransaction.(type) {
 	case *transactionpbv4.HistoryItem_SolanaTransaction:
 		tx := &solana.Transaction{}
 		err := tx.Unmarshal(t.SolanaTransaction.Value)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to unmarshal test transaction")
+			return nil, TransactionErrors{}, errors.Wrap(err, "failed to unmarshal test transaction")
 		}
 
 		if bytes.Equal(tx.Message.Accounts[tx.Message.Instructions[0].ProgramIndex], memo.ProgramKey) {
 			m, err := memo.DecompileMemo(tx.Message, 0)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to decompile memo instruction")
+				return nil, TransactionErrors{}, errors.Wrap(err, "failed to decompile memo instruction")
 			}
 			decoded := [32]byte{}
 			_, err = base64.StdEncoding.Decode(decoded[:], m.Data)
@@ -280,10 +292,11 @@ func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPaymen
 				textMemo = string(m.Data)
 			}
 		}
+		txErrors = errorsFromSolanaTx(tx, item.TransactionError)
 	case *transactionpbv4.HistoryItem_StellarTransaction:
 		var envelope xdr.TransactionEnvelope
 		if err := envelope.UnmarshalBinary(t.StellarTransaction.EnvelopeXdr); err != nil {
-			return nil, errors.Wrap(err, "failed to unmarshal xdr")
+			return nil, TransactionErrors{}, errors.Wrap(err, "failed to unmarshal xdr")
 		}
 
 		kinMemo, ok := kin.MemoFromXDR(envelope.Tx.Memo, true)
@@ -292,6 +305,7 @@ func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPaymen
 		} else if envelope.Tx.Memo.Text != nil {
 			textMemo = *envelope.Tx.Memo.Text
 		}
+		txErrors = errorsFromStellarTx(envelope, item.TransactionError)
 	}
 
 	payments := make([]ReadOnlyPayment, len(item.Payments))
@@ -310,7 +324,7 @@ func parsePaymentsFromProto(item *transactionpbv4.HistoryItem) ([]ReadOnlyPaymen
 		payments[i] = p
 	}
 
-	return payments, nil
+	return payments, txErrors, nil
 
 }
 
@@ -354,6 +368,17 @@ type EarnBatch struct {
 	Memo string
 
 	Earns []Earn
+
+	// DedupeID is a unique identifier used by the service to help prevent the
+	// accidental submission of the same intended transaction twice.
+
+	// If DedupeID is set, the service will check to see if a transaction
+	// was previously submitted with the same DedupeID. If one is found,
+	// it will NOT submit the transaction again, and will return the status
+	// of the previously submitted transaction.
+	//
+	// Only available on Kin 4.
+	DedupeID []byte
 }
 
 // Earn represents a earn payment in an earn batch.
@@ -363,20 +388,22 @@ type Earn struct {
 	Invoice     *commonpb.Invoice
 }
 
-// EarnBatchResult contains the result of an EarnBatch.
-//
-// All earns are contained in the union of {Succeeded, Failed}.
+// EarnBatchResult contains the result of an EarnBatch transaction.
 type EarnBatchResult struct {
-	Succeeded []EarnResult
-	Failed    []EarnResult
+	TxID []byte
+
+	// If TxError is defined, the transaction failed.
+	TxError error
+
+	// EarnErrors contains any available earn-specific error information.
+	//
+	// EarnErrors may or may not be set if TxError is set.
+	EarnErrors []EarnError
 }
 
-// EarnResult contains the result of a single earn within an
-// earn batch.
-type EarnResult struct {
-	TxID  []byte
-	Earn  Earn
-	Error error
+type EarnError struct {
+	EarnIndex int
+	Error     error
 }
 
 // AccountResolution is used to indicate which type of account resolution should be used if a transaction on Kin 4 fails

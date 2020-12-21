@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"math"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -560,12 +559,12 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment, opts ...Sol
 		return result.ID, err
 	}
 
-	if len(result.Errors.OpErrors) > 0 {
-		if len(result.Errors.OpErrors) != 1 {
-			return result.ID, errors.Errorf("invalid number of operation errors. expected 0 or 1, got %d", len(result.Errors.OpErrors))
+	if len(result.Errors.PaymentErrors) > 0 {
+		if len(result.Errors.PaymentErrors) != 1 {
+			return result.ID, errors.Errorf("invalid number of payment errors. expected 0 or 1, got %d", len(result.Errors.OpErrors))
 		}
 
-		return result.ID, result.Errors.OpErrors[0]
+		return result.ID, result.Errors.PaymentErrors[0]
 	}
 	if result.Errors.TxError != nil {
 		return result.ID, result.Errors.TxError
@@ -575,27 +574,25 @@ func (c *client) SubmitPayment(ctx context.Context, payment Payment, opts ...Sol
 			return result.ID, errors.Errorf("invalid number of invoice errors. expected 0 or 1, got %d", len(result.InvoiceErrors))
 		}
 
-		switch result.InvoiceErrors[0].Reason {
-		case commonpb.InvoiceError_ALREADY_PAID:
-			return result.ID, ErrAlreadyPaid
-		case commonpb.InvoiceError_WRONG_DESTINATION:
-			return result.ID, ErrWrongDestination
-		case commonpb.InvoiceError_SKU_NOT_FOUND:
-			return result.ID, ErrSKUNotFound
-		default:
-			return result.ID, errors.Errorf("unknown invoice error: %v", result.InvoiceErrors[0].Reason)
-		}
+		return result.ID, invoiceErrorFromProto(result.InvoiceErrors[0])
 	}
 
 	return result.ID, nil
 }
 
-// SubmitEarnBatch submits a batch of earn payments.
+// SubmitEarnBatch submits a batch of earn payments in a single transaction.
 //
-// The batch may be done in on or more transactions.
+// A batch is limited to 15 earns, which is roughly the max number of transfers
+// that can fit inside a Solana transaction
 func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch, opts ...SolanaOption) (result EarnBatchResult, err error) {
 	if c.opts.kinVersion > 4 || c.opts.kinVersion < 2 {
 		return result, errors.Errorf("unsupported kin version: %d", c.opts.kinVersion)
+	}
+	if len(batch.Earns) == 0 {
+		return result, errors.New("earn batch must contain at least 1 earn")
+	}
+	if len(batch.Earns) > 15 {
+		return result, errors.New("earn batch must not contain more than 15 earns")
 	}
 
 	// Verify that there isn't a mixed usage of Invoices and text Memos, so we can
@@ -619,18 +616,9 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch, opts ...S
 			}
 		}
 	}
-
 	if err != nil {
-		for _, r := range batch.Earns {
-			result.Failed = append(result.Failed, EarnResult{
-				Earn: r,
-			})
-		}
 		return result, err
 	}
-
-	var batches []EarnBatch
-	var config *transactionpbv4.GetServiceConfigResponse
 
 	solanaOpts := solanaOpts{
 		commitment:        c.opts.defaultCommitment,
@@ -641,22 +629,14 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch, opts ...S
 		o(&solanaOpts)
 	}
 
+	var submitResult SubmitTransactionResult
 	if c.opts.kinVersion == 2 || c.opts.kinVersion == 3 {
-		// Stellar has an operation batch size of 100, so we break apart the EarnBatch into
-		// sub-batches of 100 each.
-		for start := 0; start < len(batch.Earns); start += 100 {
-			end := int(math.Min(float64(start+100), float64(len(batch.Earns))))
-			b := EarnBatch{
-				Sender:  batch.Sender,
-				Channel: batch.Channel,
-				Memo:    batch.Memo,
-				Earns:   make([]Earn, end-start),
-			}
-			copy(b.Earns, batch.Earns[start:end])
-			batches = append(batches, b)
+		submitResult, err = c.submitEarnBatch(ctx, batch)
+		if err != nil {
+			return result, err
 		}
 	} else {
-		config, err = c.internal.GetServiceConfig(ctx)
+		config, err := c.internal.GetServiceConfig(ctx)
 		if err != nil {
 			return result, err
 		}
@@ -665,87 +645,33 @@ func (c *client) SubmitEarnBatch(ctx context.Context, batch EarnBatch, opts ...S
 			return result, ErrNoSubsidizer
 		}
 
-		batches = c.partitionSolanaEarns(batch, solanaOpts.accountResolution)
+		submitResult, err = c.submitEarnBatchWithResolution(ctx, batch, config, solanaOpts)
+		if err != nil {
+			return result, err
+		}
 	}
 
-	lastProcessedBatch := -1
-	for i, b := range batches {
-		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-		default:
-		}
-		if err != nil {
-			break
-		}
+	result.TxID = submitResult.ID
+	if submitResult.Errors.TxError != nil {
+		result.TxError = submitResult.Errors.TxError
 
-		// After this, the batch will always be considered 'processed', as
-		// we have performed a submitEarnBatch call, and the results for the batch
-		// will be handled (processed).
-		lastProcessedBatch = i
-
-		var submitResult SubmitTransactionResult
-
-		if c.opts.kinVersion == 2 || c.opts.kinVersion == 3 {
-			submitResult, err = c.submitEarnBatch(ctx, b)
-		} else {
-			submitResult, err = c.submitEarnBatchWithResolution(ctx, b, config, solanaOpts)
-		}
-
-		if err != nil {
-			for j := range b.Earns {
-				result.Failed = append(result.Failed, EarnResult{
-					Earn:  b.Earns[j],
-					Error: err,
-				})
-			}
-			break
-		}
-
-		// If there are no errors in the result, then the batch was successful.
-		if submitResult.Errors.TxError == nil {
-			for _, r := range b.Earns {
-				result.Succeeded = append(result.Succeeded, EarnResult{
-					TxID: submitResult.ID,
-					Earn: r,
-				})
-			}
-
-			continue
-		}
-
-		// At this point, we consider the batch failed.
-		err = submitResult.Errors.TxError
-
-		// If there was operation level errors, we set the individual results
-		// for this batch, and then mark the next batch as aborted.
-		if len(submitResult.Errors.OpErrors) > 0 {
-			for j, e := range submitResult.Errors.OpErrors {
-				result.Failed = append(result.Failed, EarnResult{
-					TxID:  submitResult.ID,
-					Earn:  b.Earns[j],
-					Error: e,
-				})
-			}
-		} else {
-			for j := range b.Earns {
-				result.Failed = append(result.Failed, EarnResult{
-					TxID:  submitResult.ID,
-					Earn:  b.Earns[j],
-					Error: err,
+		if len(submitResult.Errors.PaymentErrors) > 0 {
+			result.EarnErrors = make([]EarnError, 0)
+			for i, e := range submitResult.Errors.PaymentErrors {
+				result.EarnErrors = append(result.EarnErrors, EarnError{
+					EarnIndex: i,
+					Error:     e,
 				})
 			}
 		}
-
-		break
-	}
-
-	// Add all of the aborted earns to the Failed list.
-	for i := lastProcessedBatch + 1; i < len(batches); i++ {
-		for _, r := range batches[i].Earns {
-			result.Failed = append(result.Failed, EarnResult{
-				Earn: r,
-			})
+	} else if len(submitResult.InvoiceErrors) > 0 {
+		result.TxError = ErrTransactionRejected
+		result.EarnErrors = make([]EarnError, len(submitResult.InvoiceErrors))
+		for i, e := range submitResult.InvoiceErrors {
+			result.EarnErrors[i] = EarnError{
+				EarnIndex: int(e.OpIndex),
+				Error:     invoiceErrorFromProto(e),
+			}
 		}
 	}
 
@@ -854,7 +780,7 @@ func (c *client) submitSolanaPayment(ctx context.Context, payment Payment, confi
 	)
 
 	tx := solana.NewTransaction(ed25519.PublicKey(subsidizerID), instructions...)
-	return c.signAndSubmitTx(ctx, signers, tx, commitment, il)
+	return c.signAndSubmitTx(ctx, signers, tx, commitment, il, payment.DedupeID)
 }
 
 func (c *client) submitEarnBatchWithResolution(ctx context.Context, batch EarnBatch, config *transactionpbv4.GetServiceConfigResponse, solanaOpts solanaOpts) (SubmitTransactionResult, error) {
@@ -957,7 +883,7 @@ func (c *client) submitSolanaEarnBatch(ctx context.Context, batch EarnBatch, con
 	}
 
 	tx := solana.NewTransaction(ed25519.PublicKey(subsidizerID), instructions...)
-	return c.signAndSubmitTx(ctx, signers, tx, commitment, il)
+	return c.signAndSubmitTx(ctx, signers, tx, commitment, il, batch.DedupeID)
 }
 
 func (c *client) submitEarnBatch(ctx context.Context, batch EarnBatch) (result SubmitTransactionResult, err error) {
@@ -1131,7 +1057,7 @@ func (c *client) signAndSubmitXDR(ctx context.Context, signers []PrivateKey, env
 	return result, err
 }
 
-func (c *client) signAndSubmitTx(ctx context.Context, signers []PrivateKey, tx solana.Transaction, commitment commonpbv4.Commitment, il *commonpb.InvoiceList) (SubmitTransactionResult, error) {
+func (c *client) signAndSubmitTx(ctx context.Context, signers []PrivateKey, tx solana.Transaction, commitment commonpbv4.Commitment, il *commonpb.InvoiceList, dedupeId []byte) (SubmitTransactionResult, error) {
 	var result SubmitTransactionResult
 	keys := make([]ed25519.PrivateKey, len(signers))
 	for i, signer := range signers {
@@ -1152,7 +1078,7 @@ func (c *client) signAndSubmitTx(ctx context.Context, signers []PrivateKey, tx s
 				return err
 			}
 
-			if result, err = c.internal.SubmitSolanaTransaction(ctx, tx, il, commitment); err != nil {
+			if result, err = c.internal.SubmitSolanaTransaction(ctx, tx, il, commitment, dedupeId); err != nil {
 				return err
 			}
 			if result.Errors.TxError == ErrBadNonce {
@@ -1203,89 +1129,4 @@ func (c *client) resolveTokenAccounts(ctx context.Context, account PublicKey) (a
 		accounts: accounts,
 	})
 	return accounts, nil
-}
-
-func (c *client) partitionSolanaEarns(batch EarnBatch, senderResolution AccountResolution) (batches []EarnBatch) {
-	var hasAgoraMemo bool
-	if batch.Memo == "" && c.opts.appIndex > 0 {
-		hasAgoraMemo = true
-	}
-
-	offset := 0
-	for i := 1; i < len(batch.Earns)+1; i++ {
-		// To avoid having to re-partition earns in the case that the sender account needs to be resolved, if sender
-		// resolution is PREFERRED, include it in the estimation of the transaction size
-		txSize := estimateEarnBatchTxSize(batch.Earns[offset:i], senderResolution == AccountResolutionPreferred, hasAgoraMemo, batch.Memo)
-		if txSize > solana.MaxTransactionSize {
-			batches = append(batches, EarnBatch{
-				Sender: batch.Sender,
-				Memo:   batch.Memo,
-				Earns:  batch.Earns[offset : i-1],
-			})
-			offset = i - 1
-		} else if txSize == solana.MaxTransactionSize || i == len(batch.Earns) {
-			batches = append(batches, EarnBatch{
-				Sender: batch.Sender,
-				Memo:   batch.Memo,
-				Earns:  batch.Earns[offset:i],
-			})
-			offset = i
-		}
-	}
-
-	return batches
-}
-
-// estimateEarnBatchTxSize estimates the size of an earn batch transaction by adding following components:
-// - Signatures: 1 (shortvec) + sig_count * SIGNATURE_LENGTH
-// - Header bytes: 3
-// - Accounts: 1 (shortvec) + account_count * ED25519_PUB_KEY_SIZE
-// - Hash Length
-// - For instructions:
-//     - 1 byte (shortvec)
-//     - (optional, if Agora memo included) Agora memo: ED25519_PUB_KEY_SIZE + 1 (program index) + 1 (account
-//       shortvec) + 1 (data shortvec) + 44 (length of a base64-encoded Agora memo) = 79
-//     - (optional) memo: ED25519_PUB_KEY_SIZE + 1 (program index) + 1 (account shortvec) + data shortvec +
-//       len(data) = 34 + data shortvec + len(data)
-//     - Each transfer: 1 (program index) + 1 (account shortvec) + 3 (3 account indices) + 1 (data shortvec) +
-//       9 (transfer data length) = 15
-func estimateEarnBatchTxSize(earns []Earn, hasSeparateSender bool, hasAgoraMemo bool, memo string) int {
-	uniqueDests := make(map[string]struct{})
-	for _, earn := range earns {
-		uniqueDests[earn.Destination.Base58()] = struct{}{}
-	}
-
-	// unique destinations + subsidizer + owner + program + (optional) resolved transfer sender
-	accountCount := len(uniqueDests) + 3
-	if hasSeparateSender {
-		accountCount += 1
-	}
-	// owner, subsidizer
-	sigCount := 2
-
-	size := 1 + (sigCount * ed25519.SignatureSize) +
-		3 +
-		estimateShortVecSize(accountCount) + (accountCount * ed25519.PublicKeySize) +
-		32 +
-		1 +
-		(len(earns) * 15)
-
-	if hasAgoraMemo {
-		size += 79
-	}
-	if memo != "" {
-		size += 34 + estimateShortVecSize(len(memo)) + len(memo)
-	}
-
-	return size
-}
-
-func estimateShortVecSize(length int) int {
-	if length < 128 {
-		return 1
-	}
-	if length < 16384 {
-		return 2
-	}
-	return 3
 }

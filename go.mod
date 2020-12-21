@@ -11,6 +11,7 @@ require (
 	github.com/go-redis/redis/v7 v7.0.0
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.4.3
+	github.com/google/uuid v1.1.2
 	github.com/hashicorp/golang-lru v0.5.1
 	github.com/jackc/pgx/v4 v4.9.2
 	github.com/kinecosystem/agora-api v0.25.0

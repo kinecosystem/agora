@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## [v0.3.0](https://github.com/kinecosystem/agora/releases/tag/v0.3.0)
+- Add `Dedupe` support on payments (`Client.SubmitPayment`) and earn batches (`Client.SubmitEarnBatch`)
+- `Client.SubmitEarnBatch` now supports submitting only a single transaction and up to 15 earns
+- `EarnBatchResult` has been modified and now contains `TxID`, `TxError` and `EarnErrors` instead of `Succeeded` and `Failed` due to the above changes
+- Add `PaymentErrors` to `TransactionErrors`
+
 ## [v0.2.7](https://github.com/kinecosystem/agora/releases/tag/v0.2.7)
 - Fix Kin 2 prod issuer
 
@@ -10,7 +16,7 @@
 
 ## [v0.2.5](https://github.com/kinecosystem/agora/releases/tag/v0.2.5)
 - Rename 'WithSenderResolution' to 'WithAccountResolution'
-- Add account resolution support to `Client.GetBalance` 
+- Add account resolution support to `Client.GetBalance`
 
 ## [v0.2.4](https://github.com/kinecosystem/agora/releases/tag/v0.2.4)
 - Create new accounts with different token account address

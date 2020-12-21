@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	SDKVersion              = "0.2.7"
+	SDKVersion              = "0.2.8"
 	UserAgentHeader         = "kin-user-agent"
 	kinVersionHeader        = "kin-version"
 	desiredKinVersionHeader = "desired-kin-version"
@@ -392,20 +392,16 @@ func (c *InternalClient) GetTransaction(ctx context.Context, txID []byte, commit
 	data.TxID = txID
 	data.TxState = txStateFromProto(resp.State)
 	if resp.Item != nil {
-		data.Payments, err = parsePaymentsFromProto(resp.Item)
+		data.Payments, data.Errors, err = parseHistoryItem(resp.Item)
 		if err != nil {
 			return TransactionData{}, errors.Wrap(err, "failed to parse payments")
-		}
-		data.Errors, err = errorFromProto(resp.Item.TransactionError)
-		if err != nil {
-			return TransactionData{}, errors.Wrap(err, "failed to parse error")
 		}
 	}
 
 	return data, nil
 }
 
-func (c *InternalClient) SubmitSolanaTransaction(ctx context.Context, tx solana.Transaction, il *commonpb.InvoiceList, commitment commonpbv4.Commitment) (result SubmitTransactionResult, err error) {
+func (c *InternalClient) SubmitSolanaTransaction(ctx context.Context, tx solana.Transaction, il *commonpb.InvoiceList, commitment commonpbv4.Commitment, dedupeId []byte) (result SubmitTransactionResult, err error) {
 	ctx = c.addMetadataToCtx(ctx)
 
 	attempt := 0
@@ -419,6 +415,7 @@ func (c *InternalClient) SubmitSolanaTransaction(ctx context.Context, tx solana.
 			Transaction: &commonpbv4.Transaction{Value: tx.Marshal()},
 			InvoiceList: il,
 			Commitment:  commitment,
+			DedupeId:    dedupeId,
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to submit transaction")
@@ -444,10 +441,7 @@ func (c *InternalClient) SubmitSolanaTransaction(ctx context.Context, tx solana.
 	case transactionpbv4.SubmitTransactionResponse_PAYER_REQUIRED:
 		return result, ErrPayerRequired
 	case transactionpbv4.SubmitTransactionResponse_FAILED:
-		txErrors, err := errorFromProto(resp.TransactionError)
-		if err != nil {
-			return result, errors.Wrap(err, "failed to parse transaction errors")
-		}
+		txErrors := errorsFromSolanaTx(&tx, resp.TransactionError)
 		result.Errors = txErrors
 	case transactionpbv4.SubmitTransactionResponse_INVOICE_ERROR:
 		result.InvoiceErrors = resp.InvoiceErrors

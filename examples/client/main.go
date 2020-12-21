@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
 	"github.com/kinecosystem/agora-common/kin"
 
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
@@ -83,8 +84,25 @@ func main() {
 	})
 	fmt.Printf("Hash: %x, err: %v\n", txHash, err)
 
-	// Earn batch with an old style memo
-	result, err := c.SubmitEarnBatch(context.Background(), client.EarnBatch{
+	// Payment with dedupe
+	dedupeID := uuid.New()
+	payment := client.Payment{
+		Sender:      sender,
+		Destination: dest,
+		Type:        kin.TransactionTypeP2P,
+		Quarks:      client.MustKinToQuarks("1"),
+		DedupeID:    dedupeID[:],
+	}
+	txHash, err = c.SubmitPayment(context.Background(), payment)
+	if err != nil {
+		// Safe to retry since DedupeID was set
+		txHash, err = c.SubmitPayment(context.Background(), payment)
+	}
+	fmt.Printf("Hash: %x, err: %v\n", txHash, err)
+
+	// Earn batch with an old style memo + dedupe
+	dedupeID = uuid.New()
+	batch := client.EarnBatch{
 		Sender: sender,
 		Memo:   "1-test",
 		Earns: []client.Earn{
@@ -97,17 +115,26 @@ func main() {
 				Quarks:      client.MustKinToQuarks("1.0"),
 			},
 		},
-	})
+		DedupeID: dedupeID[:],
+	}
+	result, err := c.SubmitEarnBatch(context.Background(), batch)
 	if err != nil {
-		log.Fatal(err)
+		// Safe to retry since DedupeID was set
+		result, err = c.SubmitEarnBatch(context.Background(), batch)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	fmt.Println("Succeeded:")
-	for _, p := range result.Succeeded {
-		fmt.Printf("\tHash: %x, Receiver: %s\n", p.TxID, p.Earn.Destination.StellarAddress())
-	}
-	fmt.Println("Failed:")
-	for _, p := range result.Failed {
-		fmt.Printf("\tHash: %x, Receiver: %s, Error: %v\n", p.TxID, p.Earn.Destination.StellarAddress(), p.Error)
+	if result.TxError != nil {
+		fmt.Printf("\tHash: %x, Error: %v\n", result.TxID, result.TxError)
+
+		if result.EarnErrors != nil {
+			for _, ee := range result.EarnErrors {
+				fmt.Printf("\tEarnIndex: %x, Error: %v\n", ee.EarnIndex, ee.Error)
+			}
+		}
+	} else {
+		fmt.Printf("\tHash: %x, succeeded\n", result.TxID)
 	}
 }

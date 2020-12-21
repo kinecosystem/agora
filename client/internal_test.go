@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
@@ -785,10 +786,35 @@ func TestInternal_SubmitSolanaTransaction(t *testing.T) {
 
 	txSig := tx.Signature()
 
-	result, err := env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE)
+	randId := uuid.New()
+	dedupeId := randId[:]
+	il := &commonpb.InvoiceList{
+		Invoices: []*commonpb.Invoice{
+			{
+				Items: []*commonpb.Invoice_LineItem{
+					{
+						Title: "hi",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := env.internal.SubmitSolanaTransaction(context.Background(), tx, il, commonpbv4.Commitment_SINGLE, dedupeId)
 	require.NoError(t, err)
 	assert.EqualValues(t, txSig, result.ID)
 	assert.Empty(t, result.InvoiceErrors)
+
+	// Verify server received what was expected
+	env.v4Server.Mux.Lock()
+	assert.Equal(t, 1, len(env.v4Server.Submits))
+	req := env.v4Server.Submits[0]
+	assert.Equal(t, tx.Marshal(), req.Transaction.Value)
+	assert.True(t, proto.Equal(il, req.InvoiceList))
+	assert.Equal(t, commonpbv4.Commitment_SINGLE, req.Commitment)
+	assert.Equal(t, dedupeId, req.DedupeId)
+
+	env.v4Server.Mux.Unlock()
 
 	// Test already submitted received on first attempt
 	env.v4Server.Mux.Lock()
@@ -802,7 +828,7 @@ func TestInternal_SubmitSolanaTransaction(t *testing.T) {
 	}
 	env.v4Server.Mux.Unlock()
 
-	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE)
+	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE, nil)
 	assert.Equal(t, ErrAlreadySubmitted, err)
 
 	// Test already submitted received on second attempt
@@ -818,7 +844,7 @@ func TestInternal_SubmitSolanaTransaction(t *testing.T) {
 	}
 	env.v4Server.Mux.Unlock()
 
-	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE)
+	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE, nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, txSig, result.ID)
 	assert.Empty(t, result.InvoiceErrors)
@@ -851,7 +877,7 @@ func TestInternal_SubmitSolanaTransaction(t *testing.T) {
 	}
 	env.v4Server.Mux.Unlock()
 
-	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE)
+	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE, nil)
 	assert.NoError(t, err)
 	assert.EqualValues(t, txSig[:], result.ID)
 	assert.Len(t, result.InvoiceErrors, len(invoiceErrors))
@@ -875,7 +901,7 @@ func TestInternal_SubmitSolanaTransaction(t *testing.T) {
 	}
 	env.v4Server.Mux.Unlock()
 
-	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE)
+	result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE, nil)
 	assert.NoError(t, err)
 	assert.EqualValues(t, txSig[:], result.ID)
 	assert.Equal(t, ErrInvalidSignature, result.Errors.TxError)
@@ -906,7 +932,7 @@ func TestInternal_SubmitSolanaTransaction(t *testing.T) {
 		}
 		env.v4Server.Mux.Unlock()
 
-		result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE)
+		result, err = env.internal.SubmitSolanaTransaction(context.Background(), tx, nil, commonpbv4.Commitment_SINGLE, nil)
 		assert.Equal(t, tc.err, err)
 	}
 }

@@ -1,9 +1,12 @@
 package client
 
 import (
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
 
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	commonpbv4 "github.com/kinecosystem/agora-api/genproto/common/v4"
 )
 
@@ -55,13 +58,17 @@ var (
 )
 
 // TransactionErrors contains the error details for a transaction.
-//
 // If TxError is non-nil, the transaction failed.
-// OpErrors may or may not be set if TxErrors is set. The length of
-// OpErrors will match the number of operations in the transaction.
 type TransactionErrors struct {
-	TxError  error
+	TxError error
+
+	// OpErrors may or may not be set if TxErrors is set. The length of
+	// OpErrors will match the number of operations/instructions in the transaction.
 	OpErrors []error
+
+	// PaymentErrors may or may not be set if TxErrors is set. If set, the length of
+	// PaymentErrors will match the number of payments/transfers in the transaction.
+	PaymentErrors []error
 }
 
 func errorFromXDRBytes(resultXDR []byte) (txErrors TransactionErrors, err error) {
@@ -150,27 +157,108 @@ func errorFromXDRBytes(resultXDR []byte) (txErrors TransactionErrors, err error)
 	return txErrors, nil
 }
 
-func errorFromProto(protoError *commonpbv4.TransactionError) (txErrors TransactionErrors, err error) {
+func errorsFromSolanaTx(tx *solana.Transaction, protoError *commonpbv4.TransactionError) (txErrors TransactionErrors) {
+	e := errorFromProto(protoError)
+	if e == nil {
+		return txErrors
+	}
+
+	txErrors.TxError = e
+	if protoError.GetInstructionIndex() >= 0 {
+		txErrors.OpErrors = make([]error, len(tx.Message.Instructions))
+		txErrors.OpErrors[protoError.GetInstructionIndex()] = e
+
+		paymentErrIndex := protoError.GetInstructionIndex()
+		paymentCount := 0
+
+		for i := range tx.Message.Instructions {
+			_, err := token.DecompileTransferAccount(tx.Message, i)
+			if err == nil {
+				paymentCount++
+			} else if i < int(protoError.GetInstructionIndex()) {
+				paymentErrIndex--
+			} else if i == int(protoError.GetInstructionIndex()) {
+				paymentErrIndex = -1
+			}
+		}
+
+		if paymentErrIndex > -1 {
+			txErrors.PaymentErrors = make([]error, paymentCount)
+			txErrors.PaymentErrors[paymentErrIndex] = e
+		}
+	}
+
+	return txErrors
+}
+
+func errorsFromStellarTx(env xdr.TransactionEnvelope, protoError *commonpbv4.TransactionError) (txErrors TransactionErrors) {
+	e := errorFromProto(protoError)
+	if e == nil {
+		return txErrors
+	}
+
+	txErrors.TxError = e
+	if protoError.GetInstructionIndex() >= 0 {
+		txErrors.OpErrors = make([]error, len(env.Tx.Operations))
+		txErrors.OpErrors[protoError.GetInstructionIndex()] = e
+
+		paymentErrIndex := protoError.GetInstructionIndex()
+		paymentCount := 0
+		for i, op := range env.Tx.Operations {
+			if op.Body.Type == xdr.OperationTypePayment {
+				paymentCount++
+			} else if i < int(protoError.GetInstructionIndex()) {
+				paymentErrIndex--
+			} else if i == int(protoError.GetInstructionIndex()) {
+				paymentErrIndex = -1
+			}
+		}
+
+		if paymentErrIndex > -1 {
+			txErrors.PaymentErrors = make([]error, paymentCount)
+			txErrors.PaymentErrors[paymentErrIndex] = e
+		}
+	}
+
+	return txErrors
+}
+
+func errorFromProto(protoError *commonpbv4.TransactionError) error {
 	if protoError == nil {
-		return txErrors, nil
+		return nil
 	}
 
 	switch protoError.Reason {
 	case commonpbv4.TransactionError_NONE:
-		return txErrors, nil
+		return nil
 	case commonpbv4.TransactionError_UNKNOWN:
-		txErrors.TxError = errors.New("unknown error")
+		return errors.New("unknown error")
 	case commonpbv4.TransactionError_UNAUTHORIZED:
-		txErrors.TxError = ErrInvalidSignature
+		return ErrInvalidSignature
 	case commonpbv4.TransactionError_BAD_NONCE:
-		txErrors.TxError = ErrBadNonce
+		return ErrBadNonce
 	case commonpbv4.TransactionError_INSUFFICIENT_FUNDS:
-		txErrors.TxError = ErrInsufficientBalance
+		return ErrInsufficientBalance
 	case commonpbv4.TransactionError_INVALID_ACCOUNT:
-		txErrors.TxError = ErrAccountDoesNotExist
+		return ErrAccountDoesNotExist
 	default:
-		return txErrors, errors.Errorf("unknown error reason: %d", protoError.Reason)
+		return errors.Errorf("unknown error reason: %d", protoError.Reason)
+	}
+}
+
+func invoiceErrorFromProto(protoError *commonpb.InvoiceError) error {
+	if protoError == nil {
+		return nil
 	}
 
-	return txErrors, nil
+	switch protoError.Reason {
+	case commonpb.InvoiceError_ALREADY_PAID:
+		return ErrAlreadyPaid
+	case commonpb.InvoiceError_WRONG_DESTINATION:
+		return ErrWrongDestination
+	case commonpb.InvoiceError_SKU_NOT_FOUND:
+		return ErrSKUNotFound
+	default:
+		return errors.Errorf("unknown invoice error: %v", protoError.Reason)
+	}
 }
