@@ -635,65 +635,6 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 	}, nil
 }
 
-func init() {
-	if err := prometheus.Register(submitTxResultCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			submitTxResultCounter = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register submitTxResultCounter")
-		}
-	}
-	if err := prometheus.Register(speculativeUpdates); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			speculativeUpdates = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			logrus.WithError(err).Error("failed to register infoCacheSpeculativeUpdates")
-		}
-	}
-	if err := prometheus.Register(infoCacheFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			infoCacheFailures = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register infoCacheFailures")
-		}
-	}
-	if err := prometheus.Register(eventsWebhookFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			eventsWebhookFailures = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			logrus.WithError(err).Error("failed to register eventsWebhookFailures")
-		}
-	}
-	if err := prometheus.Register(submitTransactionsCancelled); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			submitTransactionsCancelled = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			logrus.WithError(err).Error("failed to register submitTransactionsCancelled")
-		}
-	}
-	if err := prometheus.Register(transferByDest); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			transferByDest = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register transferByDest")
-		}
-	}
-	if err := prometheus.Register(dedupesByType); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			dedupesByType = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register dedupesByType")
-		}
-	}
-	if err := prometheus.Register(dedupeTransitionFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			dedupeTransitionFailures = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register dedupeTransitionFailures")
-		}
-	}
-}
-
 // speculativeLoad loads existing account states, and merges it with the transfer states.
 //
 // Currently, speculativeLoad uses a chained strategy, whereby we re-use the speculations
@@ -801,4 +742,70 @@ func (s *server) speculativeWrite(ctx context.Context, speculativeStates map[str
 	}
 
 	wg.Wait()
+}
+
+func init() {
+	if err := prometheus.Register(submitTxResultCounter); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			submitTxResultCounter = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register submitTxResultCounter")
+		}
+	}
+	if err := prometheus.Register(speculativeUpdates); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			speculativeUpdates = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			logrus.WithError(err).Error("failed to register infoCacheSpeculativeUpdates")
+		}
+	}
+	if err := prometheus.Register(speculativeUpdateFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			speculativeUpdateFailures = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register speculativeUpdateFailures")
+		}
+	}
+	if err := prometheus.Register(infoCacheFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			infoCacheFailures = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register infoCacheFailures")
+		}
+	}
+	if err := prometheus.Register(eventsWebhookFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			eventsWebhookFailures = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			logrus.WithError(err).Error("failed to register eventsWebhookFailures")
+		}
+	}
+	if err := prometheus.Register(submitTransactionsCancelled); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			submitTransactionsCancelled = e.ExistingCollector.(prometheus.Counter)
+		} else {
+			logrus.WithError(err).Error("failed to register submitTransactionsCancelled")
+		}
+	}
+	if err := prometheus.Register(transferByDest); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			transferByDest = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register transferByDest")
+		}
+	}
+	if err := prometheus.Register(dedupesByType); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			dedupesByType = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register dedupesByType")
+		}
+	}
+	if err := prometheus.Register(dedupeTransitionFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			dedupeTransitionFailures = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			logrus.WithError(err).Error("failed to register dedupeTransitionFailures")
+		}
+	}
 }
