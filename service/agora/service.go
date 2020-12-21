@@ -118,7 +118,7 @@ const (
 	tokenAccountTTLEnv      = "TOKEN_ACCOUNT_TTL"
 	consistencyCheckProbEnv = "TOKEN_ACCOUNT_CONSISTENCY_CHECK_PROBABILITY"
 
-	accountInfoTTL         = 20 * time.Second
+	accountInfoTTL         = 30 * time.Second
 	negativeAccountInfoTTL = 15 * time.Second
 	dedupeTTL              = 24 * time.Hour
 )
