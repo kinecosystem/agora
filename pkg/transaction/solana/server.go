@@ -46,10 +46,14 @@ var (
 		Name:      "submit_transaction_result",
 		Help:      "Number of submit transaction results for OK",
 	}, []string{"result"})
-	infoCacheSpeculativeUpdates = prometheus.NewCounter(prometheus.CounterOpts{
+	speculativeUpdates = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
-		Name:      "info_cache_speculative_updates",
+		Name:      "speculative_updates",
 	})
+	speculativeUpdateFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "speculative_update_failures",
+	}, []string{"type"})
 	infoCacheFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "info_cache_failures",
@@ -477,23 +481,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	// Instead of directly invalidating, we update it to the predicted amount.
-	//
-	// todo: parallelize for larger sizes (earns)
-	for k := range transferStates {
-		account, err := s.tc.GetAccount(ed25519.PublicKey(k), solanautil.CommitmentFromProto(req.Commitment))
-		if err == token.ErrAccountNotFound || err == token.ErrInvalidTokenAccount {
-			continue
-		} else if err != nil {
-			infoCacheFailures.WithLabelValues("speculative_load").Inc()
-			continue
-		} else if account == nil {
-			log.Warn("successful load of account, but no account info!")
-			continue
-		}
-
-		// Add the balance to the difference, resulting in the predicted balance.
-		transferStates[k] += int64(account.Amount)
-	}
+	speculativeStates := s.speculativeLoad(ctx, transferStates, solanautil.CommitmentFromProto(req.Commitment))
 
 	select {
 	case <-ctx.Done():
@@ -546,6 +534,11 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
+	// We fork the context here, because we want to take action based on the result
+	// of the transaction regardless if the client has cancelled the request.
+	forkedCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	entry := &model.Entry{
 		Version: model.KinVersion_KIN4,
 		Kind: &model.Entry_Solana{
@@ -557,23 +550,10 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	if submitResult == transactionpb.SubmitTransactionResponse_OK {
-		for k, balance := range transferStates {
-			err := s.infoCache.Put(ctx, &accountpb.AccountInfo{
-				AccountId: &commonpb.SolanaAccountId{
-					Value: ed25519.PublicKey(k),
-				},
-				Balance: balance,
-			})
-			if err != nil {
-				infoCacheFailures.WithLabelValues("speculative_write").Inc()
-				log.WithError(err).Warn("failed to update info cache")
-			} else {
-				infoCacheSpeculativeUpdates.Inc()
-			}
-		}
+		s.speculativeWrite(forkedCtx, speculativeStates)
 	}
 
-	if err := s.history.Write(ctx, entry); err != nil {
+	if err := s.history.Write(forkedCtx, entry); err != nil {
 		// If we're processing an ALREADY_SUBMITTED, then it's possible we've
 		// also already written the entry to history. In this case, we may
 		// receive a history.ErrInvalidUpdate, since we don't have any slot
@@ -586,7 +566,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
-	if err := s.eventsSubmitter.Submit(ctx, entry); err != nil {
+	if err := s.eventsSubmitter.Submit(forkedCtx, entry); err != nil {
 		log.WithError(err).Warn("failed to forward webhook")
 		eventsWebhookFailures.Inc()
 	}
@@ -603,7 +583,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	// Since we have a 'success' response, we do not want to clear the dedupe info.
 	noClearDedupe = true
 	dedupeInfo.Response = resp
-	if err := s.deduper.Update(ctx, req.DedupeId, dedupeInfo); err != nil {
+	if err := s.deduper.Update(forkedCtx, req.DedupeId, dedupeInfo); err != nil {
 		dedupeTransitionFailures.WithLabelValues("update").Inc()
 		log.WithError(err).Warn("failed to update dedupe info")
 	}
@@ -663,9 +643,9 @@ func init() {
 			logrus.WithError(err).Error("failed to register submitTxResultCounter")
 		}
 	}
-	if err := prometheus.Register(infoCacheSpeculativeUpdates); err != nil {
+	if err := prometheus.Register(speculativeUpdates); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			infoCacheSpeculativeUpdates = e.ExistingCollector.(prometheus.Counter)
+			speculativeUpdates = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			logrus.WithError(err).Error("failed to register infoCacheSpeculativeUpdates")
 		}
@@ -712,4 +692,113 @@ func init() {
 			logrus.WithError(err).Error("failed to register dedupeTransitionFailures")
 		}
 	}
+}
+
+// speculativeLoad loads existing account states, and merges it with the transfer states.
+//
+// Currently, speculativeLoad uses a chained strategy, whereby we re-use the speculations
+// from previous executions if they exist before using on chain information. This approach
+// has some drawbacks, but it is sufficient for what we want in the current 'state of kin'.
+//
+// Benefits: This approach is fairly simple, and solves the problem of doing "rapid" transfers
+// in succession. Currently, the time from Submit() to the effect being visible on chain tends
+// to be from 5 - 30 seconds. If we were to submit multiple transfers for the same account using
+// the block chain information (inside this window), the speculations would all be the same,
+// rather than being additive. By using the cached values first, we get the additive property.
+//
+// Cons: If the transaction is rolled back, or external (to agora) transactions are submitted,
+// then our speculations will be wrong. Worse, if we continually speculate within the cache window,
+// we will never have a chance to resync with/rebase off of the block chain state. Since everyone
+// who uses agora's GetAccountBalance() also uses agoras Submit() (currently), we don't care as
+// much about the latter case. In the former case, we rely (maybe incorrectly) on:
+//
+//  1. The simulation phase of the transaction will yield any early failures, reducing the chance
+//     of rollback at a later point in time.
+//  2. Regular observers of accounts don't have extended transfer 'sessions'. For example, a user may
+//     receive and earn, open the app, and send it back. Or they may just send kin to a few places. This
+//     activity is likely to occur within a small time window, with a decent (cache expiry+) gap between
+//     the next window, giving us a chance to rsync.
+//
+// (2)'s caveat is developer wallets (wallet that have a sustained transfers) are at risk of divergence
+// from our API. So far they mostly been using explorer, but they also are more tolerant.
+//
+// Finally, transactions never use our data, so a user still cannot send kin they do not have.
+//
+// Future work would involve recording speculative predictions as diffs, and periodically re-syncing
+// with the underlying blockchain, and discarding all speculations before the sync (based on slot.)
+func (s *server) speculativeLoad(ctx context.Context, transferState map[string]int64, commitment solana.Commitment) (newState map[string]int64) {
+	log := s.log.WithField("method", "speculativeLoad")
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(len(transferState))
+
+	newState = make(map[string]int64)
+
+	for accountKey, diff := range transferState {
+		go func(a string, b int64) {
+			defer wg.Done()
+
+			info, err := s.infoCache.Get(ctx, ed25519.PublicKey(a))
+			if err != nil && err != accountinfo.ErrAccountInfoNotFound {
+				speculativeUpdateFailures.WithLabelValues("info_cache_load").Inc()
+				infoCacheFailures.WithLabelValues("speculative_load").Inc()
+				log.WithError(err).Warn("failed to load cache info for speculative execution")
+			}
+
+			if info != nil {
+				mu.Lock()
+				newState[a] += info.Balance + b
+				mu.Unlock()
+				return
+			}
+
+			account, err := s.tc.GetAccount(ed25519.PublicKey(a), commitment)
+			if err == token.ErrAccountNotFound || err == token.ErrInvalidTokenAccount {
+				return
+			} else if err != nil {
+				speculativeUpdateFailures.WithLabelValues("solana_load").Inc()
+				log.WithError(err).Warn("failed to load token info for speculative execution")
+				return
+			} else if account == nil {
+				speculativeUpdateFailures.WithLabelValues("solana_load_empty").Inc()
+				return
+			}
+
+			mu.Lock()
+			newState[a] += int64(account.Amount) + b
+			mu.Unlock()
+		}(accountKey, diff)
+	}
+
+	wg.Wait()
+	return newState
+}
+
+func (s *server) speculativeWrite(ctx context.Context, speculativeStates map[string]int64) {
+	log := s.log.WithField("method", "speculativeWrite")
+
+	var wg sync.WaitGroup
+	wg.Add(len(speculativeStates))
+
+	for accountKey, balance := range speculativeStates {
+		go func(a string, b int64) {
+			defer wg.Done()
+
+			err := s.infoCache.Put(ctx, &accountpb.AccountInfo{
+				AccountId: &commonpb.SolanaAccountId{
+					Value: []byte(a),
+				},
+				Balance: b,
+			})
+			if err != nil {
+				speculativeUpdateFailures.WithLabelValues("speculative_write").Inc()
+				log.WithError(err).Warn("failed to update info cache")
+			} else {
+				speculativeUpdates.Inc()
+			}
+		}(accountKey, balance)
+	}
+
+	wg.Wait()
 }

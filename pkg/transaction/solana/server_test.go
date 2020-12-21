@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,6 +83,40 @@ type mockSubmitter struct {
 func (m *mockSubmitter) Submit(ctx context.Context, e *model.Entry) error {
 	args := m.Called(ctx, e)
 	return args.Error(0)
+}
+
+type mockInfoCache struct {
+	mu sync.Mutex
+	mock.Mock
+}
+
+// Put puts a list of account info associated with the given owner.
+func (m *mockInfoCache) Put(ctx context.Context, info *accountpb.AccountInfo) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	args := m.Called(ctx, info)
+	return args.Error(0)
+}
+
+// Get gets an account's info, if it exists in the cache.
+//
+// ErrAccountInfoNotFound is returned if no account info was found for the provided key.
+func (m *mockInfoCache) Get(ctx context.Context, key ed25519.PublicKey) (*accountpb.AccountInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	args := m.Called(ctx, key)
+	return args.Get(0).(*accountpb.AccountInfo), args.Error(1)
+}
+
+// Delete a cached entry.
+func (m *mockInfoCache) Del(ctx context.Context, key ed25519.PublicKey) (ok bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	args := m.Called(ctx, key)
+	return args.Bool(0), args.Error(0)
 }
 
 func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
@@ -845,6 +880,233 @@ func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
 	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
 	assert.Nil(t, authTx.SignRequest.InvoiceList)
 	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
+}
+
+func TestSubmitTransaction_ChainedSpeculativeSubmissions(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+	}
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(3)
+	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(3)
+
+	senderInfo := token.Account{
+		Mint:   env.token,
+		Owner:  accounts[0],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	receiverInfo := token.Account{
+		Mint:   env.token,
+		Owner:  accounts[1],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	accountInfos := []solana.AccountInfo{
+		{
+			Owner: token.ProgramKey,
+			Data:  senderInfo.Marshal(),
+		},
+		{
+			Owner: token.ProgramKey,
+			Data:  receiverInfo.Marshal(),
+		},
+	}
+
+	env.sc.On("GetAccountInfo", accounts[0], mock.Anything).Return(accountInfos[0], nil)
+	env.sc.On("GetAccountInfo", accounts[1], mock.Anything).Return(accountInfos[1], nil)
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).Return(sig, &solana.SignatureStatus{}, nil)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+
+	// Ensure speculative updates is working
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, 9, info.Balance)
+		} else {
+			assert.EqualValues(t, 11, info.Balance)
+		}
+	}
+
+	txn.SetBlockhash(solana.Blockhash{})
+	resp, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+
+	// Ensure speculative updates is working
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, 8, info.Balance)
+		} else {
+			assert.EqualValues(t, 12, info.Balance)
+		}
+	}
+
+	// To ensure we were loading off cache, we will clear cache and do a submit,
+	// which should not reflect the speculative predictions.
+	for _, a := range accounts {
+		deleted, err := env.infoCache.Del(context.Background(), a)
+		assert.NoError(t, err)
+		assert.True(t, deleted)
+	}
+
+	resp, err = env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, 9, info.Balance)
+		} else {
+			assert.EqualValues(t, 11, info.Balance)
+		}
+	}
+
+	env.submitter.AssertExpectations(t)
+}
+
+// All uses of SubmitTransaction use speculative execution, with the expectations
+// of complete successes. This will test partial and complete failures.
+func TestSpeculativeLoad_Failures(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	accounts := testutil.GenerateSolanaKeys(t, 8)
+
+	// Existing valid accounts: 0 -> 2
+	for i := 0; i < 2; i++ {
+		tokenInfo := token.Account{
+			Mint:   env.token,
+			Owner:  accounts[i],
+			Amount: 10 + uint64(i),
+		}
+		accountInfo := solana.AccountInfo{
+			Data:  tokenInfo.Marshal(),
+			Owner: token.ProgramKey,
+		}
+
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(accountInfo, nil)
+	}
+
+	// Existing, but wrong token, accounts, 2-> 4
+	for i := 2; i < 4; i++ {
+		tokenInfo := token.Account{
+			Mint:   accounts[i],
+			Owner:  accounts[i],
+			Amount: 10 + uint64(i),
+		}
+		accountInfo := solana.AccountInfo{
+			Data:  tokenInfo.Marshal(),
+			Owner: token.ProgramKey,
+		}
+
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(accountInfo, nil)
+	}
+
+	// No data at all for 4 -> 6
+	for i := 4; i < 6; i++ {
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+	}
+
+	// No chain data at all for 6 -> 8, but cache data
+	for i := 6; i < len(accounts); i++ {
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+		env.infoCache.Put(context.Background(), &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: accounts[i],
+			},
+			Balance: int64(10 + i),
+		})
+	}
+
+	transferStates := make(map[string]int64)
+	for i := 0; i < len(accounts); i++ {
+		// We do this assignment formula such that
+		// account 0 is negative (-1), and account 1 is positive,
+		// ensuring we handle math correctly.
+		transferStates[string(accounts[i])] = -1 + 2*int64(i)
+	}
+
+	newStates := env.server.speculativeLoad(context.Background(), transferStates, solana.CommitmentRecent)
+	assert.Equal(t, 4, len(newStates))
+
+	newState, ok := newStates[string(accounts[0])]
+	assert.True(t, ok)
+	assert.EqualValues(t, 10-1, newState)
+
+	newState, ok = newStates[string(accounts[1])]
+	assert.True(t, ok)
+	assert.EqualValues(t, 11+1, newState)
+
+	newState, ok = newStates[string(accounts[6])]
+	assert.True(t, ok)
+	assert.EqualValues(t, (10+6)+(-1)+2*6, newState)
+
+	newState, ok = newStates[string(accounts[7])]
+	assert.True(t, ok)
+	assert.EqualValues(t, (10+7)+(-1)+2*7, newState)
+}
+
+func TestSpeculativeWrite_Failures(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	// super hack
+	infoCache := &mockInfoCache{}
+	env.server.infoCache = infoCache
+
+	accounts := testutil.GenerateSolanaKeys(t, 3)
+	for i := 0; i < len(accounts); i++ {
+		infoCache.On("Put", mock.Anything, mock.Anything).Return(errors.New("err")).Times(3)
+	}
+
+	writes := map[string]int64{
+		string(accounts[0]): 1,
+		string(accounts[1]): 2,
+		string(accounts[2]): 3,
+	}
+
+	// note: we can't actually test partial failures because proto messages
+	// intentionally have features that break equality operators. Therefore, we
+	// can only ensure that a failure doesn't prevent the others from trying
+	// (using Times(3)), and nothing crashes
+	env.server.speculativeWrite(context.Background(), writes)
+
+	// AssertExpectations doesn't actually...work.
+	assert.Equal(t, 3, len(infoCache.Calls))
 }
 
 func TestSubmitTransaction_Invoice(t *testing.T) {
