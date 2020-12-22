@@ -49,6 +49,7 @@ type testEnv struct {
 	minLamports uint64
 
 	sc *solana.MockClient
+	tc *token.Client
 	hc *horizon.MockClient
 
 	notifier          *AccountNotifier
@@ -67,15 +68,15 @@ func setup(t *testing.T, migrator migration.Migrator) (env testEnv, cleanup func
 	)
 	require.NoError(t, err)
 
+	env.subsidizer = testutil.GenerateSolanaKeypair(t)
+	env.token = testutil.GenerateSolanaKeypair(t).Public().(ed25519.PublicKey)
+
 	env.client = accountpb.NewAccountClient(conn)
 	env.sc = solana.NewMockClient()
+	env.tc = token.NewClient(env.sc, env.token)
 	env.hc = &horizon.MockClient{}
 	env.notifier = NewAccountNotifier()
 	env.mapper = memorymapper.New()
-
-	env.subsidizer = testutil.GenerateSolanaKeypair(t)
-	token := testutil.GenerateSolanaKeypair(t)
-	env.token = token.Public().(ed25519.PublicKey)
 
 	env.tokenAccountCache, err = memory.New(time.Hour, 5)
 	require.NoError(t, err)
@@ -102,6 +103,7 @@ func setup(t *testing.T, migrator migration.Migrator) (env testEnv, cleanup func
 		env.notifier,
 		env.tokenAccountCache,
 		env.infoCache,
+		accountinfo.NewLoader(env.tc, env.infoCache, env.tokenAccountCache),
 		env.migrator,
 		env.migrationStore,
 		env.mapper,

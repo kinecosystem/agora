@@ -56,16 +56,6 @@ var (
 		Name:      "resolve_token_account_misses",
 		Help:      "Number of token account cache misses",
 	})
-	infoCacheHitCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "account_info_cache_hits",
-		Help:      "Number of account info cache hits",
-	}, []string{"negative_hit"})
-	infoCacheMissCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "account_info_cache_misses",
-		Help:      "Number of accounts info cache misses",
-	})
 	nonMigratableResolveCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "non_migratable_resolves",
@@ -110,6 +100,7 @@ type server struct {
 	accountNotifier   *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         accountinfo.Cache
+	loader            *accountinfo.Loader
 	migrator          migration.Migrator
 	migrationStore    migration.Store
 	mapper            account.Mapper
@@ -139,6 +130,7 @@ func New(
 	accountNotifier *AccountNotifier,
 	tokenAccountCache tokenaccount.Cache,
 	infoCache accountinfo.Cache,
+	loader *accountinfo.Loader,
 	migrator migration.Migrator,
 	migrationStore migration.Store,
 	mapper account.Mapper,
@@ -157,6 +149,7 @@ func New(
 		accountNotifier:       accountNotifier,
 		tokenAccountCache:     tokenAccountCache,
 		infoCache:             infoCache,
+		loader:                loader,
 		migrator:              migrator,
 		migrationStore:        migrationStore,
 		mapper:                mapper,
@@ -359,66 +352,19 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 		}
 	}
 
-	cached, err := s.infoCache.Get(ctx, req.AccountId.Value)
-	if err != nil && err != accountinfo.ErrAccountInfoNotFound {
-		log.WithError(err).Warn("failed to get account cached from cache")
-	} else if cached != nil {
-		// The balance can never actually be zero on chain.
-		//
-		// Negative balance is what we exploit to indicate we got a negative
-		// result from a query.
-		if cached.Balance < 0 {
-			infoCacheHitCounter.WithLabelValues("true").Inc()
-			return &accountpb.GetAccountInfoResponse{
-				Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
-			}, nil
-		}
-
-		infoCacheHitCounter.WithLabelValues("false").Inc()
+	info, err := s.loader.Load(ctx, req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
+	if err == accountinfo.ErrAccountInfoNotFound {
 		return &accountpb.GetAccountInfoResponse{
-			AccountInfo: cached,
+			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
 		}, nil
-	}
-
-	infoCacheMissCounter.Inc()
-	account, err := s.tc.GetAccount(req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
-	if err != nil && err != token.ErrInvalidTokenAccount && err != token.ErrAccountNotFound {
+	} else if err != nil {
 		return nil, status.Error(codes.Internal, "failed to retrieve account")
 	}
 
-	// Use a separate context to help the cache get populated
-	forkedCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	var info *accountpb.AccountInfo
-	var resp *accountpb.GetAccountInfoResponse
-	if err != nil {
-		// account not found
-		info = &accountpb.AccountInfo{
-			AccountId: req.AccountId,
-			Balance:   int64(-1), // sentinel value
-		}
-		resp = &accountpb.GetAccountInfoResponse{
-			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
-		}
-	} else {
-		info = &accountpb.AccountInfo{
-			AccountId: req.AccountId,
-			Balance:   int64(account.Amount),
-		}
-		resp = &accountpb.GetAccountInfoResponse{
-			AccountInfo: info,
-		}
-
-		if err := s.mapper.Add(forkedCtx, req.AccountId.Value, account.Owner); err != nil {
-			log.WithError(err).Warn("failed to cache get account mapping")
-		}
-	}
-
-	if err = s.infoCache.Put(forkedCtx, info); err != nil {
-		log.WithError(err).Warn("failed to cache get account info")
-	}
-	return resp, nil
+	return &accountpb.GetAccountInfoResponse{
+		Result:      accountpb.GetAccountInfoResponse_OK,
+		AccountInfo: info,
+	}, nil
 }
 
 func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.ResolveTokenAccountsRequest) (*accountpb.ResolveTokenAccountsResponse, error) {
@@ -647,14 +593,14 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Account_GetEventsServer) error {
 	log := s.log.WithField("method", "GetEvents")
 
-	account, err := s.tc.GetAccount(req.AccountId.Value, solana.CommitmentRecent)
-	if err == token.ErrAccountNotFound || err == token.ErrInvalidTokenAccount {
+	info, err := s.loader.Load(stream.Context(), req.AccountId.Value, solana.CommitmentRecent)
+	if err == accountinfo.ErrAccountInfoNotFound {
 		if err := stream.Send(&accountpb.Events{Result: accountpb.Events_NOT_FOUND}); err != nil {
 			return status.Error(codes.Internal, err.Error())
 		}
 		return nil
 	} else if err != nil {
-		log.WithError(err).Warn("failed to load account")
+		log.WithError(err).Warn("failed to load account info")
 		return status.Error(codes.Internal, err.Error())
 	}
 
@@ -665,10 +611,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 			{
 				Type: &accountpb.Event_AccountUpdateEvent{
 					AccountUpdateEvent: &accountpb.AccountUpdateEvent{
-						AccountInfo: &accountpb.AccountInfo{
-							AccountId: req.AccountId,
-							Balance:   int64(account.Amount),
-						},
+						AccountInfo: info,
 					},
 				},
 			},
@@ -719,21 +662,18 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				},
 			})
 
-			accountInfo, err := s.tc.GetAccount(req.AccountId.Value, solana.CommitmentRecent)
+			info, err := s.loader.Load(stream.Context(), req.AccountId.Value, solana.CommitmentRecent)
 			if err != nil {
 				log.WithError(err).Warn("failed to add account info, excluding account event")
-			} else {
-				events = append(events, &accountpb.Event{
-					Type: &accountpb.Event_AccountUpdateEvent{
-						AccountUpdateEvent: &accountpb.AccountUpdateEvent{
-							AccountInfo: &accountpb.AccountInfo{
-								AccountId: req.AccountId,
-								Balance:   int64(accountInfo.Amount),
-							},
-						},
-					},
-				})
 			}
+
+			events = append(events, &accountpb.Event{
+				Type: &accountpb.Event_AccountUpdateEvent{
+					AccountUpdateEvent: &accountpb.AccountUpdateEvent{
+						AccountInfo: info,
+					},
+				},
+			})
 
 			// The max # of events that can be sent is 128 and each xdrData received from streamCh results in up to 2
 			// events, so we should flush at a length >= 127.
@@ -844,20 +784,6 @@ func registerMetrics() (err error) {
 			resolveAccountMissCounter = e.ExistingCollector.(prometheus.Counter)
 		} else {
 			return errors.Wrap(err, "failed to register resolve token account miss counter")
-		}
-	}
-	if err := prometheus.Register(infoCacheHitCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			infoCacheHitCounter = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return errors.Wrap(err, "failed to register account info cache hit counter")
-		}
-	}
-	if err := prometheus.Register(infoCacheMissCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			infoCacheMissCounter = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			return errors.Wrap(err, "failed to register account info cache miss counter")
 		}
 	}
 	if err := prometheus.Register(nonMigratableResolveCounter); err != nil {

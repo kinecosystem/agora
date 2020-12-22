@@ -437,7 +437,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	//
 	if tx.InvoiceList != nil {
 		// todo: do we want to perform garbage collection for failed transactions that are not in the record?
-		log.WithField("tx", base64.StdEncoding.EncodeToString(tx.ID)).Info("Storing invoice")
+		log.WithField("tx", base64.StdEncoding.EncodeToString(tx.ID)).Debug("Storing invoice")
 		if err := s.invoiceStore.Put(ctx, tx.ID, tx.InvoiceList); err != nil && err != invoice.ErrExists {
 			log.WithError(err).Warn("failed to store invoice list")
 			return nil, status.Errorf(codes.Internal, "failed to store invoice list")
@@ -479,7 +479,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 				},
 			}
 
-			log.WithError(stat.ErrorResult).Info("failed to submit transaction")
+			log.WithError(stat.ErrorResult).Debug("failed to submit transaction")
 
 			submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
 

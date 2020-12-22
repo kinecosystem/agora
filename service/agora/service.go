@@ -42,6 +42,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/account"
 	mapperdb "github.com/kinecosystem/agora/pkg/account/dynamodb"
 	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
+	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	infodb "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
 	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
 	accountcache "github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/dynamodb"
@@ -563,7 +564,8 @@ func (a *app) Init(_ agoraapp.Config) error {
 			return errors.Wrap(err, "faild to initialize token account cache invalidator")
 		}
 		mapperStore := mapperdb.New(dynamoClient)
-		mapper := account.NewMapper(token.NewClient(solanaClient, kinToken), mapperStore)
+		tokenClient := token.NewClient(solanaClient, kinToken)
+		mapper := account.NewMapper(tokenClient, mapperStore)
 		infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
 		deduper := deduper.New(dynamoClient, dedupeTTL)
 
@@ -591,6 +593,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kin4AccountNotifier,
 			tokenAccountCache,
 			infoCache,
+			accountinfo.NewLoader(tokenClient, infoCache, tokenAccountCache),
 			kin3Migrator,
 			migrationStore,
 			mapper,
