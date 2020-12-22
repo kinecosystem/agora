@@ -619,8 +619,7 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 
 	for _, invalidUA := range []string{
 		"",
-		"KinSDK/xyz",
-		"JVM/xyz KinSDK/xyz",
+		"haxor",
 	} {
 		md := map[string]string{
 			"kin-user-agent": invalidUA,
@@ -639,6 +638,7 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 
 	for _, validUA := range []string{
 		env.server.createWhitelistSecret,
+		"KinSDK/0.2.3_node/v10.23.0",
 		"JVM/unspecified KinSDK/xyz CID/xyz",
 		"iOS/10_1 iPad5,2 CFNetwork/808.3 Darwin/16.3.0 KinSDK/xyz CID/xyz",
 	} {

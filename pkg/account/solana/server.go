@@ -63,7 +63,6 @@ var (
 		Name:      "account_info_cache_misses",
 		Help:      "Number of accounts info cache misses",
 	})
-
 	nonMigratableResolveCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "non_migratable_resolves",
@@ -75,6 +74,11 @@ var (
 		Help:      "Number short cuts taken for resolve token account",
 	}, []string{"type"})
 
+	createAccountByPlatform = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "create_account_by_platform",
+		Help:      "Number of create account requests by 'platform' (mobile, other)",
+	}, []string{"platform"})
 	createAccountBlockCounterVec = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "create_account_blocks",
@@ -774,11 +778,17 @@ func (s *server) isWhitelisted(ctx context.Context) (userAgent string, whitelist
 		return val, true
 	}
 
-	if strings.Contains(val, "KinSDK/") && strings.Contains(val, "CID/") {
-		return val, true
+	if val == "" || !strings.Contains(val, "KinSDK") {
+		return val, false
 	}
 
-	return val, false
+	if strings.Contains(val, "CID/") {
+		createAccountByPlatform.WithLabelValues("mobile").Inc()
+	} else {
+		createAccountByPlatform.WithLabelValues("other").Inc()
+	}
+
+	return val, true
 }
 
 func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) {
@@ -851,6 +861,13 @@ func registerMetrics() (err error) {
 		}
 	}
 
+	if err := prometheus.Register(createAccountByPlatform); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			createAccountByPlatform = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register create account by platform")
+		}
+	}
 	if err := prometheus.Register(createAccountBlockCounterVec); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			createAccountBlockCounterVec = e.ExistingCollector.(*prometheus.CounterVec)
