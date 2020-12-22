@@ -292,13 +292,17 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	_, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		createAccountFailures.WithLabelValues("unhandled").Inc()
+		log.WithError(err).Warn("failed to submit create transaction")
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
 	}
 	if stat.ErrorResult != nil {
 		if solanautil.IsAccountAlreadyExistsError(stat.ErrorResult) {
 			createAccountResultCounterVec.WithLabelValues("exists").Inc()
+			// todo: use the load (another branch) to seed the initial value.
+			//       we expect this to be mostly zero.
 			return &accountpb.CreateAccountResponse{
-				Result: accountpb.CreateAccountResponse_EXISTS,
+				Result:      accountpb.CreateAccountResponse_OK,
+				AccountInfo: info,
 			}, nil
 		}
 		if stat.ErrorResult.ErrorKey() == solana.TransactionErrorBlockhashNotFound {
@@ -306,22 +310,20 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			return &accountpb.CreateAccountResponse{
 				Result: accountpb.CreateAccountResponse_BAD_NONCE,
 			}, nil
+		} else if stat.ErrorResult.ErrorKey() == solana.TransactionErrorDuplicateSignature {
+			createAccountResultCounterVec.WithLabelValues("duplicate_signature").Inc()
+		} else {
+			createAccountFailures.WithLabelValues("unhandled_stat").Inc()
+			log.WithError(stat.ErrorResult).Warn("unexpected transaction error")
 		}
 
-		createAccountFailures.WithLabelValues("unhandled_stat").Inc()
-		log.WithError(stat.ErrorResult).Warn("unexpected transaction error")
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", stat.ErrorResult)
 	}
 
 	createAccountResultCounterVec.WithLabelValues("ok").Inc()
 	return &accountpb.CreateAccountResponse{
-		Result: accountpb.CreateAccountResponse_OK,
-		AccountInfo: &accountpb.AccountInfo{
-			AccountId: &commonpb.SolanaAccountId{
-				Value: tokenInitialize.Account,
-			},
-			Balance: 0,
-		},
+		Result:      accountpb.CreateAccountResponse_OK,
+		AccountInfo: info,
 	}, nil
 }
 

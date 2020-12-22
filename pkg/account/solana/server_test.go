@@ -202,7 +202,61 @@ func TestCreateAccount(t *testing.T) {
 		Commitment: commonpb.Commitment_MAX,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, accountpb.CreateAccountResponse_EXISTS, resp.Result)
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+}
+
+func TestCreateAccount_Exists(t *testing.T) {
+	env, cleanup := setup(t, nil)
+	defer cleanup()
+
+	account := testutil.GenerateSolanaKeypair(t)
+	owner := testutil.GenerateSolanaKeypair(t)
+
+	createTxn := solana.NewTransaction(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		system.CreateAccount(
+			env.subsidizer.Public().(ed25519.PublicKey),
+			account.Public().(ed25519.PublicKey),
+			token.ProgramKey,
+			env.minLamports,
+			token.AccountSize,
+		),
+		token.InitializeAccount(
+			account.Public().(ed25519.PublicKey),
+			env.token,
+			owner.Public().(ed25519.PublicKey),
+		),
+		token.SetAuthority(
+			account.Public().(ed25519.PublicKey),
+			owner.Public().(ed25519.PublicKey),
+			env.subsidizer.Public().(ed25519.PublicKey),
+			token.AuthorityTypeCloseAccount,
+		),
+	)
+	require.NoError(t, createTxn.Sign(env.subsidizer))
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
+
+	txErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
+		Index: 0,
+		Err:   solana.CustomError(0),
+	})
+	sigStatus := &solana.SignatureStatus{
+		ErrorResult: txErr,
+	}
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, sigStatus, nil)
+
+	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
+		Transaction: &commonpb.Transaction{
+			Value: createTxn.Marshal(),
+		},
+		Commitment: commonpb.Commitment_MAX,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+	assert.EqualValues(t, account.Public().(ed25519.PublicKey), resp.AccountInfo.AccountId.Value)
+	assert.EqualValues(t, 0, resp.AccountInfo.Balance)
 }
 
 func TestCreateAccount_NoSubsidizer(t *testing.T) {
@@ -270,7 +324,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 		Commitment: commonpb.Commitment_MAX,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, accountpb.CreateAccountResponse_EXISTS, resp.Result)
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
 }
 
 func TestCreateAccount_InvalidBlockhash(t *testing.T) {
