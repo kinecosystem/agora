@@ -74,6 +74,11 @@ var (
 		Help:      "Number short cuts taken for resolve token account",
 	}, []string{"type"})
 
+	createAccountFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "create_account_failures",
+		Help:      "Number of create account failures",
+	}, []string{"type"})
 	createAccountByPlatform = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "create_account_by_platform",
@@ -263,12 +268,14 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	// todo: extract to be function check
 	if len(s.subsidizer) > 0 && bytes.Equal(txn.Message.Accounts[0], s.subsidizer.Public().(ed25519.PublicKey)) {
 		if err := txn.Sign(s.subsidizer); err != nil {
+			createAccountFailures.WithLabelValues("co_sign").Inc()
 			return nil, status.Error(codes.Internal, "failed to co-sign txn")
 		}
 	}
 
 	if err := s.mapper.Add(ctx, tokenInitialize.Account, tokenInitialize.Owner); err != nil {
 		log.WithError(err).Warn("failed to store account mapping")
+		createAccountFailures.WithLabelValues("mapper").Inc()
 		return nil, status.Error(codes.Internal, "failed to store account mapping")
 	}
 
@@ -284,6 +291,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 
 	_, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
+		createAccountFailures.WithLabelValues("unhandled").Inc()
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
 	}
 	if stat.ErrorResult != nil {
@@ -300,6 +308,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 			}, nil
 		}
 
+		createAccountFailures.WithLabelValues("unhandled_stat").Inc()
 		log.WithError(stat.ErrorResult).Warn("unexpected transaction error")
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", stat.ErrorResult)
 	}
@@ -861,6 +870,13 @@ func registerMetrics() (err error) {
 		}
 	}
 
+	if err := prometheus.Register(createAccountFailures); err != nil {
+		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			createAccountFailures = e.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return errors.Wrap(err, "failed to register create account failures")
+		}
+	}
 	if err := prometheus.Register(createAccountByPlatform); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			createAccountByPlatform = e.ExistingCollector.(*prometheus.CounterVec)
