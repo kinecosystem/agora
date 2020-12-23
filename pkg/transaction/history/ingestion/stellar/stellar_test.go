@@ -42,7 +42,7 @@ func TestInitialParams(t *testing.T) {
 		c string
 	}{
 		{p: nil, c: "0"},
-		{p: pointerFromSequence(model.KinVersion_KIN3, 1024), c: "4398046511104"},
+		{p: PointerFromSequence(model.KinVersion_KIN3, 1024), c: "4398046511104"},
 	}
 
 	for _, tc := range testCases {

@@ -48,7 +48,7 @@ func (i *ingestor) Name() string {
 
 // Ingest implements ingestion.Ingestor.Ingest.
 func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestion.Pointer) (ingestion.ResultQueue, error) {
-	_, err := cursorFromPointer(parent)
+	_, err := CursorFromPointer(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 	// ledgerHandler is called. We simply capture the (parent, block) state before starting
 	// the async processing of the ledger, and use those values when the processing is complete.
 	ledgerHandler := func(l hProtocol.Ledger) {
-		ledgerPtr := pointerFromSequence(i.version, uint32(l.Sequence))
+		ledgerPtr := PointerFromSequence(i.version, uint32(l.Sequence))
 
 		// if the ledgerPtr is the same as our parent, then it's already
 		// been processed, so we can save some work. this generally occurs
@@ -113,7 +113,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 		errInvalidPointer := errors.New("invalid pointer")
 		_, err := retry.Retry(
 			func() error {
-				cursor, err := cursorFromPointer(parent)
+				cursor, err := CursorFromPointer(parent)
 				if err != nil {
 					return errInvalidPointer
 				}

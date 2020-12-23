@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/binary"
+	fmt "fmt"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -169,6 +170,18 @@ func BlockFromOrderingKey(k []byte) (uint64, error) {
 	}
 
 	return binary.BigEndian.Uint64(k[1:]), nil
+}
+
+func MustBlockFromOrderingKey(k []byte) uint64 {
+	if len(k) == 0 {
+		return 0
+	}
+
+	b, err := BlockFromOrderingKey(k)
+	if err != nil {
+		panic(fmt.Sprintf("failed to get block from ordering key: %v", err))
+	}
+	return b
 }
 
 // GetAccountsFromEnvelope returns the set of accounts involved in a transaction

@@ -13,6 +13,7 @@ import (
 	"github.com/ory/dockertest"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/tests"
@@ -67,6 +68,28 @@ func TestMain(m *testing.M) {
 
 func TestStore(t *testing.T) {
 	tests.RunCommitterTests(t, testCommitter, teardown)
+}
+
+func TestCommitUnsafe(t *testing.T) {
+	c := testCommitter.(*Committer)
+
+	p1 := []byte{0, 1, 2}
+	p2 := []byte{2, 1, 0}
+
+	assert.NoError(t, c.CommitUnsafe(context.Background(), "test", p1))
+	actual, err := c.Latest(context.Background(), "test")
+	assert.NoError(t, err)
+	assert.EqualValues(t, p1, actual)
+
+	assert.NoError(t, c.CommitUnsafe(context.Background(), "test", p2))
+	actual, err = c.Latest(context.Background(), "test")
+	assert.NoError(t, err)
+	assert.EqualValues(t, p2, actual)
+
+	assert.NoError(t, c.CommitUnsafe(context.Background(), "test", p1))
+	actual, err = c.Latest(context.Background(), "test")
+	assert.NoError(t, err)
+	assert.EqualValues(t, p1, actual)
 }
 
 func setupTestTable(client dynamodbiface.ClientAPI) error {

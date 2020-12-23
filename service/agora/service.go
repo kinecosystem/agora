@@ -62,7 +62,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	ingestioncommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
 	ingestionlock "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/locker"
-	solanaingestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	stellaringestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	transactionsolana "github.com/kinecosystem/agora/pkg/transaction/solana"
@@ -607,49 +606,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 			migratorHorizonClient,
 		)
 
-		kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
-
-		/*
-			Currently supported by "insta events" (i.e. triggered from Submit()).
-
-			kin4EventsIngestor := solanaingestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
-			kin4EventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin4", 10*time.Second)
-			if err != nil {
-				return errors.Wrap(err, "failed to init kin 4 events ingestion lock")
-			}
-			go func() {
-				err := ingestion.Run(ctx, kin4EventsLock, committer, eventsProcessor, kin4EventsIngestor)
-				if err != nil && err != context.Canceled {
-					log.WithError(err).Warn("kin 4 events ingestion loop terminated")
-				} else {
-					log.WithError(err).Info("kin 4 events ingestion loop terminated")
-				}
-			}()
-		*/
-
-		kin4HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin4", 10*time.Second)
-		if err != nil {
-			return errors.Wrap(err, "failed to init kin 4 history ingestion lock")
-		}
-
 		//
-		// Kin4 Ingestion and Streams
+		// Kin4 Streams
 		//
 		go func() {
 			transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
-		}()
-		go func() {
-			if true {
-				// disable history for now
-				return
-			}
-
-			err := ingestion.Run(ctx, kin4HistoryLock, committer, historyRW, kin4HistoryIngestor)
-			if err != nil && err != context.Canceled {
-				log.WithError(err).Warn("kin 4 history ingestion loop terminated")
-			} else {
-				log.WithError(err).Info("kin 4 history ingestion loop terminated")
-			}
 		}()
 	} else {
 		a.txnSolana = transactionsolana.NewNoopServer()

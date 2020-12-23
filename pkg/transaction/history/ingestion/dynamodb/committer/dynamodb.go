@@ -39,18 +39,18 @@ var (
 	commitExpressionStr = aws.String(commitExpression)
 )
 
-type committer struct {
+type Committer struct {
 	client dynamodbiface.ClientAPI
 }
 
 func New(client dynamodbiface.ClientAPI) ingestion.Committer {
-	return &committer{
+	return &Committer{
 		client: client,
 	}
 }
 
 // Commit implements ingestion.Committer.Commit.
-func (c *committer) Commit(ctx context.Context, name string, parent, block ingestion.Pointer) error {
+func (c *Committer) Commit(ctx context.Context, name string, parent, block ingestion.Pointer) error {
 	if parent == nil {
 		parent = []byte{0}
 	}
@@ -78,8 +78,19 @@ func (c *committer) Commit(ctx context.Context, name string, parent, block inges
 	return nil
 }
 
+func (c *Committer) CommitUnsafe(ctx context.Context, name string, ptr ingestion.Pointer) error {
+	_, err := c.client.PutItemRequest(&dynamodb.PutItemInput{
+		TableName: tableNameStr,
+		Item: map[string]dynamodb.AttributeValue{
+			ingestorKey: {S: aws.String(name)},
+			"latest":    {B: ptr},
+		},
+	}).Send(ctx)
+	return err
+}
+
 // Latest implements ingestion.Committer.Latest.
-func (c *committer) Latest(ctx context.Context, name string) (ingestion.Pointer, error) {
+func (c *Committer) Latest(ctx context.Context, name string) (ingestion.Pointer, error) {
 	resp, err := c.client.GetItemRequest(&dynamodb.GetItemInput{
 		TableName: tableNameStr,
 		Key: map[string]dynamodb.AttributeValue{

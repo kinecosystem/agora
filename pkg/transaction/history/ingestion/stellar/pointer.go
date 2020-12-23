@@ -10,14 +10,14 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
-func pointerFromSequence(v model.KinVersion, seq uint32) ingestion.Pointer {
+func PointerFromSequence(v model.KinVersion, seq uint32) ingestion.Pointer {
 	ptr := make([]byte, 5)
 	ptr[0] = byte(v)
 	binary.BigEndian.PutUint32(ptr[1:], seq)
 	return ptr
 }
 
-func sequenceFromPointer(p ingestion.Pointer) (seq uint32, err error) {
+func SequenceFromPointer(p ingestion.Pointer) (seq uint32, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -29,8 +29,8 @@ func sequenceFromPointer(p ingestion.Pointer) (seq uint32, err error) {
 	return binary.BigEndian.Uint32(p[1:]), nil
 }
 
-func cursorFromPointer(p ingestion.Pointer) (token string, err error) {
-	seq, err := sequenceFromPointer(p)
+func CursorFromPointer(p ingestion.Pointer) (token string, err error) {
+	seq, err := SequenceFromPointer(p)
 	if err != nil {
 		return "", err
 	}

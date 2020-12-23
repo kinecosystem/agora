@@ -15,18 +15,22 @@ import (
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
-	infodb "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 
+	mapperdb "github.com/kinecosystem/agora/pkg/app/dynamodb/mapper"
 	historyreader "github.com/kinecosystem/agora/pkg/transaction/history/dynamodb"
+	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	ingestioncommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
 	ingestionlock "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/locker"
+	solanaingestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	"github.com/kinecosystem/agora/pkg/transaction/history/kre"
 	bqsubmitter "github.com/kinecosystem/agora/pkg/transaction/history/kre/bigquery"
+	"github.com/kinecosystem/agora/pkg/transaction/history/model"
+	"github.com/kinecosystem/agora/pkg/transaction/history/processor"
 )
 
 const (
@@ -51,13 +55,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(solanaEndpointEnv) == "" {
 		return errors.New("missing solana endpoint")
 	}
-
 	solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
 
 	if os.Getenv(kinTokenEnv) == "" {
 		return errors.New("missing kin token")
 	}
-
 	kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
 	if err != nil {
 		return errors.Wrap(err, "failed to parse kin token")
@@ -68,9 +70,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init v2 aws sdk")
 	}
 	dynamoClient := dynamodb.New(cfg)
-	hist := historyreader.New(dynamoClient)
-	committer := ingestioncommitter.New(dynamoClient)
-	accountStore := infodb.NewStore(dynamoClient)
 
 	sess, err := session.NewSession()
 	if err != nil {
@@ -87,7 +86,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(bqPaymentsTableEnv) == "" {
 		return errors.Errorf("missing %s", bqPaymentsTableEnv)
 	}
-
 	bqCredentials := os.Getenv(bqCredentialsEnv)
 	if bqCredentials == "" {
 		return errors.Errorf("missing %s", bqCredentialsEnv)
@@ -111,22 +109,47 @@ func (a *app) Init(_ agoraapp.Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.loaderCancelFunc = cancel
 
+	hist := historyreader.New(dynamoClient)
+	committer := ingestioncommitter.New(dynamoClient)
 	loader := kre.NewLoader(
+		bqsubmitter.New(bqClient, os.Getenv(bqCreationsTableEnv)),
+		bqsubmitter.New(bqClient, os.Getenv(bqPaymentsTableEnv)),
+		mapperdb.New(dynamoClient),
+	)
+	p := processor.NewProcessor(
 		hist,
 		committer,
 		historyLock,
-		solanaClient,
+		kre.KREIngestorName,
 		token.NewClient(solanaClient, kinToken),
-		bqsubmitter.New(bqClient, os.Getenv(bqCreationsTableEnv)),
-		bqsubmitter.New(bqClient, os.Getenv(bqPaymentsTableEnv)),
-		accountStore,
+		1024,
+		loader.LoadData,
 	)
+
 	go func() {
-		err := loader.Process(ctx, 5*time.Minute)
+		// todo: once ingestion is confirmed, set ingestor_pointer to end of bulk upload, and enable.
+		if true {
+			return
+		}
+		err := p.Process(ctx, 5*time.Minute)
 		if err != nil && err != context.Canceled {
 			log.WithError(err).Warn("loader loop terminated")
 		} else {
 			log.WithError(err).Info("loader loop terminated")
+		}
+	}()
+
+	kin4HistoryIngestor := solanaingestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), solanaClient, kinToken)
+	kin4HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin4", 10*time.Second)
+	if err != nil {
+		return errors.Wrap(err, "failed to init kin 4 history ingestion lock")
+	}
+	go func() {
+		err := ingestion.Run(ctx, kin4HistoryLock, committer, hist, kin4HistoryIngestor)
+		if err != nil && err != context.Canceled {
+			log.WithError(err).Warn("kin 4 history ingestion loop terminated")
+		} else {
+			log.WithError(err).Info("kin 4 history ingestion loop terminated")
 		}
 	}()
 
