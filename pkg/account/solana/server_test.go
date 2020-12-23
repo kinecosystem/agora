@@ -242,6 +242,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 		Index: 0,
 		Err:   solana.CustomError(0),
 	})
+	require.NoError(t, err)
 	sigStatus := &solana.SignatureStatus{
 		ErrorResult: txErr,
 	}

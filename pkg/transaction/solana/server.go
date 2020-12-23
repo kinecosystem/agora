@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -37,50 +38,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook/events"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
-)
-
-var (
-	submitTxCounter       = transaction.SubmitTransactionCounter.WithLabelValues("4")
-	submitTxResultCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "submit_transaction_result",
-		Help:      "Number of submit transaction results for OK",
-	}, []string{"result"})
-	speculativeUpdates = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "speculative_updates",
-	})
-	speculativeUpdateFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "speculative_update_failures",
-	}, []string{"type"})
-	infoCacheFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "info_cache_failures",
-	}, []string{"type"})
-	eventsWebhookFailures = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "submit_transaction_webhook_failures",
-	})
-	submitTransactionsCancelled = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "submit_transactions_cancelled",
-	})
-	transferByDest = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "transfer_by_dest",
-		Help:      "Number of transfers by destination (whitelisted)",
-	}, []string{"dest"})
-	dedupesByType = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "transfer_dedupes",
-		Help:      "Number of deuplications by type",
-	}, []string{"type"})
-	dedupeTransitionFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "dedupe_transition_failures",
-		Help:      "Number of failures to update dedupe info",
-	}, []string{"op"})
 )
 
 var destWhitelist = map[string]struct{}{
@@ -321,6 +278,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	}
 
 	log.Debug("Triggering migration batch")
+
+	// todo: migration timings, maybe could be global by scope
 	if err := migration.MigrateTransferAccounts(ctx, s.hc, s.migrator, transferAccountPairs...); err != nil && err != migration.ErrNotFound {
 		return nil, status.Errorf(codes.Internal, "failed to migrate transfer accounts: %v", err)
 	}
@@ -490,10 +449,13 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	default:
 	}
 
+	submitStart := time.Now()
 	var submitResult transactionpb.SubmitTransactionResponse_Result
 	sig, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
+	submitTime := time.Since(submitStart)
 	if err != nil {
 		log.WithError(err).Warn("unhandled SubmitTransaction")
+		submitTimingsByCode.WithLabelValues("unhandled").Observe(float64(submitTime.Seconds()))
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", err)
 	}
 	if stat.ErrorResult != nil {
@@ -530,9 +492,12 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			if err := s.deduper.Update(ctx, req.DedupeId, dedupeInfo); err != nil {
 				log.WithError(err).Warn("failed to update dedupe info")
 			}
+			submitTimingsByCode.WithLabelValues(resp.Result.String()).Observe(float64(submitTime.Seconds()))
 			return resp, nil
 		}
 	}
+
+	submitTimingsByCode.WithLabelValues(submitResult.String()).Observe(float64(submitTime.Seconds()))
 
 	// We fork the context here, because we want to take action based on the result
 	// of the transaction regardless if the client has cancelled the request.
@@ -744,68 +709,66 @@ func (s *server) speculativeWrite(ctx context.Context, speculativeStates map[str
 	wg.Wait()
 }
 
+var (
+	submitTxCounter     = transaction.SubmitTransactionCounter.WithLabelValues("4")
+	submitTimingsByCode = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_submit_seconds",
+		Help:      "Histogram of submit latency from SubmitTransaction",
+		Buckets:   metrics.MinuteDistributionBuckets,
+	}, []string{"result"})
+
+	submitTxResultCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_result",
+		Help:      "Number of submit transaction results for OK",
+	}, []string{"result"})
+	speculativeUpdates = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "speculative_updates",
+	})
+	speculativeUpdateFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "speculative_update_failures",
+	}, []string{"type"})
+	infoCacheFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "info_cache_failures",
+	}, []string{"type"})
+	eventsWebhookFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_webhook_failures",
+	})
+	submitTransactionsCancelled = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transactions_cancelled",
+	})
+	transferByDest = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "transfer_by_dest",
+		Help:      "Number of transfers by destination (whitelisted)",
+	}, []string{"dest"})
+	dedupesByType = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "transfer_dedupes",
+		Help:      "Number of deuplications by type",
+	}, []string{"type"})
+	dedupeTransitionFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "dedupe_transition_failures",
+		Help:      "Number of failures to update dedupe info",
+	}, []string{"op"})
+)
+
 func init() {
-	if err := prometheus.Register(submitTxResultCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			submitTxResultCounter = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register submitTxResultCounter")
-		}
-	}
-	if err := prometheus.Register(speculativeUpdates); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			speculativeUpdates = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			logrus.WithError(err).Error("failed to register infoCacheSpeculativeUpdates")
-		}
-	}
-	if err := prometheus.Register(speculativeUpdateFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			speculativeUpdateFailures = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register speculativeUpdateFailures")
-		}
-	}
-	if err := prometheus.Register(infoCacheFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			infoCacheFailures = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register infoCacheFailures")
-		}
-	}
-	if err := prometheus.Register(eventsWebhookFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			eventsWebhookFailures = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			logrus.WithError(err).Error("failed to register eventsWebhookFailures")
-		}
-	}
-	if err := prometheus.Register(submitTransactionsCancelled); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			submitTransactionsCancelled = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			logrus.WithError(err).Error("failed to register submitTransactionsCancelled")
-		}
-	}
-	if err := prometheus.Register(transferByDest); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			transferByDest = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register transferByDest")
-		}
-	}
-	if err := prometheus.Register(dedupesByType); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			dedupesByType = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register dedupesByType")
-		}
-	}
-	if err := prometheus.Register(dedupeTransitionFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			dedupeTransitionFailures = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			logrus.WithError(err).Error("failed to register dedupeTransitionFailures")
-		}
-	}
+	submitTxResultCounter = metrics.Register(submitTxCounter).(*prometheus.CounterVec)
+	submitTimingsByCode = metrics.Register(submitTimingsByCode).(*prometheus.HistogramVec)
+	speculativeUpdates = metrics.Register(speculativeUpdates).(prometheus.Counter)
+	speculativeUpdateFailures = metrics.Register(speculativeUpdateFailures).(*prometheus.CounterVec)
+	infoCacheFailures = metrics.Register(infoCacheFailures).(*prometheus.CounterVec)
+	eventsWebhookFailures = metrics.Register(eventsWebhookFailures).(prometheus.Counter)
+	submitTransactionsCancelled = metrics.Register(submitTransactionsCancelled).(prometheus.Counter)
+	transferByDest = metrics.Register(transferByDest).(*prometheus.CounterVec)
+	dedupesByType = metrics.Register(dedupesByType).(*prometheus.CounterVec)
+	dedupeTransitionFailures = metrics.Register(dedupeTransitionFailures).(*prometheus.CounterVec)
 }
