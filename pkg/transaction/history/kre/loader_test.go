@@ -10,6 +10,7 @@ import (
 
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
+	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	memoryaccount "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
@@ -215,6 +216,92 @@ func TestProcess_Existing(t *testing.T) {
 	assert.Equal(t, 2, len(accounts3))
 	testutil.SortKeys(accounts3)
 	assert.EqualValues(t, []ed25519.PublicKey{accounts[0], accounts[2]}, accounts3)
+
+	env.sc.AssertExpectations(t)
+}
+
+func TestMigrationTransaction(t *testing.T) {
+	// generate
+	env := setup(t)
+	slot := uint64(2)
+	pointer := model.OrderingKeyFromBlock(slot, false)
+	require.NoError(t, env.committer.Commit(context.Background(), GetKREIngestorName(), nil, pointer))
+
+	subsidizerKey := testutil.GenerateSolanaKeypair(t)
+	subsidizer := subsidizerKey.Public().(ed25519.PublicKey)
+	migrationAddress := testutil.GenerateSolanaKeys(t, 1)[0]
+	tokenMint := testutil.GenerateSolanaKeys(t, 1)[0]
+	owner := testutil.GenerateSolanaKeys(t, 1)[0]
+
+	env.sc.On("GetAccountInfo", migrationAddress, solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, owner, token.ProgramKey), nil)
+
+	txn := solana.NewTransaction(
+		subsidizer,
+		system.CreateAccount(
+			subsidizer,
+			migrationAddress,
+			migrationAddress,
+			10,
+			10,
+		),
+		token.InitializeAccount(
+			migrationAddress,
+			env.mint,
+			migrationAddress,
+		),
+		token.SetAuthority(
+			migrationAddress,
+			migrationAddress,
+			subsidizer,
+			token.AuthorityTypeCloseAccount,
+		),
+		token.SetAuthority(
+			migrationAddress,
+			migrationAddress,
+			owner,
+			token.AuthorityTypeAccountHolder,
+		),
+		token.Transfer(
+			tokenMint,
+			migrationAddress,
+			tokenMint,
+			10,
+		),
+	)
+	assert.NoError(t, txn.Sign(subsidizerKey))
+
+	entry := &model.Entry{
+		Version: model.KinVersion_KIN4,
+		Kind: &model.Entry_Solana{
+			Solana: &model.SolanaEntry{
+				Slot:        slot,
+				Confirmed:   true,
+				Transaction: txn.Marshal(),
+			},
+		},
+	}
+
+	require.NoError(t, env.rw.Write(context.Background(), entry))
+
+	// fetch slot once initially
+	env.sc.On("GetSlot", mock.Anything).Return(uint64(4), nil).Once()
+	// results in an error being thrown, cutting the tight loop short
+	env.sc.On("GetSlot", mock.Anything).Return(uint64(0), errors.New("")).Once()
+	env.sc.On("GetBlockTime", mock.Anything).Return(time.Now(), nil)
+
+	assert.Error(t, env.loader.process(context.Background())) // expect an error from GetSlot returning an error
+
+	assert.Equal(t, 1, len(env.creationsSubmitter.submitted))
+	creations := env.creationsSubmitter.submitted[0].([]*creation)
+	assert.Equal(t, 1, len(creations))
+	assert.Equal(t, migrationAddress, creations[0].account)
+	assert.Equal(t, owner, creations[0].accountOwner)
+	assert.Equal(t, subsidizer, creations[0].subsidizer)
+
+	assert.Equal(t, 1, len(env.paymentsSubmitter.submitted))
+	payments := env.paymentsSubmitter.submitted[0].([]*payment)
+	assert.Equal(t, 1, len(payments))
+	assertPayment(t, payments[0], 4, 10, tokenMint, tokenMint, migrationAddress, owner)
 
 	env.sc.AssertExpectations(t)
 }

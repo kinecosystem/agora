@@ -285,6 +285,8 @@ func (l *Loader) process(ctx context.Context) error {
 				return errors.Wrap(err, "failed to get ownership changes from transaction")
 			}
 
+			applyOwnershipChanges(txnCreations, txnOwnershipChanges)
+
 			payments = append(payments, txnPayments...)
 			creations = append(creations, txnCreations...)
 			ownershipChanges = append(ownershipChanges, txnOwnershipChanges...)
@@ -545,6 +547,20 @@ func (l *Loader) updateAccounts(ctx context.Context, slot uint64, creations []*c
 	}
 
 	return nil
+}
+
+func applyOwnershipChanges(creations []*creation, changes []*ownershipChange) {
+	// note: the number of creations in a transaction is generally small. for a
+	//       migration transaction we can fit at most two, and the SDK flow does
+	//       just 1. The O(n^2) nature of this loop should still be small, 2^2 in
+	//       the worst case
+	for _, change := range changes {
+		for _, c := range creations {
+			if bytes.Equal(c.account, change.account) {
+				c.accountOwner = change.newOwner
+			}
+		}
+	}
 }
 
 func getBalanceDiffs(payments []*payment) map[string]int64 {
