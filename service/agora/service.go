@@ -51,6 +51,7 @@ import (
 	appmapper "github.com/kinecosystem/agora/pkg/app/dynamodb/mapper"
 	"github.com/kinecosystem/agora/pkg/channel"
 	channelpool "github.com/kinecosystem/agora/pkg/channel/dynamodb"
+	redisevents "github.com/kinecosystem/agora/pkg/events/redis"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -69,7 +70,7 @@ import (
 	transactionstellar "github.com/kinecosystem/agora/pkg/transaction/stellar"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
-	"github.com/kinecosystem/agora/pkg/webhook/events"
+	webevents "github.com/kinecosystem/agora/pkg/webhook/events"
 
 	// Configurable keystore options:
 	_ "github.com/kinecosystem/agora/pkg/keypair/dynamodb"
@@ -109,6 +110,9 @@ const (
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
 	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
 	migrationGlobalLimitEnv  = "MIGRATION_GLOBAL_LIMIT"
+
+	// Events config
+	eventsRedisConnStringEnv = "EVENTS_REDIS_CONN_STRING"
 
 	// Channel Configs
 	maxChannelsEnv = "MAX_CHANNELS"
@@ -221,13 +225,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		if rlRedisConnString == "" {
 			return errors.Errorf("%s must be set", rlRedisConnStringEnv)
 		}
-
-		hosts := strings.Split(rlRedisConnString, ",")
-		addrs := make(map[string]string)
-		for i, host := range hosts {
-			addrs[fmt.Sprintf("server%d", i)] = host
-		}
-
 		limiter = redis_rate.NewLimiter(redis.NewRing(&redis.RingOptions{
 			Addrs: parseAddrsFromConnString(rlRedisConnString),
 		}))
@@ -290,9 +287,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.streamCancelFunc = cancel
 
-	eventsProcessor, err := events.NewProcessor(
+	eventsProcessor, err := webevents.NewProcessor(
 		sqstasks.NewProcessorCtor(
-			events.IngestionQueueName,
+			webevents.IngestionQueueName,
 			sqs.New(cfg),
 		),
 		invoiceStore,
@@ -570,6 +567,21 @@ func (a *app) Init(_ agoraapp.Config) error {
 		infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
 		deduper := deduper.New(dynamoClient, dedupeTTL)
 
+		if os.Getenv(eventsRedisConnStringEnv) == "" {
+			return errors.New("missing events redis connection string")
+		}
+		redisEvents, err := redisevents.New(
+			redis.NewClient(&redis.Options{
+				Addr: os.Getenv(eventsRedisConnStringEnv),
+			}),
+			redisevents.TransactionChannel,
+			transactionsolana.MapTransactionEvent(kin4AccountNotifier),
+			transactionsolana.MapTransactionEvent(cacheInvalidator),
+		)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize redis events")
+		}
+
 		a.accountSolana, err = accountsolana.New(
 			solanaClient,
 			solanaResolveClient,
@@ -601,6 +613,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 			kin3Migrator,
 			infoCache,
 			eventsProcessor,
+			redisEvents,
 			deduper,
 			kinToken,
 			subsidizer,
@@ -644,7 +657,6 @@ func (a *app) ShutdownChan() <-chan struct{} {
 func (a *app) Stop() {
 	a.shutdown.Do(func() {
 		close(a.shutdownCh)
-
 		a.streamCancelFunc()
 	})
 }

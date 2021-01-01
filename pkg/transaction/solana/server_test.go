@@ -34,6 +34,9 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	infomemory "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
+	"github.com/kinecosystem/agora/pkg/events"
+	"github.com/kinecosystem/agora/pkg/events/eventspb"
+	eventsmemory "github.com/kinecosystem/agora/pkg/events/memory"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -55,16 +58,20 @@ type serverEnv struct {
 	server     *server
 	client     transactionpb.TransactionClient
 
-	sc           *solana.MockClient
-	invoiceStore invoice.Store
-	rw           *historymemory.RW
-	committer    ingestion.Committer
-	authorizer   *mockAuthorizer
-	infoCache    accountinfo.Cache
-	submitter    *mockSubmitter
-	deduper      dedupe.Deduper
+	sc               *solana.MockClient
+	invoiceStore     invoice.Store
+	rw               *historymemory.RW
+	committer        ingestion.Committer
+	authorizer       *mockAuthorizer
+	infoCache        accountinfo.Cache
+	webhookSubmitter *mockSubmitter
+	streamSubmitter  events.Submitter
+	deduper          dedupe.Deduper
 
 	hClient *horizon.MockClient
+
+	mu     sync.Mutex
+	events []*eventspb.Event
 }
 
 type mockAuthorizer struct {
@@ -119,7 +126,7 @@ func (m *mockInfoCache) Del(ctx context.Context, key ed25519.PublicKey) (ok bool
 	return args.Bool(0), args.Error(0)
 }
 
-func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
+func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 	conn, serv, err := agoratestutil.NewServer(
 		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
 		agoratestutil.WithUnaryServerInterceptor(version.MinVersionUnaryServerInterceptor()),
@@ -127,6 +134,8 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 		agoratestutil.WithStreamServerInterceptor(version.MinVersionStreamServerInterceptor()),
 	)
 	require.NoError(t, err)
+
+	env = &serverEnv{}
 
 	env.client = transactionpb.NewTransactionClient(conn)
 	env.sc = solana.NewMockClient()
@@ -136,7 +145,12 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 	env.authorizer = &mockAuthorizer{}
 	env.infoCache, err = infomemory.NewCache(5*time.Second, 5*time.Second, 1000)
 	require.NoError(t, err)
-	env.submitter = &mockSubmitter{}
+	env.webhookSubmitter = &mockSubmitter{}
+	env.streamSubmitter = eventsmemory.New(func(e *eventspb.Event) {
+		env.mu.Lock()
+		env.events = append(env.events, proto.Clone(e).(*eventspb.Event))
+		env.mu.Unlock()
+	})
 	env.deduper = dedupememory.New()
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
@@ -156,7 +170,8 @@ func setupServerEnv(t *testing.T) (env serverEnv, cleanup func()) {
 		env.authorizer,
 		migration.NewNoopMigrator(),
 		env.infoCache,
-		env.submitter,
+		env.webhookSubmitter,
+		env.streamSubmitter,
 		env.deduper,
 		env.token,
 		env.subsidizer,
@@ -368,7 +383,7 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
 
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
 
 	senderInfo := token.Account{
 		Mint:   env.token,
@@ -454,9 +469,11 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 		}
 	}
 
-	env.submitter.AssertExpectations(t)
-	submittedEntry := env.submitter.Calls[0].Arguments.Get(1).(*model.Entry)
+	env.webhookSubmitter.AssertExpectations(t)
+	submittedEntry := env.webhookSubmitter.Calls[0].Arguments.Get(1).(*model.Entry)
 	assert.EqualValues(t, txn.Marshal(), submittedEntry.GetSolana().Transaction)
+	require.Equal(t, 1, len(env.events))
+	assert.Equal(t, txn.Marshal(), env.events[0].GetTransactionEvent().Transaction)
 }
 
 func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
@@ -472,7 +489,7 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
@@ -546,7 +563,7 @@ func TestSubmitTransaction_DedupeSuccess(t *testing.T) {
 		Result: transaction.AuthorizationResultOK,
 	}
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Once()
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Once()
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Once()
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
@@ -645,7 +662,7 @@ func TestSubmitTransaction_DedupeFailed(t *testing.T) {
 	}
 
 	env.authorizer.AssertExpectations(t)
-	env.submitter.AssertExpectations(t)
+	env.webhookSubmitter.AssertExpectations(t)
 }
 
 func TestSubmitTransaction_DedupeConcurrent(t *testing.T) {
@@ -658,7 +675,7 @@ func TestSubmitTransaction_DedupeConcurrent(t *testing.T) {
 		Result: transaction.AuthorizationResultOK,
 	}
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(2)
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(2)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(2)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
@@ -722,7 +739,7 @@ func TestSubmitTransaction_DedupeConcurrent(t *testing.T) {
 	require.NotEmpty(t, sig[:], resp.Signature.Value)
 
 	env.authorizer.AssertExpectations(t)
-	env.submitter.AssertExpectations(t)
+	env.webhookSubmitter.AssertExpectations(t)
 }
 
 func TestSubmitTransaction_Plain_Batch(t *testing.T) {
@@ -751,7 +768,7 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -833,7 +850,7 @@ func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -892,7 +909,7 @@ func TestSubmitTransaction_ChainedSpeculativeSubmissions(t *testing.T) {
 		Result: transaction.AuthorizationResultOK,
 	}
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(3)
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(3)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(3)
 
 	senderInfo := token.Account{
 		Mint:   env.token,
@@ -995,7 +1012,7 @@ func TestSubmitTransaction_ChainedSpeculativeSubmissions(t *testing.T) {
 		}
 	}
 
-	env.submitter.AssertExpectations(t)
+	env.webhookSubmitter.AssertExpectations(t)
 }
 
 // All uses of SubmitTransaction use speculative execution, with the expectations
@@ -1123,7 +1140,7 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
@@ -1173,7 +1190,7 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -1240,7 +1257,7 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
@@ -1293,7 +1310,7 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
 		authTx = args.Get(1).(transaction.Transaction)
 	})
-	env.submitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature

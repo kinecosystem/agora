@@ -9,16 +9,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kinecosystem/agora/pkg/events/eventspb"
+	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
 func TestOpenTransactionStream(t *testing.T) {
-
 	client := solana.NewMockClient()
 	ctx, cancel := context.WithCancel(context.Background())
 	notifier := newTestNotifier(3*10, cancel)
@@ -58,6 +60,76 @@ func TestOpenTransactionStream(t *testing.T) {
 		expected := blocks[i/10].Transactions[i%10]
 		require.EqualValues(t, expected, txn, i)
 	}
+}
+
+func TestMapTransactionEvent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	notifier := newTestNotifier(10, cancel)
+
+	block := generateBlocks(t, 1, 10)[0]
+	for i := 0; i < len(block.Transactions); i++ {
+		e := &eventspb.Event{
+			SubmissionTime: ptypes.TimestampNow(),
+			Kind: &eventspb.Event_TransactionEvent{
+				TransactionEvent: &eventspb.TransactionEvent{
+					Transaction: block.Transactions[i].Transaction.Marshal(),
+				},
+			},
+		}
+		if i >= 5 {
+			txErr := solana.NewTransactionError(solana.TransactionErrorDuplicateSignature)
+			str, err := txErr.JSONString()
+			require.NoError(t, err)
+
+			e.GetTransactionEvent().TransactionError = []byte(str)
+		}
+
+		MapTransactionEvent(notifier)(e)
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+
+	require.Equal(t, 10, len(notifier.receivedTxns))
+	for i := 0; i < 5; i++ {
+		assert.Equal(t, block.Transactions[i], notifier.receivedTxns[i])
+	}
+	for i := 5; i < 10; i++ {
+		assert.Equal(t, block.Transactions[i].Transaction, notifier.receivedTxns[i].Transaction)
+		assert.True(t, solanautil.IsDuplicateSignature(notifier.receivedTxns[i].Err))
+	}
+}
+
+func TestMapTransactionEvent_Invalid(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	notifier := newTestNotifier(1, cancel)
+
+	block := generateBlocks(t, 1, 2)[0]
+	for i := 0; i < 2; i++ {
+		e := &eventspb.Event{
+			SubmissionTime: ptypes.TimestampNow(),
+			Kind: &eventspb.Event_TransactionEvent{
+				TransactionEvent: &eventspb.TransactionEvent{
+					Transaction: block.Transactions[i].Transaction.Marshal(),
+				},
+			},
+		}
+		if i == 0 {
+			e.GetTransactionEvent().TransactionError = []byte("garbgarb")
+		}
+
+		MapTransactionEvent(notifier)(e)
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+
+	require.Equal(t, 1, len(notifier.receivedTxns))
+	assert.Equal(t, block.Transactions[1], notifier.receivedTxns[0])
 }
 
 type testNotifier struct {

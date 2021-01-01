@@ -28,6 +28,8 @@ import (
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
+	"github.com/kinecosystem/agora/pkg/events"
+	"github.com/kinecosystem/agora/pkg/events/eventspb"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
@@ -36,7 +38,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/kinecosystem/agora/pkg/webhook/events"
+	webevents "github.com/kinecosystem/agora/pkg/webhook/events"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
@@ -52,18 +54,19 @@ var destWhitelist = map[string]struct{}{
 }
 
 type server struct {
-	log             *logrus.Entry
-	sc              solana.Client
-	scSubmit        solana.Client
-	tc              *token.Client
-	loader          *loader
-	invoiceStore    invoice.Store
-	history         history.ReaderWriter
-	authorizer      transaction.Authorizer
-	migrator        migration.Migrator
-	infoCache       accountinfo.Cache
-	eventsSubmitter events.Submitter
-	deduper         dedupe.Deduper
+	log          *logrus.Entry
+	sc           solana.Client
+	scSubmit     solana.Client
+	tc           *token.Client
+	loader       *loader
+	invoiceStore invoice.Store
+	history      history.ReaderWriter
+	authorizer   transaction.Authorizer
+	migrator     migration.Migrator
+	infoCache    accountinfo.Cache
+	webEvents    webevents.Submitter
+	streamEvents events.Submitter
+	deduper      dedupe.Deduper
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
@@ -84,7 +87,8 @@ func New(
 	authorizer transaction.Authorizer,
 	migrator migration.Migrator,
 	infoCache accountinfo.Cache,
-	eventsSubmitter events.Submitter,
+	webEvents webevents.Submitter,
+	streamEvents events.Submitter,
 	deduper dedupe.Deduper,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
@@ -107,7 +111,8 @@ func New(
 		authorizer:      authorizer,
 		migrator:        migrator,
 		infoCache:       infoCache,
-		eventsSubmitter: eventsSubmitter,
+		webEvents:       webEvents,
+		streamEvents:    streamEvents,
 		deduper:         deduper,
 		token:           tokenAccount,
 		subsidizer:      subsidizer,
@@ -531,9 +536,20 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
-	if err := s.eventsSubmitter.Submit(forkedCtx, entry); err != nil {
+	if err := s.webEvents.Submit(forkedCtx, entry); err != nil {
 		log.WithError(err).Warn("failed to forward webhook")
 		eventsWebhookFailures.Inc()
+	}
+	event := &eventspb.Event{
+		Kind: &eventspb.Event_TransactionEvent{
+			TransactionEvent: &eventspb.TransactionEvent{
+				Transaction: txn.Marshal(),
+			},
+		},
+	}
+	if err := s.streamEvents.Submit(forkedCtx, event); err != nil {
+		log.WithError(err).Warn("failed to forward event stream")
+		eventsStreamFailures.Inc()
 	}
 
 	submitTxResultCounter.WithLabelValues(strings.ToLower(submitResult.String())).Inc()
@@ -739,6 +755,10 @@ var (
 		Namespace: "agora",
 		Name:      "submit_transaction_webhook_failures",
 	})
+	eventsStreamFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "agora",
+		Name:      "submit_transaction_stream_failures",
+	})
 	submitTransactionsCancelled = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "submit_transactions_cancelled",
@@ -761,12 +781,13 @@ var (
 )
 
 func init() {
-	submitTxResultCounter = metrics.Register(submitTxCounter).(*prometheus.CounterVec)
+	submitTxResultCounter = metrics.Register(submitTxResultCounter).(*prometheus.CounterVec)
 	submitTimingsByCode = metrics.Register(submitTimingsByCode).(*prometheus.HistogramVec)
 	speculativeUpdates = metrics.Register(speculativeUpdates).(prometheus.Counter)
 	speculativeUpdateFailures = metrics.Register(speculativeUpdateFailures).(*prometheus.CounterVec)
 	infoCacheFailures = metrics.Register(infoCacheFailures).(*prometheus.CounterVec)
 	eventsWebhookFailures = metrics.Register(eventsWebhookFailures).(prometheus.Counter)
+	eventsStreamFailures = metrics.Register(eventsStreamFailures).(prometheus.Counter)
 	submitTransactionsCancelled = metrics.Register(submitTransactionsCancelled).(prometheus.Counter)
 	transferByDest = metrics.Register(transferByDest).(*prometheus.CounterVec)
 	dedupesByType = metrics.Register(dedupesByType).(*prometheus.CounterVec)
