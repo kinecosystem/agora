@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/hex"
 	"time"
 
 	"github.com/kinecosystem/agora-common/retry"
@@ -19,6 +18,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
+	solanaingestion "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
@@ -161,18 +161,19 @@ func (l *Loader) Process(ctx context.Context, interval time.Duration) error {
 func (l *Loader) process(ctx context.Context) error {
 	log := l.log.WithField("method", "process")
 
-	latest, err := l.committer.Latest(ctx, GetKREIngestorName())
+	prevKey, err := l.committer.Latest(ctx, GetKREIngestorName())
 	if err != nil {
 		return errors.Wrap(err, "failed to get latest kre commit")
 	}
-
-	var lastProcessedBlock uint64
-	if latest != nil {
-		lastProcessedBlock, err = model.BlockFromOrderingKey(latest)
-		if err != nil {
-			return errors.Wrap(err, "committer contains invalid pointer")
-		}
+	lastIngested, err := l.committer.Latest(ctx, ingestion.GetHistoryIngestorName(model.KinVersion_KIN4))
+	if err != nil {
+		return errors.Wrap(err, "failed to get last ingested block")
 	}
+	maxBlock, err := solanaingestion.SlotFromPointer(lastIngested)
+	if err != nil {
+		return errors.Wrap(err, "failed to get slot from last ingested block")
+	}
+	maxKey := model.OrderingKeyFromBlock(maxBlock + 1)
 
 	for {
 		select {
@@ -184,20 +185,17 @@ func (l *Loader) process(ctx context.Context) error {
 		//
 		// Load unprocessed entries from history
 		//
-		maxBlock, err := l.sc.GetSlot(solana.CommitmentMax)
-		if err != nil {
-			return errors.Wrap(err, "failed to get latest committed block")
-		}
-		entries, err := l.hist.GetTransactions(ctx, lastProcessedBlock, maxBlock, 1024)
+		startKey := append(prevKey, 0)
+		entries, err := l.hist.GetTransactions(ctx, startKey, maxKey, 1024)
 		if err != nil {
 			return errors.Wrap(err, "failed to load transactions")
 		}
 		getTransactionsSize.Set(float64(len(entries)))
 
 		log.WithFields(logrus.Fields{
-			"last_processed_block": lastProcessedBlock,
-			"max_block":            maxBlock,
-			"entries":              len(entries),
+			"start_key": base64.StdEncoding.EncodeToString(startKey),
+			"max_block": maxBlock,
+			"entries":   len(entries),
 		}).Info("Processing entries")
 
 		if len(entries) == 0 {
@@ -232,10 +230,16 @@ func (l *Loader) process(ctx context.Context) error {
 			if err != nil {
 				return errors.Wrap(err, "failed to get creations from transaction")
 			}
+			txnOwnershipChanges, err := l.getOwnershipChanges(txn, successful)
+			if err != nil {
+				return errors.Wrap(err, "failed to get ownership changes from transaction")
+			}
+
+			applyOwnershipChanges(txnCreations, txnOwnershipChanges)
 
 			// If there aren't any payments or creations in this batch, then we can avoid further
 			// processing.
-			if len(txnPayments) == 0 && len(txnCreations) == 0 {
+			if len(txnPayments) == 0 && len(txnCreations) == 0 && len(txnOwnershipChanges) == 0 {
 				log.WithField("txn", base64.StdEncoding.EncodeToString(se.Transaction)).Debug("No payments or creations to process, skipping")
 				continue
 			}
@@ -280,13 +284,6 @@ func (l *Loader) process(ctx context.Context) error {
 				}
 			}
 
-			txnOwnershipChanges, err := l.getOwnershipChanges(txn, successful)
-			if err != nil {
-				return errors.Wrap(err, "failed to get ownership changes from transaction")
-			}
-
-			applyOwnershipChanges(txnCreations, txnOwnershipChanges)
-
 			payments = append(payments, txnPayments...)
 			creations = append(creations, txnCreations...)
 			ownershipChanges = append(ownershipChanges, txnOwnershipChanges...)
@@ -314,27 +311,24 @@ func (l *Loader) process(ctx context.Context) error {
 		//
 		// Update the processing state
 		//
-		lastProcessedBlock = entries[len(entries)-1].GetSolana().Slot
-		blockPointer, err := entries[len(entries)-1].GetOrderingKey()
+		lastProcessed, err := entries[len(entries)-1].GetOrderingKey()
 		if err != nil {
 			return errors.Wrap(err, "failed to compute ordering key")
 		}
 
-		if err := l.committer.Commit(ctx, GetKREIngestorName(), latest, blockPointer); err != nil {
-			// There are cases where latest and blockPointer are the same.
-			//
-			// todo(perf): we can 'add 1' to the blockPointer here, preventing
-			//             us from double processing. Since we sleep every 5 minutes, this is fine.
-			//             Additionally, if there is a constant stream of transactions, this case
-			//             should be rare. We dump a log to validate
+		if err := l.committer.Commit(ctx, GetKREIngestorName(), prevKey, lastProcessed); err != nil {
 			log.WithFields(logrus.Fields{
-				"latest":       hex.EncodeToString(latest),
-				"blockPointer": hex.EncodeToString(blockPointer),
+				"prev_key": base64.StdEncoding.EncodeToString(prevKey),
+				"new_key":  base64.StdEncoding.EncodeToString(startKey),
 			}).Warn("Failed to update pointer")
 			return errors.Wrap(err, "failed to update commit pointer")
 		}
+		lastProcessedBlock, err := model.BlockFromOrderingKey(lastProcessed)
+		if err != nil {
+			return errors.Wrap(err, "failed to get block from prevKey")
+		}
 		lastCommittedBlock.Set(float64(lastProcessedBlock))
-		latest = blockPointer
+		prevKey = lastProcessed
 	}
 
 	return nil
@@ -433,7 +427,7 @@ func (l *Loader) getOwnershipChanges(txn solana.Transaction, successful bool) (c
 	return changes, nil
 }
 
-func (l *Loader) updateAccounts(ctx context.Context, slot uint64, creations []*creation, payments []*payment, ownershipChanges []*ownershipChange) error {
+func (l *Loader) updateAccounts(ctx context.Context, slot uint64, creations []*creation, payments []*payment, ownershipChanges []*ownershipChange) (err error) {
 	log := l.log.WithField("method", "updateAccounts")
 	newAccounts := getNewAccounts(creations)
 	balanceDiffs := getBalanceDiffs(payments)
@@ -520,15 +514,18 @@ func (l *Loader) updateAccounts(ctx context.Context, slot uint64, creations []*c
 		}
 	}
 
-	for account := range fetchRequired {
-		// We get slot prior to getting account to make sure we don't miss an update.
-		// If we were to switch the order, there is a risk of missing updates since the
-		// fetched slot is more likely to be later than the slot at which the acocunt was fetched.
-		committedSlot, err := l.sc.GetSlot(solana.CommitmentMax)
+	// We get slot prior to getting account to make sure we don't miss an update.
+	// If we were to switch the order, there is a risk of missing updates since the
+	// fetched slot is more likely to be later than the slot at which the acocunt was fetched.
+	var committedSlot uint64
+	if len(fetchRequired) > 0 {
+		committedSlot, err = l.sc.GetSlot(solana.CommitmentMax)
 		if err != nil {
 			log.WithError(err).Warn("failed to get slot")
 			return errors.Wrap(err, "failed to get slot")
 		}
+	}
+	for account := range fetchRequired {
 		a, err := l.tc.GetAccount(ed25519.PublicKey(account), solana.CommitmentMax)
 		if err != nil {
 			log.WithError(err).Warn("failed to get account from Solana")

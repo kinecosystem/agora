@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/binary"
-	"math"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -15,6 +14,10 @@ import (
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/strkey"
+)
+
+var (
+	ErrInvalidOrderingKeyVersion = errors.New("invalid ordering key version")
 )
 
 type SortableEntries []*Entry
@@ -138,20 +141,30 @@ func OrderingKeyFromCursor(v KinVersion, cursor string) ([]byte, error) {
 	return b[:], nil
 }
 
-func OrderingKeyFromBlock(block uint64, max bool) []byte {
+func MustOrderingKeyFromCursor(v KinVersion, cursor string) []byte {
+	pt, err := OrderingKeyFromCursor(v, cursor)
+	if err != nil {
+		panic(err.Error())
+	}
+	return pt
+}
+
+func OrderingKeyFromBlock(block uint64) []byte {
 	var b [1 + 8 + 8]byte
 	b[0] = byte(KinVersion_KIN4)
 	binary.BigEndian.PutUint64(b[1:], block)
-
-	if max {
-		binary.BigEndian.PutUint64(b[9:], math.MaxUint64)
-	}
 
 	return b[:]
 }
 
 func BlockFromOrderingKey(k []byte) (uint64, error) {
-	if len(k) != 1+8+8 {
+	if len(k) == 0 {
+		return 0, errors.New("empty ordering key")
+	}
+	if k[0] != byte(KinVersion_KIN4) {
+		return 0, ErrInvalidOrderingKeyVersion
+	}
+	if len(k) < 1+9 {
 		return 0, errors.Errorf("invalid ordering key size: %d", len(k))
 	}
 

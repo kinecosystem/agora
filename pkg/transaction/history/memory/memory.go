@@ -137,15 +137,27 @@ func (rw *RW) GetTransaction(_ context.Context, txHash []byte) (*model.Entry, er
 }
 
 // GetTransactions implements history.Reader.GetTransactions.
-func (rw *RW) GetTransactions(_ context.Context, fromBlock, maxBlock uint64, limit int) ([]*model.Entry, error) {
+func (rw *RW) GetTransactions(_ context.Context, startKey, endKey []byte, limit int) ([]*model.Entry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if maxBlock == 0 {
+
+	_, err := model.BlockFromOrderingKey(startKey)
+	if err != nil && err != model.ErrInvalidOrderingKeyVersion {
+		return nil, errors.Wrap(err, "invalid start key")
+	}
+	endBlock, err := model.BlockFromOrderingKey(endKey)
+	if err == model.ErrInvalidOrderingKeyVersion {
+		return nil, nil
+	} else if err != nil {
+		return nil, errors.Wrap(err, "invalid end key")
+	}
+
+	if endBlock == 0 {
 		return nil, errors.New("maxBlock must be non-zero")
 	}
-	if fromBlock > maxBlock {
-		return nil, errors.Errorf("fromBlock (%d) must be <= maxBlock (%d)", fromBlock, maxBlock)
+	if bytes.Compare(startKey, endKey) >= 0 {
+		return nil, errors.New("startKey must be < endKey")
 	}
 
 	rw.Lock()
@@ -156,16 +168,22 @@ func (rw *RW) GetTransactions(_ context.Context, fromBlock, maxBlock uint64, lim
 	// so we expect small values of len(rw.txnHistory)
 	copy := make([]*model.Entry, 0, len(rw.txnHistory))
 	for i := 0; i < len(rw.txnHistory); i++ {
-		slot := rw.txnHistory[i].GetSolana().Slot
-		if slot < fromBlock {
+		orderingKey, err := rw.txnHistory[i].GetOrderingKey()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get ordering key")
+		}
+
+		if bytes.Compare(orderingKey, startKey) < 0 {
 			continue
-		} else if slot > maxBlock {
-			break
-		} else if len(copy) >= limit {
+		}
+		if bytes.Compare(orderingKey, endKey) >= 0 {
 			break
 		}
 
 		copy = append(copy, proto.Clone(rw.txnHistory[i]).(*model.Entry))
+		if len(copy) >= limit {
+			break
+		}
 	}
 
 	return copy, nil

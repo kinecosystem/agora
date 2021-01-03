@@ -58,13 +58,14 @@ type Reader interface {
 	GetTransaction(ctx context.Context, txHash []byte) (*model.Entry, error)
 
 	// GetTransactions returns an ordered set of transactions over the range of
-	// [fromBlock, maxBlock]
+	// [startKey, endKey), where the keys are entry ordering keys.
 	//
 	// If no limit is provided, a default limit of 100 is used.
 	//
-	// In order to bound / terminate queries, maxBlock must be set. It should be set
-	// to the last known confirmed block if no other value is desired.
-	GetTransactions(ctx context.Context, fromBlock, maxBlock uint64, limit int) ([]*model.Entry, error)
+	// In order to bound / terminate queries, endKey must be set. It should be set
+	// to the key corresponding to the end of the last confirmed block if no other
+	// value is desired.
+	GetTransactions(ctx context.Context, startKey, endKey []byte, limit int) ([]*model.Entry, error)
 
 	// GetAccountTransactions returns the model.Entry's with the specified options.
 	//

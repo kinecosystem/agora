@@ -45,7 +45,7 @@ func TestInitialParams(t *testing.T) {
 		slot uint64
 	}{
 		{p: nil, slot: 0},
-		{p: pointerFromSlot(12), slot: 12},
+		{p: PointerFromSlot(12), slot: 12},
 	}
 
 	for _, tc := range testCases {
@@ -289,8 +289,8 @@ func TestTransactionFilter(t *testing.T) {
 	}
 
 	expectedTransactions := map[string]struct{}{
-		string(block.Transactions[0].Transaction.Marshal()): struct{}{},
-		string(block.Transactions[2].Transaction.Marshal()): struct{}{},
+		string(block.Transactions[0].Transaction.Marshal()): {},
+		string(block.Transactions[2].Transaction.Marshal()): {},
 	}
 	actualTransactions := make(map[string]struct{})
 

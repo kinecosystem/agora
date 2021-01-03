@@ -91,29 +91,51 @@ func (db *db) GetTransaction(ctx context.Context, txHash []byte) (*model.Entry, 
 //       and our queries should be bounded, this shouldn't be a major issue.
 //
 // [1] https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-time-series.html
-func (db *db) GetTransactions(ctx context.Context, fromBlock, maxBlock uint64, limit int) ([]*model.Entry, error) {
+func (db *db) GetTransactions(ctx context.Context, startKey, endKey []byte, limit int) ([]*model.Entry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if maxBlock == 0 {
+
+	// If the ordering key is in the stellar range, then it's before
+	// all of our stored history (block 0). However, in theory we could
+	// be scanning into solana history.
+	startBlock, err := model.BlockFromOrderingKey(startKey)
+	if err == model.ErrInvalidOrderingKeyVersion {
+		startBlock = 0
+	} else if err != nil {
+		return nil, errors.Wrap(err, "invalid start key")
+	}
+
+	// If the end block is not in solana history, then there's nothing
+	// to search for.
+	endBlock, err := model.BlockFromOrderingKey(endKey)
+	if err == model.ErrInvalidOrderingKeyVersion {
+		return nil, nil
+	} else if err != nil {
+		return nil, errors.Wrap(err, "invalid end key")
+	}
+
+	if endBlock == 0 {
 		return nil, errors.New("maxBlock must be non-zero")
 	}
-	if maxBlock < fromBlock {
-		return nil, errors.Errorf("fromBlock (%d) must be <= maxBlock (%d)", fromBlock, maxBlock)
+	if bytes.Compare(startKey, endKey) >= 0 {
+		return nil, errors.New("startKey must be < endKey")
 	}
 
-	var entries []*model.Entry
-	for blockStart := (fromBlock / blockPartitionSize) * blockPartitionSize; len(entries) < limit && blockStart <= maxBlock; blockStart += blockPartitionSize {
-		start := model.OrderingKeyFromBlock(fromBlock, false)
-		max := model.OrderingKeyFromBlock(maxBlock, true)
+	start := make([]byte, len(startKey))
+	copy(start, startKey)
+	end := make([]byte, len(endKey))
+	copy(end, endKey)
 
+	var entries []*model.Entry
+	for blockStart := (startBlock / blockPartitionSize) * blockPartitionSize; len(entries) < limit && blockStart <= endBlock; blockStart += blockPartitionSize {
 		pager := dynamodb.NewQueryPaginator(db.client.QueryRequest(&dynamodb.QueryInput{
 			TableName:              txHistoryTableStr,
 			KeyConditionExpression: getTransactionHistoryStr,
 			ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
 				":block_start": {N: aws.String(strconv.FormatUint(blockStart, 10))},
-				":from":        {B: start},
-				":max":         {B: max},
+				":start":       {B: start},
+				":end":         {B: endKey},
 			},
 			Limit:            aws.Int64(int64(limit)),
 			ScanIndexForward: aws.Bool(true),
@@ -123,6 +145,16 @@ func (db *db) GetTransactions(ctx context.Context, fromBlock, maxBlock uint64, l
 				e, err := getEntry(item)
 				if err != nil {
 					return nil, errors.Wrap(err, "invalid entry")
+				}
+
+				// Dynamo returns [start, end] when using between, so we must
+				// filter out end ourselves.
+				orderingKey, err := e.GetOrderingKey()
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to get ordering key from stored entry")
+				}
+				if bytes.Compare(orderingKey, endKey) >= 0 {
+					return entries, nil
 				}
 
 				entries = append(entries, e)

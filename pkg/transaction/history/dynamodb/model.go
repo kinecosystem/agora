@@ -26,7 +26,7 @@ const (
 	getAccountLatestQuery           = "account = :account"
 	getAccountTransactionsAscQuery  = "account = :account and ordering_key >= :start"
 	getAccountTransactionsDescQuery = "account = :account and ordering_key <= :start"
-	getTransactionHistoryQuery      = "block_start = :block_start and ordering_key between :from and :max"
+	getTransactionHistoryQuery      = "block_start = :block_start and ordering_key between :start and :end"
 )
 
 var (

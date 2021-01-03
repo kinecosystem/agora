@@ -44,7 +44,7 @@ func (i *ingestor) Name() string {
 
 // Ingest implements ingestion.Ingestor.Ingest.
 func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestion.Pointer) (ingestion.ResultQueue, error) {
-	parentSlot, err := slotFromPointer(parent)
+	parentSlot, err := SlotFromPointer(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 					i.log.WithField("block_count", len(blocks)).Debug("processing blocks")
 
 					for _, slot := range blocks {
-						blockPtr := pointerFromSlot(slot)
+						blockPtr := PointerFromSlot(slot)
 						resultCh := make(chan ingestion.Result, 1)
 
 						select {

@@ -9,7 +9,8 @@ golangci-lint run \
     --exclude horizon.Signer \
     --exclude horizon.Transaction \
     --exclude proto.MessageName \
-    --exclude github.com/golang/protobuf/proto
+    --exclude github.com/golang/protobuf/proto \
+    --exclude github.com/golang/protobuf/jsonpb
 
 go test -test.v=true -race -coverprofile=profile.out $(go list -e ./...)
 if [ -f profile.out ]; then

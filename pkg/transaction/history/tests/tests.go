@@ -52,7 +52,12 @@ func testRoundTrip_Stellar(t *testing.T, rw history.ReaderWriter) {
 		assert.True(t, proto.Equal(actual, entry))
 
 		// stellar transactions aren't currently stored in history
-		entries, err := rw.GetTransactions(ctx, 0, 1000, 0)
+		entries, err := rw.GetTransactions(
+			ctx,
+			model.MustOrderingKeyFromCursor(model.KinVersion_KIN3, "0"),
+			model.MustOrderingKeyFromCursor(model.KinVersion_KIN3, "1000"),
+			0,
+		)
 		assert.Empty(t, entries)
 		assert.NoError(t, err)
 
@@ -259,53 +264,91 @@ func testHistory(t *testing.T, rw history.ReaderWriter) {
 	t.Run("TestHistory", func(t *testing.T) {
 		ctx := context.Background()
 		sender := testutil.GenerateSolanaKeypair(t)
-		accounts := testutil.GenerateSolanaKeys(t, 10)
 
 		expansion := uint64(10_000 / 2)
 		generated := make([]*model.Entry, 200)
 		for i := 0; i < 200; i++ {
 			// We amplify the slot to exploit weakness's within the partitioning scheme of dynamodb.
 			// In theory we should put this in the dynamodb test itself, but it's small enough it's ok here.
-			generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i)*expansion, i < 150, sender, accounts, nil, nil)
+			accounts := testutil.GenerateSolanaKeys(t, 10)
+			generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i/2)*expansion, i < 150, sender, accounts, nil, nil)
 			require.NoError(t, rw.Write(ctx, generated[i]))
 		}
 
 		// No max block
-		_, err := rw.GetTransactions(ctx, 0, 0, 0)
+		_, err := rw.GetTransactions(ctx, []byte{}, []byte{}, 0)
 		assert.Error(t, err)
 
 		// From block > max block
-		_, err = rw.GetTransactions(ctx, 10, 1, 0)
+		_, err = rw.GetTransactions(ctx, model.OrderingKeyFromBlock(10), model.OrderingKeyFromBlock(5), 0)
 		assert.Error(t, err)
 
-		// Limits outside of entries
-		entries, err := rw.GetTransactions(ctx, 0, 300*expansion, 300)
+		// Verify non-committed blocks do not enter history.
+		allEntries, err := rw.GetTransactions(ctx, model.OrderingKeyFromBlock(0), model.OrderingKeyFromBlock(201*expansion), 300)
 		assert.NoError(t, err)
-		require.Equal(t, 150, len(entries))
+		require.Equal(t, 150, len(allEntries))
+
+		// Limits outside of entries
+		entries, err := rw.GetTransactions(ctx, model.OrderingKeyFromBlock(0), model.OrderingKeyFromBlock(201*expansion), 100)
+		assert.NoError(t, err)
+		require.Equal(t, 100, len(entries))
 
 		for i, e := range entries {
-			assert.True(t, proto.Equal(e, generated[i]))
+			// note: we only know what slot the entry was in (above), not the ordering between them
+			a := proto.Equal(e, generated[(i/2)*2])
+			b := proto.Equal(e, generated[(i/2)*2+1])
+			assert.True(t, a || b)
 		}
 
 		// Query with offset
-		offset := generated[10].GetSolana().Slot
-		entries, err = rw.GetTransactions(ctx, offset, 300*expansion, 5)
+		//
+		// Note: The 10th entry is the first of two entries in it's slot.
+		offset := model.OrderingKeyFromBlock(generated[10].GetSolana().Slot)
+		max := model.OrderingKeyFromBlock(201 * expansion)
+		entries, err = rw.GetTransactions(ctx, offset, max, 11)
 		assert.NoError(t, err)
-		assert.Equal(t, 5, len(entries))
+		assert.Equal(t, 11, len(entries))
 
 		for i, e := range entries {
-			assert.True(t, proto.Equal(e, generated[i+10]))
+			base := (i + 10) / 2 * 2
+			a := proto.Equal(e, generated[base])
+			b := proto.Equal(e, generated[base+1])
+			assert.True(t, a || b)
 		}
 
 		// Query with maxBlock offset
 		//
-		// We expect 6 items because the range is inclusive at both ends.
-		entries, err = rw.GetTransactions(ctx, offset, generated[15].GetSolana().Slot, 0)
+		// Note: The reason we get 4 results here instead of 5 is because both
+		//       entries 14 and 15 are in the same block. Since OrderingKeyFromBlock returns
+		//       the floor of a block, we actually are only querying 10, 11, 12, 13.
+		//       We could just shift the index to 14 to make it seem more clear, but it's worth
+		//       highlighting this 'oddity'.
+		entries, err = rw.GetTransactions(ctx, offset, model.OrderingKeyFromBlock(generated[15].GetSolana().Slot), 0)
 		assert.NoError(t, err)
-		assert.Equal(t, 6, len(entries))
+		assert.Equal(t, 4, len(entries))
 
 		for i, e := range entries {
-			assert.True(t, proto.Equal(e, generated[i+10]))
+			base := (i + 10) / 2 * 2
+			a := proto.Equal(e, generated[base])
+			b := proto.Equal(e, generated[base+1])
+			assert.True(t, a || b)
+		}
+
+		// Query on non-block edges
+		start, err := allEntries[11].GetOrderingKey()
+		require.NoError(t, err)
+		end, err := allEntries[21].GetOrderingKey()
+		require.NoError(t, err)
+
+		entries, err = rw.GetTransactions(ctx, start, end, 0)
+		assert.NoError(t, err)
+		assert.Equal(t, 10, len(entries))
+
+		for i, e := range entries {
+			base := (i + 11) / 2 * 2
+			a := proto.Equal(e, generated[base])
+			b := proto.Equal(e, generated[base+1])
+			assert.True(t, a || b)
 		}
 	})
 }

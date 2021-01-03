@@ -3,7 +3,6 @@ package kre
 import (
 	"context"
 	"crypto/ed25519"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -12,17 +11,19 @@ import (
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
 	memoryaccount "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/memory"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/memory"
+	solanaingestion "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	memoryhistory "github.com/kinecosystem/agora/pkg/transaction/history/memory"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 type testEnv struct {
@@ -68,8 +69,9 @@ func setup(t *testing.T) (env testEnv) {
 func TestProcess_Fresh(t *testing.T) {
 	env := setup(t)
 	slot := uint64(2)
-	pointer := model.OrderingKeyFromBlock(slot, false)
+	pointer := model.OrderingKeyFromBlock(slot)
 	require.NoError(t, env.committer.Commit(context.Background(), GetKREIngestorName(), nil, pointer))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), nil, solanaingestion.PointerFromSlot(5)))
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
 
@@ -85,12 +87,9 @@ func TestProcess_Fresh(t *testing.T) {
 	entry := generateSolanaEntry(t, 3, true, instructions)
 	require.NoError(t, env.rw.Write(context.Background(), entry))
 
-	// fetch slot once initially
-	env.sc.On("GetSlot", mock.Anything).Return(uint64(3), nil).Once()
 	// fetch slot during account update for [2]
 	env.sc.On("GetSlot", mock.Anything).Return(uint64(4), nil).Once()
 	// results in an error being thrown, cutting the tight loop short
-	env.sc.On("GetSlot", mock.Anything).Return(uint64(0), errors.New("")).Once()
 	env.sc.On("GetBlockTime", mock.Anything).Return(time.Now(), nil)
 
 	// We expect get account info to get called for the destinations (amount ignored)
@@ -100,7 +99,7 @@ func TestProcess_Fresh(t *testing.T) {
 	// Called because no creates + not in store
 	env.sc.On("GetAccountInfo", accounts[0], solana.CommitmentMax).Return(generateAccountInfo(20, env.mint, accounts[1], token.ProgramKey), nil).Once()
 
-	assert.Error(t, env.loader.process(context.Background())) // expect an error from GetSlot returning an error
+	assert.NoError(t, env.loader.process(context.Background()))
 
 	assert.Equal(t, 1, len(env.creationsSubmitter.submitted))
 
@@ -143,8 +142,9 @@ func TestProcess_Fresh(t *testing.T) {
 func TestProcess_Existing(t *testing.T) {
 	env := setup(t)
 	slot := uint64(2)
-	pointer := model.OrderingKeyFromBlock(slot, false)
+	pointer := model.OrderingKeyFromBlock(slot)
 	require.NoError(t, env.committer.Commit(context.Background(), GetKREIngestorName(), nil, pointer))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), nil, solanaingestion.PointerFromSlot(5)))
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
 	testutil.SortKeys(accounts) // for easier assertion later
@@ -175,17 +175,13 @@ func TestProcess_Existing(t *testing.T) {
 	entry := generateSolanaEntry(t, 4, true, instructions)
 	require.NoError(t, env.rw.Write(context.Background(), entry))
 
-	// fetch slot once initially
-	env.sc.On("GetSlot", mock.Anything).Return(uint64(4), nil).Once()
-	// results in an error being thrown, cutting the tight loop short
-	env.sc.On("GetSlot", mock.Anything).Return(uint64(0), errors.New("")).Once()
 	env.sc.On("GetBlockTime", mock.Anything).Return(time.Now(), nil)
 
 	// We expect get account info to get called for ownership change for [0] + the destination [2]
 	env.sc.On("GetAccountInfo", accounts[0], solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, accounts[3], token.ProgramKey), nil).Once()
 	env.sc.On("GetAccountInfo", accounts[2], solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, accounts[3], token.ProgramKey), nil).Once()
 
-	assert.Error(t, env.loader.process(context.Background())) // expect an error from GetSlot returning an error
+	assert.NoError(t, env.loader.process(context.Background()))
 
 	assert.Equal(t, 0, len(env.creationsSubmitter.submitted))
 	assert.Equal(t, 1, len(env.paymentsSubmitter.submitted))
@@ -224,8 +220,9 @@ func TestMigrationTransaction(t *testing.T) {
 	// generate
 	env := setup(t)
 	slot := uint64(2)
-	pointer := model.OrderingKeyFromBlock(slot, false)
+	pointer := model.OrderingKeyFromBlock(slot)
 	require.NoError(t, env.committer.Commit(context.Background(), GetKREIngestorName(), nil, pointer))
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), nil, solanaingestion.PointerFromSlot(5)))
 
 	subsidizerKey := testutil.GenerateSolanaKeypair(t)
 	subsidizer := subsidizerKey.Public().(ed25519.PublicKey)
@@ -233,7 +230,14 @@ func TestMigrationTransaction(t *testing.T) {
 	tokenMint := testutil.GenerateSolanaKeys(t, 1)[0]
 	owner := testutil.GenerateSolanaKeys(t, 1)[0]
 
-	env.sc.On("GetAccountInfo", migrationAddress, solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, owner, token.ProgramKey), nil)
+	env.sc.On("GetSlot", mock.Anything).Return(uint64(5), nil).Once()
+
+	// Lookup for payment (dest) as well as ownership transfer
+	env.sc.On("GetAccountInfo", migrationAddress, solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, owner, token.ProgramKey), nil).Twice()
+	// Lookup for accountUpdate ownershipChange
+	env.sc.On("GetAccountInfo", migrationAddress, solana.CommitmentMax).Return(generateAccountInfo(0, env.mint, owner, token.ProgramKey), nil).Once()
+	// Lookup for accountUpdate balancediff
+	env.sc.On("GetAccountInfo", tokenMint, solana.CommitmentMax).Return(generateAccountInfo(0, env.mint, tokenMint, token.ProgramKey), nil).Once()
 
 	txn := solana.NewTransaction(
 		subsidizer,
@@ -283,13 +287,9 @@ func TestMigrationTransaction(t *testing.T) {
 
 	require.NoError(t, env.rw.Write(context.Background(), entry))
 
-	// fetch slot once initially
-	env.sc.On("GetSlot", mock.Anything).Return(uint64(4), nil).Once()
-	// results in an error being thrown, cutting the tight loop short
-	env.sc.On("GetSlot", mock.Anything).Return(uint64(0), errors.New("")).Once()
 	env.sc.On("GetBlockTime", mock.Anything).Return(time.Now(), nil)
 
-	assert.Error(t, env.loader.process(context.Background())) // expect an error from GetSlot returning an error
+	assert.NoError(t, env.loader.process(context.Background()))
 
 	assert.Equal(t, 1, len(env.creationsSubmitter.submitted))
 	creations := env.creationsSubmitter.submitted[0].([]*creation)

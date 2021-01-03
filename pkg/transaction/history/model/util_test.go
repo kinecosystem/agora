@@ -164,25 +164,20 @@ func TestAccountFromRaw(t *testing.T) {
 }
 
 func TestOrderingKeyFromBlock(t *testing.T) {
-	v := OrderingKeyFromBlock(0x1122334455667788, false)
+	v := OrderingKeyFromBlock(0x1122334455667788)
 	assert.EqualValues(t, KinVersion_KIN4, v[0])
 	assert.Equal(t, uint64(0x1122334455667788), binary.BigEndian.Uint64(v[1:]))
 	for i := 0; i < 8; i++ {
 		assert.EqualValues(t, 0, v[9+i])
 	}
 
-	v = OrderingKeyFromBlock(0x1122334455667788, true)
-	assert.EqualValues(t, KinVersion_KIN4, v[0])
-	assert.Equal(t, uint64(0x1122334455667788), binary.BigEndian.Uint64(v[1:]))
-	for i := 0; i < 8; i++ {
-		assert.EqualValues(t, 0xff, v[9+i])
-	}
-
-	b, err := BlockFromOrderingKey(v)
+	block, err := BlockFromOrderingKey(v)
 	assert.NoError(t, err)
-	assert.Equal(t, uint64(0x1122334455667788), b)
+	assert.Equal(t, uint64(0x1122334455667788), block)
 
-	b, err = BlockFromOrderingKey(make([]byte, 4))
-	assert.Error(t, err)
-	assert.Zero(t, b)
+	orderingKey, err := OrderingKeyFromCursor(KinVersion_KIN3, "10")
+	require.NoError(t, err)
+	_, err = BlockFromOrderingKey(orderingKey)
+	assert.Equal(t, ErrInvalidOrderingKeyVersion, err)
+
 }

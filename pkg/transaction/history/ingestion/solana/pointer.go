@@ -8,14 +8,14 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 )
 
-func pointerFromSlot(slot uint64) ingestion.Pointer {
+func PointerFromSlot(slot uint64) ingestion.Pointer {
 	ptr := make([]byte, 9)
 	ptr[0] = byte(4)
 	binary.BigEndian.PutUint64(ptr[1:], slot)
 	return ptr
 }
 
-func slotFromPointer(p ingestion.Pointer) (slot uint64, err error) {
+func SlotFromPointer(p ingestion.Pointer) (slot uint64, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
