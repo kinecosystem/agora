@@ -12,6 +12,10 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/kin/version"
+	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/system"
+	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/clients/horizon"
 	hProtocol "github.com/kinecosystem/go/protocols/horizon"
 	"github.com/kinecosystem/go/protocols/horizon/base"
@@ -22,14 +26,10 @@ import (
 	"github.com/stretchr/testify/require"
 	xrate "golang.org/x/time/rate"
 
-	"github.com/kinecosystem/agora-common/solana"
-	"github.com/kinecosystem/agora-common/solana/system"
-	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/migration/memory"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type kin3Env struct {

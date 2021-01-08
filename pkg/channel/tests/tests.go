@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/stretchr/testify/require"
 

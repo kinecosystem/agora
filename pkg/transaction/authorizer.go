@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
+	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,9 +16,7 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
-	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 // Authorizer authorizes transactions.
@@ -68,7 +68,7 @@ type Transaction struct {
 	Memo        Memo
 	OpCount     int
 	InvoiceList *commonpb.InvoiceList
-	SignRequest *signtransaction.RequestBody
+	SignRequest *signtransaction.Request
 }
 
 type AuthorizationResult int

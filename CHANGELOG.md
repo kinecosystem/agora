@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+Note: after v0.3.0, the client SDK can be found in https://github.com/kinecosystem/kin-go-internal.
 
 ## [v0.3.0](https://github.com/kinecosystem/agora/releases/tag/v0.3.0)
 - Add `Dedupe` support on payments (`Client.SubmitPayment`) and earn batches (`Client.SubmitEarnBatch`)

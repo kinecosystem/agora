@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
@@ -35,7 +36,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook/events"
 	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )

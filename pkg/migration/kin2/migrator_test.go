@@ -12,6 +12,7 @@ import (
 
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -26,7 +27,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/migration/memory"
 	"github.com/kinecosystem/agora/pkg/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type kin2Env struct {

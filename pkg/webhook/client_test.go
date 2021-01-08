@@ -13,12 +13,11 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/kinecosystem/agora-common/headers"
-	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 var (
@@ -44,7 +43,7 @@ var (
 			},
 		},
 	}
-	basicReq = &signtransaction.RequestBody{
+	basicReq = &signtransaction.Request{
 		EnvelopeXDR: []byte{1},
 		InvoiceList: []byte{2},
 	}
@@ -55,8 +54,8 @@ var (
 		context.Background(),
 		headers.HeaderKey("ascii-header"),
 		headers.Headers{
-			AppUserIDCtxHeader:      appUserID,
-			AppUserPasskeyCtxHeader: appUserPasskey,
+			appUserIDCtxHeader:      appUserID,
+			appUserPasskeyCtxHeader: appUserPasskey,
 		},
 	)
 )
@@ -266,7 +265,7 @@ func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
 		context.Background(),
 		headers.HeaderKey("ascii-header"),
 		headers.Headers{
-			AppUserPasskeyCtxHeader: appUserPasskey,
+			appUserPasskeyCtxHeader: appUserPasskey,
 		},
 	)
 
@@ -279,7 +278,7 @@ func TestSendSignTransactionRequest_InvalidHeaders(t *testing.T) {
 		context.Background(),
 		headers.HeaderKey("ascii-header"),
 		headers.Headers{
-			AppUserIDCtxHeader: appUserID,
+			appUserIDCtxHeader: appUserID,
 		},
 	)
 
@@ -322,13 +321,13 @@ func TestSendEventsRequest_StatusCodes(t *testing.T) {
 func newTestServerWithJSONResponse(t *testing.T, env testEnv, statusCode int, respBody []byte, expectedUserID string, expectedPasskey string, expectedReq []byte) *httptest.Server {
 	testServer := httptest.NewServer(http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		require.Equal(t, http.MethodPost, req.Method)
-		require.Equal(t, expectedUserID, req.Header.Get(AppUserIDHeader))
-		require.Equal(t, expectedPasskey, req.Header.Get(AppUserPasskeyHeader))
+		require.Equal(t, expectedUserID, req.Header.Get(appUserIDHeader))
+		require.Equal(t, expectedPasskey, req.Header.Get(appUserPasskeyHeader))
 
 		body, err := ioutil.ReadAll(req.Body)
 		require.NoError(t, err)
 
-		agoraSignature, err := base64.StdEncoding.DecodeString(req.Header.Get(AgoraHMACHeader))
+		agoraSignature, err := base64.StdEncoding.DecodeString(req.Header.Get(agoraHMACHeader))
 		require.NoError(t, err)
 
 		h := hmac.New(sha256.New, []byte(env.secretKey))

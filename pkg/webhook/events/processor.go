@@ -13,6 +13,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/taskqueue"
 	"github.com/kinecosystem/agora-common/taskqueue/model/task"
+	"github.com/kinecosystem/agora-common/webhook/events"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
@@ -126,8 +127,8 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 	}
 
 	appIndex := -1
-	event := Event{
-		TransactionEvent: &TransactionEvent{
+	event := events.Event{
+		TransactionEvent: &events.TransactionEvent{
 			KinVersion:  int(entry.Version),
 			TxHash:      txID,
 			TxID:        txID,
@@ -137,7 +138,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 
 	switch t := entry.Kind.(type) {
 	case *model.Entry_Stellar:
-		event.TransactionEvent.StellarEvent = &StellarEvent{
+		event.TransactionEvent.StellarEvent = &events.StellarEvent{
 			ResultXDR:   t.Stellar.ResultXdr,
 			EnvelopeXDR: t.Stellar.EnvelopeXdr,
 		}
@@ -167,7 +168,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 			}
 		}
 	case *model.Entry_Solana:
-		event.TransactionEvent.SolanaEvent = &SolanaEvent{
+		event.TransactionEvent.SolanaEvent = &events.SolanaEvent{
 			Transaction:         t.Solana.Transaction,
 			TransactionErrorRaw: t.Solana.TransactionError,
 		}
@@ -252,7 +253,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 		return nil
 	}
 
-	events := []Event{event}
+	events := []events.Event{event}
 	body, err := json.Marshal(&events)
 	if err != nil {
 		log.WithError(err).Warn("Failed to marshal events body")

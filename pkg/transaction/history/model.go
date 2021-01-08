@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/mr-tron/base58"
-
-	"github.com/kinecosystem/agora/client"
 )
 
 type StateChange struct {
@@ -121,7 +120,7 @@ func (p *Payment) Save() (row map[string]bigquery.Value, insertID string, err er
 		"source_owner":       base58.Encode(p.SourceOwner),
 		"destination":        base58.Encode(p.Dest),
 		"destination_owner":  base58.Encode(p.DestOwner),
-		"amount":             client.QuarksToKin(int64(p.Quarks)),
+		"amount":             kin.FromQuarks(int64(p.Quarks)),
 		"quarks":             strconv.FormatUint(p.Quarks, 10),
 	}
 

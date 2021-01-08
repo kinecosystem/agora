@@ -14,6 +14,8 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
+	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	xrate "golang.org/x/time/rate"
@@ -26,9 +28,7 @@ import (
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/memory"
 	appmapper "github.com/kinecosystem/agora/pkg/app/memory/mapper"
 	"github.com/kinecosystem/agora/pkg/rate"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
-	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 type testEnv struct {
@@ -566,7 +566,7 @@ func generateTransaction(t *testing.T, appIndex uint16, invoiceList *commonpb.In
 		Version:     version.KinVersion3,
 		ID:          make([]byte, 32),
 		InvoiceList: invoiceList,
-		SignRequest: &signtransaction.RequestBody{
+		SignRequest: &signtransaction.Request{
 			KinVersion:  3,
 			EnvelopeXDR: []byte("test"),
 		},

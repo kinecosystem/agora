@@ -4,14 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
-	"github.com/kinecosystem/agora-common/headers"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 func TestStartFromCursor(t *testing.T) {

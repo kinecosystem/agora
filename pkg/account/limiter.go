@@ -3,11 +3,12 @@ package account
 import (
 	"strconv"
 
-	"github.com/kinecosystem/agora/pkg/rate"
-	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
+
+	"github.com/kinecosystem/agora/pkg/rate"
 )
 
 const (

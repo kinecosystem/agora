@@ -21,6 +21,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/taskqueue/model/task"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
+	"github.com/kinecosystem/agora-common/webhook/events"
 	"github.com/ory/dockertest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,7 +127,7 @@ func TestRoundTrip(t *testing.T) {
 		defer req.Body.Close()
 		require.NoError(t, err)
 
-		var events []Event
+		var events []events.Event
 		require.NoError(t, json.Unmarshal(b, &events))
 
 		assert.Len(t, events, 1)
@@ -179,7 +180,7 @@ func TestRoundTrip_WithAppID(t *testing.T) {
 		defer req.Body.Close()
 		require.NoError(t, err)
 
-		var events []Event
+		var events []events.Event
 		require.NoError(t, json.Unmarshal(b, &events))
 
 		assert.Len(t, events, 1)
@@ -236,7 +237,7 @@ func TestRoundTrip_Kin4(t *testing.T) {
 		defer req.Body.Close()
 		require.NoError(t, err)
 
-		var events []Event
+		var events []events.Event
 		require.NoError(t, json.Unmarshal(b, &events))
 
 		assert.Len(t, events, 1)
@@ -291,7 +292,7 @@ func TestRoundTrip_Kin4WithMemo(t *testing.T) {
 		defer req.Body.Close()
 		require.NoError(t, err)
 
-		var events []Event
+		var events []events.Event
 		require.NoError(t, json.Unmarshal(b, &events))
 
 		assert.Len(t, events, 1)
@@ -353,7 +354,7 @@ func TestRoundTrip_Kin4WithError(t *testing.T) {
 		defer req.Body.Close()
 		require.NoError(t, err)
 
-		var events []Event
+		var events []events.Event
 		require.NoError(t, json.Unmarshal(b, &events))
 
 		assert.Len(t, events, 1)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/kin/version"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -30,7 +31,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction/stellar"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 const (

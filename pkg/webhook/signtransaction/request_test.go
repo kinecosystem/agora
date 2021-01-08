@@ -10,7 +10,7 @@ import (
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v3"
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 
-	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora-common/kin/version"
 )
 
 func TestRequest(t *testing.T) {

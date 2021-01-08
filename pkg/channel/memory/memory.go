@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"sync"
 
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/retry"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/pkg/errors"
 

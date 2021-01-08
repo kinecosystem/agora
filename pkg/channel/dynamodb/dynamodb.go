@@ -8,8 +8,8 @@ import (
 
 	"cirello.io/dynamolock"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/retry"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/pkg/errors"
 

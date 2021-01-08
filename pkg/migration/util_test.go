@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/strkey"
@@ -17,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type mockMigrator struct {

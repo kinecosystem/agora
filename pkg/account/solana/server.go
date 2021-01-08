@@ -12,7 +12,6 @@ import (
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
-	"github.com/kinecosystem/agora/client"
 	"github.com/kinecosystem/go/amount"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/mr-tron/base58"
@@ -35,6 +34,10 @@ import (
 
 const (
 	eventStreamBufferSize = 64
+)
+
+const (
+	userAgentHeader = "kin-user-agent"
 )
 
 var (
@@ -780,7 +783,7 @@ func (s *server) isWhitelisted(ctx context.Context) (userAgent string, whitelist
 		return "", true
 	}
 
-	val, err := headers.GetASCIIHeaderByName(ctx, client.UserAgentHeader)
+	val, err := headers.GetASCIIHeaderByName(ctx, userAgentHeader)
 	if err != nil {
 		return val, false
 	}

@@ -3,11 +3,11 @@ package account
 import (
 	"testing"
 
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/stretchr/testify/assert"
 	xrate "golang.org/x/time/rate"
 
 	"github.com/kinecosystem/agora/pkg/rate"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 func TestLimiter(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/kinecosystem/go/strkey"
@@ -29,7 +30,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type loader struct {

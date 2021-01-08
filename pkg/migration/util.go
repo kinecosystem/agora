@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/go/amount"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
-
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 // MigrateBatch migrates a set of accounts in parallel.

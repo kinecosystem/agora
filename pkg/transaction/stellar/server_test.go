@@ -20,7 +20,10 @@ import (
 	agoraenv "github.com/kinecosystem/agora-common/env"
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
+	"github.com/kinecosystem/agora-common/stellar"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
+	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/keypair"
@@ -53,9 +56,7 @@ import (
 	historymemory "github.com/kinecosystem/agora/pkg/transaction/history/memory"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	historytestutil "github.com/kinecosystem/agora/pkg/transaction/history/model/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
-	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 var (
@@ -1609,7 +1610,7 @@ func genEnvelope(t *testing.T, opts ...envelopeOption) (envelope xdr.Transaction
 		n, err = kin.GetNetwork()
 	}
 	require.NoError(t, err)
-	signedEnvelope, err := transaction.SignEnvelope(&txnEnvelope, n, sender.Seed())
+	signedEnvelope, err := stellar.SignEnvelope(&txnEnvelope, n, sender.Seed())
 	require.NoError(t, err)
 
 	hash, err := network.HashTransaction(&txnEnvelope.Tx, n.Passphrase)

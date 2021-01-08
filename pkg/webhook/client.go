@@ -15,20 +15,20 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
+	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/app"
-	"github.com/kinecosystem/agora/pkg/webhook/signtransaction"
 )
 
 const (
-	AppUserIDCtxHeader      = "app-user-id"
-	AppUserPasskeyCtxHeader = "app-user-passkey"
+	agoraHMACHeader      = "X-Agora-HMAC-SHA256"
+	appUserIDHeader      = "X-App-User-ID"
+	appUserPasskeyHeader = "X-App-User-Passkey"
 
-	AgoraHMACHeader      = "X-Agora-HMAC-SHA256"
-	AppUserIDHeader      = "X-App-User-ID"
-	AppUserPasskeyHeader = "X-App-User-Passkey"
+	appUserIDCtxHeader      = "app-user-id"
+	appUserPasskeyCtxHeader = "app-user-passkey"
 )
 
 type Client struct {
@@ -55,7 +55,7 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 // SignTransaction submits a sign transaction request to an app webhook
-func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret string, req *signtransaction.RequestBody) (result *signtransaction.SuccessResponse, err error) {
+func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSecret string, req *signtransaction.Request) (result *signtransaction.SuccessResponse, err error) {
 	signTxJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to marshal sign transaction request body")
@@ -70,11 +70,11 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 		return nil, err
 	}
 
-	userID, err := headers.GetASCIIHeaderByName(ctx, AppUserIDCtxHeader)
+	userID, err := headers.GetASCIIHeaderByName(ctx, appUserIDCtxHeader)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get app user ID header")
 	}
-	userPasskey, err := headers.GetASCIIHeaderByName(ctx, AppUserPasskeyCtxHeader)
+	userPasskey, err := headers.GetASCIIHeaderByName(ctx, appUserPasskeyCtxHeader)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get app user passkey header")
 	}
@@ -82,8 +82,8 @@ func (c *Client) SignTransaction(ctx context.Context, signURL url.URL, webhookSe
 	if (userID != "") != (userPasskey != "") {
 		return nil, errors.New("if app user auth headers are used, both must be present")
 	} else if userID != "" {
-		httpReq.Header.Set(AppUserIDHeader, userID)
-		httpReq.Header.Set(AppUserPasskeyHeader, userPasskey)
+		httpReq.Header.Set(appUserIDHeader, userID)
+		httpReq.Header.Set(appUserPasskeyHeader, userPasskey)
 	}
 
 	var resp *http.Response
@@ -181,6 +181,6 @@ func sign(req *http.Request, secret string, body []byte) error {
 		return errors.Wrap(err, "failed to generate hmac signature")
 	}
 
-	req.Header.Set(AgoraHMACHeader, base64.StdEncoding.EncodeToString(h.Sum(nil)))
+	req.Header.Set(agoraHMACHeader, base64.StdEncoding.EncodeToString(h.Sum(nil)))
 	return nil
 }

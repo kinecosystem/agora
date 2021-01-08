@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/pkg/errors"
@@ -18,7 +19,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type txData struct {

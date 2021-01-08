@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
-	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/go/amount"
 	"github.com/kinecosystem/go/build"
 	"github.com/kinecosystem/go/clients/horizon"

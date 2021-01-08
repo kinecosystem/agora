@@ -22,6 +22,7 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/httpgateway"
 	"github.com/kinecosystem/agora-common/kin"
+	kinversion "github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
@@ -250,7 +251,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		channelPool, err = channelpool.New(
 			dynamoV1Client,
 			maxChannels,
-			version.KinVersion3,
+			kinversion.KinVersion3,
 			rootAccountKP,
 			channelSalt,
 		)
@@ -261,7 +262,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		kin2ChannelPool, err = channelpool.New(
 			dynamoV1Client,
 			maxChannels,
-			version.KinVersion2,
+			kinversion.KinVersion2,
 			kin2RootAccountKP,
 			channelSalt,
 		)
@@ -652,9 +653,9 @@ func main() {
 	if err := agoraapp.Run(
 		&app{},
 		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
-		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor(version.KinVersion3, []int{3})),
+		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor(kinversion.KinVersion3, []int{3})),
 		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
-		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor(version.KinVersion3, []int{3})),
+		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor(kinversion.KinVersion3, []int{3})),
 		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
 	); err != nil {
 		log.WithError(err).Fatal("error running service")

@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 	dynamotest "github.com/kinecosystem/agora-common/aws/dynamodb/test"
-	"github.com/kinecosystem/agora/pkg/version"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/go/keypair"
 	"github.com/ory/dockertest"
 	"github.com/pkg/errors"
