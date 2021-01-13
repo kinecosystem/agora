@@ -59,6 +59,7 @@ import (
 	migrationstore "github.com/kinecosystem/agora/pkg/migration/dynamodb"
 	kin3migrator "github.com/kinecosystem/agora/pkg/migration/kin3"
 	"github.com/kinecosystem/agora/pkg/rate"
+	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	deduper "github.com/kinecosystem/agora/pkg/transaction/dedupe/dynamodb"
 	historyrw "github.com/kinecosystem/agora/pkg/transaction/history/dynamodb"
@@ -469,6 +470,11 @@ func (a *app) Init(_ agoraapp.Config) error {
 			}
 
 			subsidizer = ed25519.NewKeyFromSeed(rawSeed)
+			solanautil.MonitorAccount(
+				ctx,
+				solanaClient,
+				ed25519.PrivateKey(subsidizer).Public().(ed25519.PublicKey),
+			)
 		}
 		var airdropSource []byte
 		if os.Getenv(airdropSourceEnv) != "" {
