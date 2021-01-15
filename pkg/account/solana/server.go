@@ -593,19 +593,58 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Account_GetEventsServer) error {
 	log := s.log.WithField("method", "GetEvents")
 
+	tokenAccountID := req.AccountId.Value
 	info, err := s.loader.Load(stream.Context(), req.AccountId.Value, solana.CommitmentRecent)
-	if err == accountinfo.ErrAccountInfoNotFound {
-		if err := stream.Send(&accountpb.Events{Result: accountpb.Events_NOT_FOUND}); err != nil {
-			return status.Error(codes.Internal, err.Error())
-		}
-		return nil
-	} else if err != nil {
+	if err != nil && err != accountinfo.ErrAccountInfoNotFound {
 		log.WithError(err).Warn("failed to load account info")
 		return status.Error(codes.Internal, err.Error())
 	}
 
-	log = log.WithField("account", base58.Encode(req.AccountId.Value))
+	// Currently, mobile SDKs don't resolve owner accounts to token accounts when GetEvents is called on an owner
+	// account (resulting in NOT_FOUND). To address this for mobile SDK users without requiring a mobile SDK update,
+	// in the cases where the account is not found, we attempt to see if a Kin token account exists for the requested
+	// account. If one and only one token account exists, we return events for the resolved token account instead of
+	// returning NOT_FOUND.
+	if err == accountinfo.ErrAccountInfoNotFound {
+		accounts, err := s.tokenAccountCache.Get(stream.Context(), req.AccountId.Value)
+		if err != nil {
+			if err != tokenaccount.ErrTokenAccountsNotFound {
+				log.WithError(err).Warn("failed to get token accounts from cache")
+			}
 
+			accounts, err = s.scResolve.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
+			if err != nil {
+				log.WithError(err).Warn("failed to get token accounts")
+				return status.Error(codes.Internal, err.Error())
+			}
+		}
+
+		if len(accounts) == 0 || len(accounts) > 1 {
+			if err := stream.Send(&accountpb.Events{Result: accountpb.Events_NOT_FOUND}); err != nil {
+				return status.Error(codes.Internal, err.Error())
+			}
+			return nil
+		}
+
+		tokenAccountID = accounts[0]
+		info, err = s.loader.Load(stream.Context(), tokenAccountID, solana.CommitmentRecent)
+		if err != nil && err != accountinfo.ErrAccountInfoNotFound {
+			log.WithError(err).Warn("failed to load account info")
+			return status.Error(codes.Internal, err.Error())
+		}
+
+		if err == accountinfo.ErrAccountInfoNotFound {
+			if err := stream.Send(&accountpb.Events{Result: accountpb.Events_NOT_FOUND}); err != nil {
+				return status.Error(codes.Internal, err.Error())
+			}
+			return nil
+		}
+	}
+
+	log = log.WithField("account", base58.Encode(req.AccountId.Value)).WithField("token_account", base58.Encode(tokenAccountID))
+
+	// Overwrite AccountId with the requested account ID
+	info.AccountId = &commonpb.SolanaAccountId{Value: req.AccountId.Value}
 	err = stream.Send(&accountpb.Events{
 		Events: []*accountpb.Event{
 			{
@@ -621,7 +660,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 		return status.Error(codes.Internal, err.Error())
 	}
 
-	accountKey, err := strkey.Encode(strkey.VersionByteAccountID, req.AccountId.Value)
+	accountKey, err := strkey.Encode(strkey.VersionByteAccountID, tokenAccountID)
 	if err != nil {
 		return status.Error(codes.InvalidArgument, "invalid key")
 	}
@@ -662,11 +701,13 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				},
 			})
 
-			info, err := s.loader.Load(stream.Context(), req.AccountId.Value, solana.CommitmentRecent)
+			info, err := s.loader.Load(stream.Context(), tokenAccountID, solana.CommitmentRecent)
 			if err != nil {
 				log.WithError(err).Warn("failed to add account info, excluding account event")
 			}
 
+			// Overwrite AccountId with the requested account ID
+			info.AccountId = &commonpb.SolanaAccountId{Value: req.AccountId.Value}
 			events = append(events, &accountpb.Event{
 				Type: &accountpb.Event_AccountUpdateEvent{
 					AccountUpdateEvent: &accountpb.AccountUpdateEvent{

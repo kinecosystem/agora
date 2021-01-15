@@ -1174,9 +1174,134 @@ func TestGetEvents_NotFound(t *testing.T) {
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
 
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+	env.sc.On("GetTokenAccountsByOwner", mock.Anything, env.token).Return(make([]ed25519.PublicKey, 0), nil)
 	stream, err := env.client.GetEvents(context.Background(), &accountpb.GetEventsRequest{
 		AccountId: &commonpb.SolanaAccountId{
 			Value: account,
+		},
+	})
+	assert.NoError(t, err)
+
+	resp, err := stream.Recv()
+	assert.NoError(t, err)
+	assert.Equal(t, accountpb.Events_NOT_FOUND, resp.Result)
+}
+
+func TestGetEvents_WithResolution(t *testing.T) {
+	env, cleanup := setup(t, nil)
+	defer cleanup()
+
+	accounts := testutil.GenerateSolanaKeys(t, 3)
+	ownerID := accounts[0]
+	tokenAccountID := accounts[1]
+
+	tokenAccount := token.Account{
+		Mint:   env.token,
+		Amount: 10,
+	}
+	accountInfo := solana.AccountInfo{
+		Data:  tokenAccount.Marshal(),
+		Owner: token.ProgramKey,
+	}
+	env.sc.On("GetAccountInfo", ownerID, mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+	env.sc.On("GetTokenAccountsByOwner", ownerID, env.token).Return([]ed25519.PublicKey{tokenAccountID}, nil)
+	env.sc.On("GetAccountInfo", tokenAccountID, mock.Anything).Return(accountInfo, nil)
+
+	stream, err := env.client.GetEvents(context.Background(), &accountpb.GetEventsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: ownerID,
+		},
+	})
+	assert.NoError(t, err)
+
+	resp, err := stream.Recv()
+	assert.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Len(t, resp.Events, 1)
+	assert.EqualValues(t, ownerID, resp.Events[0].GetAccountUpdateEvent().AccountInfo.AccountId.Value)
+	assert.EqualValues(t, 10, resp.Events[0].GetAccountUpdateEvent().AccountInfo.Balance)
+
+	txn := solana.NewTransaction(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		token.Transfer(
+			tokenAccountID,
+			accounts[2],
+			ownerID,
+			5,
+		),
+	)
+	env.notifier.OnTransaction(solana.BlockTransaction{Transaction: txn})
+
+	resp, err = stream.Recv()
+	assert.NoError(t, err)
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.EqualValues(t, txn.Marshal(), resp.Events[0].GetTransactionEvent().Transaction.Value)
+}
+
+func TestGetEvents_WithCacheResolution(t *testing.T) {
+	env, cleanup := setup(t, nil)
+	defer cleanup()
+
+	accounts := testutil.GenerateSolanaKeys(t, 3)
+	ownerID := accounts[0]
+	tokenAccountID := accounts[1]
+	tokenAccount := token.Account{
+		Mint:   env.token,
+		Amount: 10,
+	}
+	accountInfo := solana.AccountInfo{
+		Data:  tokenAccount.Marshal(),
+		Owner: token.ProgramKey,
+	}
+	env.sc.On("GetAccountInfo", ownerID, mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+	require.NoError(t, env.tokenAccountCache.Put(context.Background(), ownerID, []ed25519.PublicKey{tokenAccountID}))
+	env.sc.On("GetAccountInfo", tokenAccountID, mock.Anything).Return(accountInfo, nil)
+
+	stream, err := env.client.GetEvents(context.Background(), &accountpb.GetEventsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: ownerID,
+		},
+	})
+	assert.NoError(t, err)
+
+	resp, err := stream.Recv()
+	assert.NoError(t, err)
+
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.Len(t, resp.Events, 1)
+	assert.EqualValues(t, ownerID, resp.Events[0].GetAccountUpdateEvent().AccountInfo.AccountId.Value)
+	assert.EqualValues(t, 10, resp.Events[0].GetAccountUpdateEvent().AccountInfo.Balance)
+
+	txn := solana.NewTransaction(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		token.Transfer(
+			tokenAccountID,
+			accounts[2],
+			ownerID,
+			5,
+		),
+	)
+	env.notifier.OnTransaction(solana.BlockTransaction{Transaction: txn})
+
+	resp, err = stream.Recv()
+	assert.NoError(t, err)
+	assert.Equal(t, accountpb.Events_OK, resp.Result)
+	assert.EqualValues(t, txn.Marshal(), resp.Events[0].GetTransactionEvent().Transaction.Value)
+}
+
+func TestGetEvents_WithResolutionTooManyAccounts(t *testing.T) {
+	env, cleanup := setup(t, nil)
+	defer cleanup()
+
+	accounts := testutil.GenerateSolanaKeys(t, 3)
+	ownerID := accounts[0]
+
+	env.sc.On("GetAccountInfo", ownerID, mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
+	env.sc.On("GetTokenAccountsByOwner", ownerID, env.token).Return([]ed25519.PublicKey{accounts[1], accounts[2]}, nil)
+	stream, err := env.client.GetEvents(context.Background(), &accountpb.GetEventsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: ownerID,
 		},
 	})
 	assert.NoError(t, err)
