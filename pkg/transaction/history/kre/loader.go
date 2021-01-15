@@ -41,12 +41,16 @@ func NewLoader(
 func (l *Loader) LoadData(sc history.StateChange) error {
 	creations := make([]*history.Creation, len(sc.Creations))
 	copy(creations, sc.Creations)
-	payments := make([]*history.Payment, len(sc.Creations))
+	payments := make([]*history.Payment, len(sc.Payments))
 	copy(payments, sc.Payments)
 
 	for i, c := range creations {
 		if c.AppIndex != 0 || c.MemoText == nil {
 			continue
+		}
+
+		if c.BlockTime.IsZero() || c.BlockTime.Unix() == 0 {
+			return errors.Errorf("invalid date for %d", c.Block)
 		}
 
 		if appID, ok := transaction.AppIDFromTextMemo(*c.MemoText); ok {
@@ -62,6 +66,10 @@ func (l *Loader) LoadData(sc history.StateChange) error {
 	for i, p := range payments {
 		if p.AppIndex != 0 || p.MemoText == nil {
 			continue
+		}
+
+		if p.BlockTime.IsZero() || p.BlockTime.Unix() == 0 {
+			return errors.Errorf("invalid date for %d", p.Block)
 		}
 
 		if appID, ok := transaction.AppIDFromTextMemo(*p.MemoText); ok {

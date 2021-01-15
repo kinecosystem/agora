@@ -74,7 +74,6 @@ func compact(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-// given a set of files, reduce into a larger file over a given interval
 type fileInfo struct {
 	name  string
 	start uint64

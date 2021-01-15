@@ -271,6 +271,10 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 		return errors.Wrap(err, "failed to marshal entry")
 	}
 
+	if se := entry.GetSolana(); se != nil && se.Confirmed && se.Slot == 0 {
+		return errors.New("cannot write a confirmed entry with no slot")
+	}
+
 	_, err = db.client.PutItemRequest(&dynamodb.PutItemInput{
 		TableName:           txTableStr,
 		ConditionExpression: writeTxConditionExpressionStr,
@@ -281,6 +285,18 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 	}).Send(ctx)
 	if dynamodbutil.IsConditionalCheckFailed(err) {
 		if err := db.checkDoubleInsertMatch(ctx, txHash, entry); err != nil {
+			return err
+		}
+
+		// match is an acceptable update, so we perform it.
+		_, err = db.client.PutItemRequest(&dynamodb.PutItemInput{
+			TableName: txTableStr,
+			Item: map[string]dynamodb.AttributeValue{
+				txHashKey: {B: txHash},
+				entryAttr: {B: entryBytes},
+			},
+		}).Send(ctx)
+		if err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -297,11 +313,11 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 	// This type of use case is not applicable for tx-history, where
 	// callers are operating on rooted history only, and can tolerate
 	// the delay.
-	if solanaEntry := entry.GetSolana(); solanaEntry != nil && solanaEntry.Confirmed {
+	if se := entry.GetSolana(); se != nil && se.Confirmed {
 		_, err := db.client.PutItemRequest(&dynamodb.PutItemInput{
 			TableName: txHistoryTableStr,
 			Item: map[string]dynamodb.AttributeValue{
-				historyKey:     {N: aws.String(strconv.FormatUint((solanaEntry.Slot/blockPartitionSize)*blockPartitionSize, 10))},
+				historyKey:     {N: aws.String(strconv.FormatUint((se.Slot/blockPartitionSize)*blockPartitionSize, 10))},
 				historySortKey: {B: orderingKey},
 				entryAttr:      {B: entryBytes},
 			},
@@ -309,6 +325,16 @@ func (db *db) Write(ctx context.Context, entry *model.Entry) error {
 		if err != nil {
 			return errors.Wrap(err, "failed to insert tx history entry")
 		}
+	}
+
+	// If there is no slot, it means we don't have any information on its
+	// ordering key, and therefore it is pointless (and incorrect) to store
+	// under accounts.
+	//
+	// When we get slot information (confirmed or in progress), the data should
+	// be filled in.
+	if se := entry.GetSolana(); se != nil && se.Slot == 0 {
+		return nil
 	}
 
 	writes := make([]dynamodb.WriteRequest, len(accounts))

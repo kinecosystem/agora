@@ -235,6 +235,10 @@ func (i *testIngestor) Ingest(ctx context.Context, w history.Writer, parent inge
 	return i.queue, nil
 }
 
+func (i *testIngestor) PointerMetric(p ingestion.Pointer) uint64 {
+	return 0
+}
+
 type testLock struct {
 	mu sync.Mutex
 }

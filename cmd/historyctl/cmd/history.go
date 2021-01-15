@@ -35,10 +35,26 @@ var historyGetTxCmd = &cobra.Command{
 	RunE:  getTxn,
 }
 
-var historyRepairCmd = &cobra.Command{
-	Use:   "repair",
-	Short: "Repair the timestamps over a range of history data",
-	RunE:  repair,
+var repairCmd = &cobra.Command{
+	Use: "repair",
+}
+
+var timeRepairCmd = &cobra.Command{
+	Use:   "time",
+	Short: "Repairs missing timestamps over a range of history data",
+	RunE:  timeRepair,
+}
+
+var driftRepairCmd = &cobra.Command{
+	Use:   "drift",
+	Short: "Repair the timestamp drift over a range of history data",
+	RunE:  driftRepair,
+}
+
+var blockRepairCmd = &cobra.Command{
+	Use:   "block",
+	Short: "Repair the blocks over a range of history data",
+	RunE:  blockRepair,
 }
 
 func init() {
@@ -46,16 +62,24 @@ func init() {
 
 	historyCmd.AddCommand(historyGetTxCmd)
 
-	historyCmd.AddCommand(historyRepairCmd)
-	historyRepairCmd.Flags().StringVar(&solanaEndpoint, "endpoint", "", "solana endpoint")
-	historyRepairCmd.Flags().Uint64VarP(&startBlock, "start-block", "s", 55405004, "Start block to dump (inclusive)")
-	historyRepairCmd.Flags().Uint64VarP(&endBlock, "end-block", "e", 0, "Start block to dump (exclusive)")
-	historyRepairCmd.Flags().IntVarP(&partitionSize, "partition-size", "p", 20_000, "Size of partitions to divide block space into")
-	historyRepairCmd.Flags().IntVarP(&workers, "workers", "w", 64, "Number of concurrent workers to process partitions")
-	historyRepairCmd.Flags().BoolVar(&dryRun, "dry-run", true, "Whether or not to perform the repair")
+	historyCmd.AddCommand(repairCmd)
+	repairCmd.PersistentFlags().Uint64VarP(&startBlock, "start-block", "s", 55405004, "Start block to repair (inclusive)")
+	repairCmd.PersistentFlags().Uint64VarP(&endBlock, "end-block", "e", 0, "Start block to repair (exclusive)")
+	repairCmd.PersistentFlags().IntVarP(&partitionSize, "partition-size", "p", 20_000, "Size of partitions to divide block space into")
+	repairCmd.PersistentFlags().IntVarP(&workers, "workers", "w", 64, "Number of concurrent workers to process partitions")
+	repairCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", true, "Whether or not to perform the repair")
+
+	repairCmd.AddCommand(timeRepairCmd)
+	timeRepairCmd.Flags().StringVar(&solanaEndpoint, "endpoint", "", "solana endpoint")
+
+	repairCmd.AddCommand(driftRepairCmd)
+
+	repairCmd.AddCommand(blockRepairCmd)
+	blockRepairCmd.Flags().StringVar(&solanaEndpoint, "endpoint", "", "solana endpoint")
 }
 
 func getTxn(_ *cobra.Command, args []string) error {
+	var marshaller jsonpb.Marshaler
 	reader := historyrw.New(dynamodb.New(awsConfig))
 
 	for i := range args {
@@ -90,7 +114,13 @@ func getTxn(_ *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("%s:\n", args[i])
-		var marshaller jsonpb.Marshaler
+		fmt.Println("Direct:")
+		jStr, err := marshaller.MarshalToString(entry)
+		if err != nil {
+			return errors.Wrap(err, "failed to marshal stored entry")
+		}
+		fmt.Println("\t", jStr)
+
 		for _, m := range matching {
 			jStr, err := marshaller.MarshalToString(m)
 			if err != nil {
@@ -102,18 +132,49 @@ func getTxn(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func repair(*cobra.Command, []string) error {
-	rw := historyrw.New(dynamodb.New(awsConfig))
-	repairer := newRepairer(solana.New(solanaEndpoint), rw)
+type Repairer interface {
+	Repair(start, end uint64) error
+}
 
+func timeRepair(*cobra.Command, []string) error {
+	rw := historyrw.New(dynamodb.New(awsConfig))
+	repairer := newTimeRepairer(solana.New(solanaEndpoint), rw)
+	return runRepair(repairer)
+}
+
+func driftRepair(*cobra.Command, []string) error {
+	rw := historyrw.New(dynamodb.New(awsConfig))
+	repairer := newDriftRepairer(rw)
+	return runRepair(repairer)
+}
+
+func blockRepair(*cobra.Command, []string) error {
+	rw := historyrw.New(dynamodb.New(awsConfig))
+	repairer := newBlockRepairer(solana.New(solanaEndpoint), rw)
+	return runRepair(repairer)
+}
+
+func runRepair(r Repairer) error {
 	jobCh := make(chan job, workers)
 	resultCh := make(chan result, workers)
 	done := make(chan struct{})
 
+	if startBlock < driftStartBlock {
+		log.Infof("Snapping start to %d", driftStartBlock)
+		startBlock = driftStartBlock
+	}
+	if endBlock == 0 || endBlock >= driftEndBlock {
+		log.Infof("Snapping end to %d", driftEndBlock)
+		endBlock = driftEndBlock
+	}
+	if startBlock >= endBlock {
+		return errors.Errorf("invalid range: [%d, %d)", startBlock, endBlock)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
-		go repairWorker(&wg, repairer, jobCh, resultCh)
+		go repairWorker(&wg, r, jobCh, resultCh)
 	}
 
 	go func() {
@@ -145,7 +206,7 @@ func repair(*cobra.Command, []string) error {
 	return nil
 }
 
-func repairWorker(wg *sync.WaitGroup, repairer *repairer, jobCh <-chan job, resultCh chan<- result) {
+func repairWorker(wg *sync.WaitGroup, repairer Repairer, jobCh <-chan job, resultCh chan<- result) {
 	defer wg.Done()
 
 	for j := range jobCh {

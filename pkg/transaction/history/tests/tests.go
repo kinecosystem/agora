@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -173,6 +174,45 @@ func testDoubleInsert_Solana(t *testing.T, rw history.ReaderWriter) {
 			assert.True(t, proto.Equal(entry, entries[0]))
 			assert.False(t, proto.Equal(m, entries[0]))
 		}
+
+		// Ensure that _upgrading_ a status does work.
+		sender = testutil.GenerateSolanaKeypair(t)
+		accounts = testutil.GenerateSolanaKeys(t, 9)
+		entry, hash = historytestutil.GenerateSolanaEntry(t, 0, false, sender, accounts[1:], nil, nil)
+		entry.Kind.(*model.Entry_Solana).Solana.TransactionError = []byte("some error")
+		assert.NoError(t, rw.Write(ctx, entry))
+
+		mutated = make([]*model.Entry, 3)
+
+		// Slot cannot go down
+		mutated[0] = proto.Clone(entry).(*model.Entry)
+		mutated[0].Kind.(*model.Entry_Solana).Solana.Slot = 4
+
+		// Confirmed cannot be unconfirmed
+		mutated[1] = proto.Clone(mutated[0]).(*model.Entry)
+		mutated[1].Kind.(*model.Entry_Solana).Solana.Confirmed = true
+
+		// Modifying time after the fact should be ok (for repair purposes)
+		mutated[2] = proto.Clone(mutated[1]).(*model.Entry)
+		mutated[2].Kind.(*model.Entry_Solana).Solana.BlockTime = ptypes.TimestampNow()
+
+		for i, m := range mutated {
+			assert.False(t, proto.Equal(entry, m))
+			require.NoError(t, rw.Write(ctx, m), i)
+
+			// Ensure that the write did go through
+			actual, err := rw.GetTransaction(ctx, hash)
+			require.NoError(t, err)
+			assert.True(t, proto.Equal(actual, m))
+			assert.False(t, proto.Equal(actual, entry))
+
+			addr := strkey.MustEncode(strkey.VersionByteAccountID, sender.Public().(ed25519.PublicKey))
+			entries, err := rw.GetAccountTransactions(ctx, addr, nil)
+			assert.NoError(t, err)
+			require.Len(t, entries, 1)
+			assert.True(t, proto.Equal(m, entries[0]))
+			assert.False(t, proto.Equal(entry, entries[0]))
+		}
 	})
 }
 
@@ -271,7 +311,7 @@ func testHistory(t *testing.T, rw history.ReaderWriter) {
 			// We amplify the slot to exploit weakness's within the partitioning scheme of dynamodb.
 			// In theory we should put this in the dynamodb test itself, but it's small enough it's ok here.
 			accounts := testutil.GenerateSolanaKeys(t, 10)
-			generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i/2)*expansion, i < 150, sender, accounts, nil, nil)
+			generated[i], _ = historytestutil.GenerateSolanaEntry(t, 1+uint64(i/2)*expansion, i < 150, sender, accounts, nil, nil)
 			require.NoError(t, rw.Write(ctx, generated[i]))
 		}
 

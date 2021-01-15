@@ -326,7 +326,7 @@ func TestGetHistory(t *testing.T) {
 
 	var entry *model.Entry
 	for i := 0; i < 10; i++ {
-		entry, _ = historytestutil.GenerateSolanaEntry(t, uint64(i), true, sender, receivers, nil, nil)
+		entry, _ = historytestutil.GenerateSolanaEntry(t, uint64(i+1), true, sender, receivers, nil, nil)
 		assert.NoError(t, env.rw.Write(context.Background(), entry))
 	}
 

@@ -13,6 +13,7 @@ import (
 	dynamocommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
+	"github.com/kinecosystem/agora/pkg/transaction/history/kre"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
@@ -26,15 +27,16 @@ var commitCmd = &cobra.Command{
 }
 
 var getCommitCmd = &cobra.Command{
-	Use:   "get",
+	Use:   "get <type kre|history>",
 	Short: "Get the latest ingestion pointer",
+	Args:  cobra.ExactArgs(1),
 	RunE:  getCommit,
 }
 
 var setCommitCmd = &cobra.Command{
-	Use:   "set <new>",
+	Use:   "set <type kre|history> <new>",
 	Short: "Set the ingestion pointer, using either the sequence or slot value",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(2),
 	RunE:  setCommit,
 }
 
@@ -46,11 +48,21 @@ func init() {
 	commitCmd.AddCommand(setCommitCmd)
 }
 
-func getCommit(*cobra.Command, []string) error {
+func getCommit(_ *cobra.Command, args []string) error {
 	v := model.KinVersion(kinVersion)
 	c := dynamocommitter.New(dynamodb.New(awsConfig))
 
-	ptr, err := c.Latest(context.Background(), ingestion.GetHistoryIngestorName(v))
+	var ingestor string
+	switch args[0] {
+	case "history":
+		ingestor = ingestion.GetHistoryIngestorName(v)
+	case "kre":
+		ingestor = kre.KREIngestorName
+	default:
+		return errors.Errorf("invalid commit type: %s", args[0])
+	}
+
+	ptr, err := c.Latest(context.Background(), ingestor)
 	if err != nil {
 		return errors.Wrap(err, "failed to get latest pointer")
 	}
@@ -76,9 +88,19 @@ func getCommit(*cobra.Command, []string) error {
 func setCommit(_ *cobra.Command, args []string) error {
 	v := model.KinVersion(kinVersion)
 	c := dynamocommitter.New(dynamodb.New(awsConfig)).(*dynamocommitter.Committer)
-	val, err := strconv.ParseUint(args[0], 10, 64)
+	val, err := strconv.ParseUint(args[1], 10, 64)
 	if err != nil {
 		return errors.Wrap(err, "invalid argument")
+	}
+
+	var ingestor string
+	switch args[0] {
+	case "history":
+		ingestor = ingestion.GetHistoryIngestorName(v)
+	case "kre":
+		ingestor = kre.KREIngestorName
+	default:
+		return errors.Errorf("invalid commit type: %s", args[0])
 	}
 
 	var ptr ingestion.Pointer
@@ -90,5 +112,5 @@ func setCommit(_ *cobra.Command, args []string) error {
 		ptr = solana.PointerFromSlot(val)
 	}
 
-	return c.CommitUnsafe(context.Background(), ingestion.GetHistoryIngestorName(v), ptr)
+	return c.CommitUnsafe(context.Background(), ingestor, ptr)
 }

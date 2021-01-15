@@ -13,6 +13,7 @@ import (
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -85,11 +86,11 @@ func TestInnerProcess(t *testing.T) {
 
 		// To ensure that the ordering keys are not the same within a slot, we alternate
 		// whether or not they have memo data inside.
-		generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i/2), i < 20*2, sender, accounts, nil, memo)
+		generated[i], _ = historytestutil.GenerateSolanaEntry(t, 1+uint64(i/2), i < 20*2, sender, accounts, nil, memo)
 		require.NoError(t, env.rw.Write(context.Background(), generated[i]))
 	}
 
-	assert.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), nil, solanaingestion.PointerFromSlot(19)))
+	assert.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), nil, solanaingestion.PointerFromSlot(20)))
 	assert.NoError(t, env.processor.process(context.Background()))
 
 	// Each ProcessRange() will act on 11 entries at a time.
@@ -207,6 +208,7 @@ func TestMigrationTransaction(t *testing.T) {
 			Solana: &model.SolanaEntry{
 				Slot:        slot,
 				Confirmed:   true,
+				BlockTime:   timestamppb.Now(),
 				Transaction: txn.Marshal(),
 			},
 		},
@@ -273,6 +275,7 @@ func generateSolanaEntry(t *testing.T, slot uint64, confirmed bool, instructions
 			Solana: &model.SolanaEntry{
 				Slot:        slot,
 				Confirmed:   confirmed,
+				BlockTime:   timestamppb.Now(),
 				Transaction: txn.Marshal(),
 			},
 		},

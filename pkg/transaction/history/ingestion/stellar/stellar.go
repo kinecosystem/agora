@@ -143,6 +143,12 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 	return queue, nil
 }
 
+// PointerMetric implements ingestion.Ingestor.PointerMetric.
+func (i *ingestor) PointerMetric(p ingestion.Pointer) uint64 {
+	seq, _ := SequenceFromPointer(p)
+	return uint64(seq)
+}
+
 func (i *ingestor) processLedger(ledger hProtocol.Ledger, w history.Writer) error {
 	var cursor string
 	var totalTxns int

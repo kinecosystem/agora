@@ -46,6 +46,7 @@ func GenerateSolanaEntry(t *testing.T, slot uint64, confirmed bool, sender ed255
 			Solana: &model.SolanaEntry{
 				Slot:        slot,
 				Confirmed:   confirmed,
+				BlockTime:   ptypes.TimestampNow(),
 				Transaction: txn.Marshal(),
 			},
 		},

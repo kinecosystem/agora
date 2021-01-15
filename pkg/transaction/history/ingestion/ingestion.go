@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/pkg/errors"
@@ -64,6 +65,9 @@ type Ingestor interface {
 
 	// Ingest ingests blocks starting at the immediate block after the parent pointer.
 	Ingest(ctx context.Context, w history.Writer, parent Pointer) (ResultQueue, error)
+
+	// PointerMetric returns a metric value for a given pointer.
+	PointerMetric(p Pointer) uint64
 }
 
 // DistributedLock is a distributed lock used for coordinating which node should
@@ -125,8 +129,6 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 		"ingestor": i.Name(),
 	})
 
-	metrics := getMetricsBundle(i.Name())
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -150,7 +152,7 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 		// such as a bad network connection, or invalid/expired permissions.
 		_, err = retry.Retry(
 			func() error {
-				defer metrics.restarts.Inc()
+				defer restarts.WithLabelValues(i.Name()).Inc()
 
 				latest, err := c.Latest(ctx, i.Name())
 				if err != nil {
@@ -210,9 +212,7 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 
 							return errors.Wrapf(err, "failed to commit block (%x, %x)", r.Parent, r.Block)
 						}
-
-						metrics.lastIngestionTime.Set(float64(time.Now().Unix()))
-						metrics.commits.Inc()
+						lastCommitted.WithLabelValues(i.Name()).Set(float64(i.PointerMetric(r.Block)))
 					}
 				}
 			},
@@ -230,53 +230,23 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 	}
 }
 
-type metricsBundle struct {
-	commits           prometheus.Counter
-	restarts          prometheus.Counter
-	lastIngestionTime prometheus.Gauge
-}
-
-func getMetricsBundle(name string) *metricsBundle {
-	bundle := &metricsBundle{}
-	bundle.commits = prometheus.NewCounter(prometheus.CounterOpts{
+var (
+	commits = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name:      "history_commits",
 		Namespace: "agora",
-		ConstLabels: prometheus.Labels{
-			"ingestor": name,
-		},
-	})
-
-	if err := prometheus.Register(bundle.commits); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			bundle.commits = e.ExistingCollector.(prometheus.Counter)
-		}
-	}
-
-	bundle.restarts = prometheus.NewCounter(prometheus.CounterOpts{
+	}, []string{"ingestor"})
+	restarts = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name:      "history_restarts",
 		Namespace: "agora",
-		ConstLabels: prometheus.Labels{
-			"ingestor": name,
-		},
-	})
-	if err := prometheus.Register(bundle.restarts); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			bundle.restarts = e.ExistingCollector.(prometheus.Counter)
-		}
-	}
-
-	bundle.lastIngestionTime = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:      "history_last_ingestion_time_unix",
+	}, []string{"ingestor"})
+	lastCommitted = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name:      "history_last_committed",
 		Namespace: "agora",
-		ConstLabels: prometheus.Labels{
-			"ingestor": name,
-		},
-	})
-	if err := prometheus.Register(bundle.lastIngestionTime); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			bundle.lastIngestionTime = e.ExistingCollector.(prometheus.Gauge)
-		}
-	}
+	}, []string{"ingestor"})
+)
 
-	return bundle
+func init() {
+	commits = metrics.Register(commits).(*prometheus.CounterVec)
+	restarts = metrics.Register(restarts).(*prometheus.CounterVec)
+	lastCommitted = metrics.Register(lastCommitted).(*prometheus.GaugeVec)
 }

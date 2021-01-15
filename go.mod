@@ -32,6 +32,7 @@ require (
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
 	google.golang.org/api v0.36.0
 	google.golang.org/grpc v1.33.2
+	google.golang.org/protobuf v1.25.0
 	gotest.tools v2.2.0+incompatible
 )
 

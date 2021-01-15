@@ -59,9 +59,18 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 		return err
 	}
 
+	orderingKey, err := e.GetOrderingKey()
+	if err != nil {
+		return errors.Wrap(err, "invalid ordering key")
+	}
+
 	accounts, err := e.GetAccounts()
 	if err != nil {
 		return err
+	}
+
+	if se := e.GetSolana(); se != nil && se.Confirmed && se.Slot == 0 {
+		return errors.New("cannot write a confirmed entry with no slot")
 	}
 
 	if prev, ok := rw.txns[string(hash)]; ok {
@@ -92,22 +101,34 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 			if len(prevSol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
 				return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (transaction error)")
 			}
+
+			rw.txns[string(hash)] = proto.Clone(e).(*model.Entry)
 		}
 	} else {
 		rw.txns[string(hash)] = proto.Clone(e).(*model.Entry)
 	}
+
+	rw.Writes = append(rw.Writes, proto.Clone(e).(*model.Entry))
 
 	if solanaEntry := e.GetSolana(); solanaEntry != nil && solanaEntry.Confirmed {
 		rw.txnHistory = append(rw.txnHistory, proto.Clone(e).(*model.Entry))
 		sort.Sort(rw.txnHistory)
 	}
 
+	if solanaEntry := e.GetSolana(); solanaEntry != nil && solanaEntry.Slot == 0 {
+		return nil
+	}
+
 	for _, a := range accounts {
 		accountHistory := rw.accountTxns[a]
 
 		var exists bool
-		for _, existing := range accountHistory {
-			if proto.Equal(existing, e) {
+		for i, existing := range accountHistory {
+			ok, _ := existing.GetOrderingKey()
+			if bytes.Equal(orderingKey, ok) {
+				accountHistory[i] = proto.Clone(e).(*model.Entry)
+				rw.accountTxns[a] = accountHistory
+
 				exists = true
 				break
 			}
@@ -118,8 +139,6 @@ func (rw *RW) Write(_ context.Context, e *model.Entry) error {
 			rw.accountTxns[a] = accountHistory
 		}
 	}
-
-	rw.Writes = append(rw.Writes, proto.Clone(e).(*model.Entry))
 
 	return nil
 }

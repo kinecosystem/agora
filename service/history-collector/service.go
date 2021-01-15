@@ -127,10 +127,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 	)
 
 	go func() {
-		// todo: once ingestion is confirmed, set ingestor_pointer to end of bulk upload, and enable.
-		if true {
-			return
-		}
 		err := p.Process(ctx, 5*time.Minute)
 		if err != nil && err != context.Canceled {
 			log.WithError(err).Warn("loader loop terminated")

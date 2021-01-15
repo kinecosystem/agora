@@ -51,7 +51,7 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 	start := parentSlot + 1
 
 	// todo(config): allow for a customizable buffer?
-	queue := make(chan (<-chan ingestion.Result), 16)
+	queue := make(chan (<-chan ingestion.Result), 32)
 
 	go func() {
 		defer close(queue)
@@ -124,6 +124,12 @@ func (i *ingestor) Ingest(ctx context.Context, w history.Writer, parent ingestio
 	return queue, nil
 }
 
+// PointerMetric implements ingestion.Ingestor.PointerMetric.
+func (i *ingestor) PointerMetric(p ingestion.Pointer) uint64 {
+	s, _ := SlotFromPointer(p)
+	return s
+}
+
 func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 	block, err := i.client.GetConfirmedBlock(slot)
 	if err != nil {
@@ -145,6 +151,9 @@ func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 		//       always have it available. It being not available indicates the
 		//       underlying RPC node should be fixed.
 		return errors.Wrap(err, "failed to get block time")
+	}
+	if blockTime.IsZero() || blockTime.Unix() == 0 {
+		return errors.Errorf("failed to get block time for block %d", slot)
 	}
 
 	ts, err := ptypes.TimestampProto(blockTime)

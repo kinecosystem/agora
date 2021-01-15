@@ -23,7 +23,6 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
-	solanaingestion "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
 
@@ -166,13 +165,9 @@ func (p *Processor) process(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to get last ingested block")
 	}
-	maxBlock, err := solanaingestion.SlotFromPointer(lastIngested)
-	if err != nil {
-		return errors.Wrap(err, "failed to get slot from last ingested block")
-	}
-	maxKey := model.OrderingKeyFromBlock(maxBlock + 1)
+	maxKey := append(lastIngested, 0)
 
-	for bytes.Compare(lastProcessed, maxKey) < 0 {
+	for bytes.Compare(lastProcessed, append(lastIngested, 0)) < 0 {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -255,6 +250,15 @@ func (p *Processor) ProcessRange(ctx context.Context, startKey, endKey []byte, l
 			return sc, errors.Wrap(err, "failed to unmarshal transaction")
 		}
 
+		memos := p.getMemos(txn)
+		blockTime, err := ptypes.Timestamp(se.BlockTime)
+		if err != nil {
+			return sc, errors.Wrap(err, "failed to create timestamppb")
+		}
+		if blockTime.IsZero() || blockTime.Unix() == 0 {
+			return sc, errors.Errorf("missing block time at block: %d", se.Slot)
+		}
+
 		txnPayments, err := p.getPayments(txn, successful)
 		if err != nil {
 			return sc, errors.Wrap(err, "failed to get payments from transaction")
@@ -277,10 +281,8 @@ func (p *Processor) ProcessRange(ctx context.Context, startKey, endKey []byte, l
 			continue
 		}
 
-		memos := p.getMemos(txn)
-		blockTime, _ := ptypes.Timestamp(se.BlockTime)
-
 		for _, p := range txnPayments {
+			p.Block = se.Slot
 			p.BlockTime = blockTime
 			copy(p.TxID[:], txn.Signature())
 			p.Successful = successful
@@ -298,6 +300,7 @@ func (p *Processor) ProcessRange(ctx context.Context, startKey, endKey []byte, l
 		}
 
 		for _, c := range txnCreations {
+			c.Block = se.Slot
 			c.BlockTime = blockTime
 			copy(c.TxID[:], txn.Signature())
 			c.Successful = successful

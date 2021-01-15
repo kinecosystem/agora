@@ -20,6 +20,7 @@ var rootCmd = &cobra.Command{
 	Use:               "historyctl",
 	Short:             "Utility for inspecting history",
 	PersistentPreRunE: rootPreRun,
+	SilenceUsage:      true,
 }
 
 func Execute() {

@@ -23,6 +23,7 @@ type StateChange struct {
 
 type Creation struct {
 	BlockTime    time.Time
+	Block        uint64
 	TxID         solana.Signature
 	Offset       int
 	Successful   bool
@@ -53,6 +54,7 @@ func (c *Creation) Save() (row map[string]bigquery.Value, insertID string, err e
 	row = map[string]bigquery.Value{
 		"date":            c.BlockTime.Format("2006-01-02"),
 		"time":            c.BlockTime.Format("2006-01-02 15:04:05 UTC"),
+		"block":           strconv.FormatUint(c.Block, 10),
 		"tx_id":           base58.Encode(c.TxID[:]),
 		"tx_status":       txStatus,
 		"account":         base58.Encode(c.Account),
@@ -79,6 +81,7 @@ func (c *Creation) Save() (row map[string]bigquery.Value, insertID string, err e
 
 type Payment struct {
 	BlockTime   time.Time
+	Block       uint64
 	TxID        solana.Signature
 	Offset      int
 	Successful  bool
@@ -113,6 +116,7 @@ func (p *Payment) Save() (row map[string]bigquery.Value, insertID string, err er
 	row = map[string]bigquery.Value{
 		"date":               p.BlockTime.Format("2006-01-02"),
 		"time":               p.BlockTime.Format("2006-01-02 15:04:05 UTC"),
+		"block":              strconv.FormatUint(p.Block, 10),
 		"tx_id":              base58.Encode(p.TxID[:]),
 		"tx_status":          txStatus,
 		"instruction_offset": p.Offset,

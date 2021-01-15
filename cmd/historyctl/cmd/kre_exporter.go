@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/agora/pkg/transaction/history/processor"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 )
 
 type exporter struct {
