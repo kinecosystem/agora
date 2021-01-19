@@ -702,10 +702,14 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 			})
 
 			info, err := s.loader.Load(stream.Context(), tokenAccountID, solana.CommitmentRecent)
-			if err != nil {
-				log.WithError(err).Warn("failed to add account info, excluding account event")
+			if err == accountinfo.ErrAccountInfoNotFound {
+				if err := stream.Send(&accountpb.Events{Result: accountpb.Events_NOT_FOUND}); err != nil {
+					return status.Error(codes.Internal, err.Error())
+				}
+				return nil
+			} else if err != nil {
+				return status.Error(codes.Internal, err.Error())
 			}
-
 			// Overwrite AccountId with the requested account ID
 			info.AccountId = &commonpb.SolanaAccountId{Value: req.AccountId.Value}
 			events = append(events, &accountpb.Event{
