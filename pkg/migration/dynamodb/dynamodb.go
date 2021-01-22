@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	dynamodbutil "github.com/kinecosystem/agora-common/aws/dynamodb/util"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/pkg/errors"
 
@@ -17,12 +18,23 @@ import (
 
 type db struct {
 	client dynamodbiface.ClientAPI
+	table  *string
 }
 
 // New returns a new dynamodb backed migration.Store
-func New(client dynamodbiface.ClientAPI) migration.Store {
+func New(client dynamodbiface.ClientAPI, v version.KinVersion) migration.Store {
+	var table *string
+
+	switch v {
+	case version.KinVersion2:
+		table = stateTableKin2Str
+	case version.KinVersion3:
+		table = stateTableKin3Str
+	}
+
 	return &db{
 		client: client,
+		table:  table,
 	}
 }
 
@@ -34,7 +46,7 @@ func (db *db) Get(ctx context.Context, account ed25519.PublicKey) (state migrati
 	}
 
 	resp, err := db.client.GetItemRequest(&dynamodb.GetItemInput{
-		TableName:      stateTableStr,
+		TableName:      db.table,
 		ConsistentRead: aws.Bool(true),
 		Key: map[string]dynamodb.AttributeValue{
 			stateTableHashKey: {S: aws.String(address)},
@@ -76,7 +88,7 @@ func (db *db) Update(ctx context.Context, account ed25519.PublicKey, prev migrat
 	}
 
 	_, err = db.client.PutItemRequest(&dynamodb.PutItemInput{
-		TableName:           stateTableStr,
+		TableName:           db.table,
 		Item:                nextItem,
 		ConditionExpression: updateExpression,
 		ExpressionAttributeNames: map[string]string{
@@ -94,49 +106,6 @@ func (db *db) Update(ctx context.Context, account ed25519.PublicKey, prev migrat
 		}
 
 		return errors.Wrap(err, "failed to update state")
-	}
-
-	return nil
-}
-
-// GetCount implements migration.Store.GetCount
-func (db *db) GetCount(ctx context.Context, account ed25519.PublicKey) (int, error) {
-	resp, err := db.client.GetItemRequest(&dynamodb.GetItemInput{
-		TableName: requestTableStr,
-		Key: map[string]dynamodb.AttributeValue{
-			requestTableHashKey: {B: account},
-		},
-	}).Send(ctx)
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to get request count")
-	}
-
-	if len(resp.Item) == 0 {
-		return 0, nil
-	}
-
-	return getCount(resp.Item)
-}
-
-// IncrementCount implements migration.Store.IncrementCount
-func (db *db) IncrementCount(ctx context.Context, account ed25519.PublicKey) error {
-	_, err := db.client.UpdateItemRequest(&dynamodb.UpdateItemInput{
-		TableName:        requestTableStr,
-		UpdateExpression: requestUpdateExprStr,
-		Key: map[string]dynamodb.AttributeValue{
-			requestTableHashKey: {B: account},
-		},
-		ExpressionAttributeValues: map[string]dynamodb.AttributeValue{
-			":inc":   {N: aws.String("1")},
-			":start": {N: aws.String("0")},
-		},
-		ExpressionAttributeNames: map[string]string{
-			"#count": "count",
-		},
-	}).Send(ctx)
-
-	if err != nil {
-		return errors.Wrap(err, "failed to increment request count")
 	}
 
 	return nil

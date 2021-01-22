@@ -49,7 +49,7 @@ type app struct {
 }
 
 // Init implements agorapp.App.Init.
-func (a *app) Init(_ agoraapp.Config) error {
+func (a *app) Init(_ agoraapp.Config) (err error) {
 	a.shutdownCh = make(chan struct{})
 
 	if os.Getenv(solanaEndpointEnv) == "" {
@@ -116,6 +116,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		bqsubmitter.New(bqClient, os.Getenv(bqPaymentsTableEnv)),
 		mapperdb.New(dynamoClient),
 	)
+
 	p := processor.NewProcessor(
 		hist,
 		committer,

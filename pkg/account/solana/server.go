@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,8 +13,6 @@ import (
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
-	"github.com/kinecosystem/go/amount"
-	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -89,20 +88,35 @@ var (
 	}, []string{"result"})
 )
 
+type sortableAccounts []ed25519.PublicKey
+
+// Len is the number of elements in the collection.
+func (s sortableAccounts) Len() int {
+	return len(s)
+}
+
+// Less reports whether the element with
+// index i should sort before the element with index j.
+func (s sortableAccounts) Less(i int, j int) bool {
+	return bytes.Compare(s[i], s[j]) < 1
+}
+
+// Swap swaps the elements with indexes i and j.
+func (s sortableAccounts) Swap(i int, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
 type server struct {
 	log               *logrus.Entry
 	sc                solana.Client
-	scResolve         solana.Client
-	scSubmit          solana.Client
 	tc                *token.Client
-	hc                horizon.ClientInterface
 	limiter           *account.Limiter
 	accountNotifier   *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         accountinfo.Cache
 	loader            *accountinfo.Loader
+	migrationLoader   migration.Loader
 	migrator          migration.Migrator
-	migrationStore    migration.Store
 	mapper            account.Mapper
 
 	token              ed25519.PublicKey
@@ -123,16 +137,13 @@ func init() {
 
 func New(
 	sc solana.Client,
-	scResolve solana.Client,
-	scSubmit solana.Client,
-	hc horizon.ClientInterface,
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
 	tokenAccountCache tokenaccount.Cache,
 	infoCache accountinfo.Cache,
 	loader *accountinfo.Loader,
+	migrationLoader migration.Loader,
 	migrator migration.Migrator,
-	migrationStore migration.Store,
 	mapper account.Mapper,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
@@ -142,16 +153,13 @@ func New(
 	s := &server{
 		log:                   logrus.StandardLogger().WithField("type", "account/solana"),
 		sc:                    sc,
-		scResolve:             scResolve,
-		scSubmit:              scSubmit,
 		tc:                    token.NewClient(sc, mint),
-		hc:                    hc,
 		accountNotifier:       accountNotifier,
 		tokenAccountCache:     tokenAccountCache,
 		infoCache:             infoCache,
 		loader:                loader,
+		migrationLoader:       migrationLoader,
 		migrator:              migrator,
-		migrationStore:        migrationStore,
 		mapper:                mapper,
 		limiter:               limiter,
 		token:                 mint,
@@ -275,7 +283,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		},
 	}
 
-	_, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
+	_, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	if err != nil {
 		createAccountFailures.WithLabelValues("unhandled").Inc()
 		log.WithError(err).Warn("failed to submit create transaction")
@@ -338,33 +346,37 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 	log := s.log.WithField("method", "GetAccountInfo")
 
 	commitment := solanautil.CommitmentFromProto(req.Commitment)
-	err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment)
-	if err != nil && err != migration.ErrNotFound {
-		log.WithError(err).Warn("failed to initiate migration")
 
-		// Check to see if migration was started at all; fallback to Horizon if it wasn't
-		_, exists, err := s.migrationStore.Get(ctx, req.AccountId.Value)
-		if err != nil {
-			log.WithError(err).Warn("failed to get migration status")
-			return nil, status.Error(codes.Internal, "failed to get migration status")
-		}
-		if !exists {
-			balance, err := s.loadHorizonBalance(req.AccountId.Value)
-			if err != nil {
+	var stellarFallback bool
+	err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment)
+	switch err {
+	case nil, migration.ErrNotFound, migration.ErrBurned:
+	default:
+		log.WithError(err).Warn("failed to initiate migration")
+		stellarFallback = true
+	}
+
+	info, err := s.loader.Load(ctx, req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
+	if err == accountinfo.ErrAccountInfoNotFound {
+		if stellarFallback {
+			log.Debug("Looking up horizon balance")
+			_, balance, err := s.migrationLoader.LoadAccount(req.AccountId.Value)
+			if err == migration.ErrNotFound {
+				return &accountpb.GetAccountInfoResponse{
+					Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
+				}, nil
+			} else if err != nil {
 				return nil, status.Error(codes.Internal, "failed to get account balance")
 			}
 
 			return &accountpb.GetAccountInfoResponse{
 				AccountInfo: &accountpb.AccountInfo{
 					AccountId: &commonpb.SolanaAccountId{Value: req.AccountId.Value},
-					Balance:   balance,
+					Balance:   int64(balance),
 				},
 			}, nil
 		}
-	}
 
-	info, err := s.loader.Load(ctx, req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
-	if err == accountinfo.ErrAccountInfoNotFound {
 		return &accountpb.GetAccountInfoResponse{
 			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
 		}, nil
@@ -445,55 +457,17 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	if len(cached) == 0 {
 		resolveAccountMissCounter.Inc()
 
-		migratedAccount, err := s.migrator.GetMigrationAccount(ctx, req.AccountId.Value)
-		switch err {
-		case nil:
-			if len(migratedAccount) > 0 {
-				shouldMigrate = true
-			}
-		case migration.ErrNotFound:
-		case migration.ErrMultisig, migration.ErrBurned:
-			// Meter, but we don't care (i.e. pretend no resolve)
-			nonMigratableResolveCounter.Inc()
-		default:
+		// Get the set of migration accounts (accounts that _are_ eligible for migration)
+		migratedAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
+		if err != nil {
 			// Not great, but we can fall back
 			log.WithError(err).Warn("failed to check migration status")
-		}
-
-		// (1) and (2a) from above have the same resultant behavior, so we
-		// combine the two.
-		if len(migratedAccount) != 0 {
+		} else if len(migratedAccounts) > 0 {
+			// (1) and (2a) from above have the same resultant behavior, so we
+			// combine the two.
+			shouldMigrate = true
 			resolveShortCuts.WithLabelValues("migration").Inc()
-			accounts = []ed25519.PublicKey{migratedAccount}
-		} else {
-			// We assume at this point that we're not resolving a migration account.
-			// We could, however be resolving the result of a migration account.
-			//
-			// For example:
-			//
-			//   1. Resolve(kin3) -> [kin4]
-			//   2. Submit(kin4); fails, migration is delayed
-			//   3. Resolve(kin4) -> [kin4]
-			//
-			// We can detect this case by looking up the owner map, which has precomputed
-			// kin4 -> kin3 values, _along with_ the CreateAccount() values.
-			//
-			// Note: this (if configured) will load the solana raw account on miss.
-			owner, err := s.mapper.Get(ctx, req.AccountId.Value, solana.CommitmentSingle)
-			switch err {
-			case nil:
-				// We look up the mapping of the owner to see if it's us. If so, we know
-				// this is a kin3 -> kin4 case.
-				derived, err := s.migrator.GetMigrationAccount(ctx, owner)
-				if err == nil && bytes.Equal(req.AccountId.Value, derived) {
-					resolveShortCuts.WithLabelValues("lookup").Inc()
-					accounts = []ed25519.PublicKey{req.AccountId.Value}
-				}
-			case account.ErrNotFound:
-				// fall back
-			default:
-				log.WithError(err).Warn("failed to check account existence directly, falling back")
-			}
+			accounts = migratedAccounts
 		}
 	} else {
 		resolveAccountHitCounter.Inc()
@@ -515,7 +489,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 
 	if len(accounts) == 0 || rand.Float32() < s.cacheCheckProbability {
 		putRequired = true
-		accounts, err = s.scResolve.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
+		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
 		if err != nil {
 			log.WithError(err).Warn("failed to get token accounts")
 			return nil, status.Error(codes.Internal, err.Error())
@@ -529,6 +503,11 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	resp := &accountpb.ResolveTokenAccountsResponse{
 		TokenAccounts: make([]*commonpb.SolanaAccountId, len(accounts)),
 	}
+
+	// We sort the set of accounts to make the resolve order deterministic.
+	// With the exception of the identity account (outlined below), we just
+	// sort them in bytewise order.
+	sort.Sort(sortableAccounts(accounts))
 
 	// The number of accounts by owner is likely to be small, so this is fairly quick.
 	// If we find that the identity address is in the list, then we place it at the start,
@@ -623,7 +602,7 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 				log.WithError(err).Warn("failed to get token accounts from cache")
 			}
 
-			accounts, err = s.scResolve.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
+			accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
 			if err != nil {
 				log.WithError(err).Warn("failed to get token accounts")
 				return status.Error(codes.Internal, err.Error())
@@ -748,30 +727,6 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 			return status.Error(codes.Canceled, "")
 		}
 	}
-}
-
-func (s *server) loadHorizonBalance(account ed25519.PublicKey) (int64, error) {
-	address, err := strkey.Encode(strkey.VersionByteAccountID, account)
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to encode account as stellar address")
-	}
-	stellarAccount, err := s.hc.LoadAccount(address)
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to check kin3 account balance")
-	}
-	strBalance, err := stellarAccount.GetNativeBalance()
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to get native balance")
-	}
-	balance, err := amount.ParseInt64(strBalance)
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to parse balance")
-	}
-	if balance < 0 {
-		return 0, errors.Errorf("cannot migrate negative balance: %d", balance)
-	}
-
-	return balance, nil
 }
 
 func (s *server) isWhitelisted(ctx context.Context) (userAgent string, whitelisted bool) {

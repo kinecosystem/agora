@@ -2,14 +2,34 @@ package version
 
 import (
 	"context"
+	"fmt"
+	"path"
+	"strconv"
 	"strings"
 
+	"github.com/kinecosystem/agora-common/config"
+	"github.com/kinecosystem/agora-common/config/env"
+	"github.com/kinecosystem/agora-common/config/etcd"
+	"github.com/kinecosystem/agora-common/config/wrapper"
 	"github.com/kinecosystem/agora-common/kin/version"
+	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
+	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	configPrefix    = "/config/agora/v1"
+	configNamespace = "version"
+
+	defaultVersionKey     = "default"
+	defaultVersionDefault = 3
+
+	disabledVersionsKey     = "disabled"
+	disabledVersionsDefault = "3"
 )
 
 var (
@@ -21,14 +41,68 @@ var (
 )
 
 func init() {
-	if err := registerMetrics(); err != nil {
-		logrus.WithError(err).Error("failed to register precondition failed counter")
+	preconditionFailedCounter = metrics.Register(preconditionFailedCounter).(prometheus.Counter)
+}
+
+type ConfigProvider func(c *conf)
+
+type conf struct {
+	log *logrus.Entry
+
+	defaultVersion        config.Uint64
+	disabledVersionString config.String
+}
+
+func (c conf) getDisabledVersions(ctx context.Context) (versions []int) {
+	parts := strings.Split(c.disabledVersionString.Get(ctx), ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+
+		v, err := strconv.ParseUint(p, 10, 64)
+		if err != nil {
+			c.log.WithError(err).WithField("val", v).Error("failed to parse disabled version")
+		}
+
+		versions = append(versions, int(v))
+	}
+
+	return versions
+}
+
+func WithETCDConfig(client *clientv3.Client) ConfigProvider {
+	return func(c *conf) {
+		c.log = logrus.StandardLogger().WithFields(logrus.Fields{
+			"type":     "version/config",
+			"provider": "etcd",
+		})
+		c.defaultVersion = etcd.NewUint64Config(client, path.Join(configPrefix, configNamespace, defaultVersionKey), defaultVersionDefault)
+		c.disabledVersionString = etcd.NewStringConfig(client, path.Join(configPrefix, configNamespace, disabledVersionsKey), disabledVersionsDefault)
 	}
 }
 
-func DisabledVersionUnaryServerInterceptor(defaultVersion version.KinVersion, disabledVersions []int) grpc.UnaryServerInterceptor {
+func WithEnvConfig() ConfigProvider {
+	return func(c *conf) {
+		c.log = logrus.StandardLogger().WithFields(logrus.Fields{
+			"type":     "version/config",
+			"provider": "env",
+		})
+		c.defaultVersion = wrapper.NewUint64Config(env.NewConfig(fmt.Sprintf("%s_%s", configNamespace, defaultVersionKey)), defaultVersionDefault)
+		c.disabledVersionString = wrapper.NewStringConfig(env.NewConfig(fmt.Sprintf("%s_%s", configNamespace, disabledVersionsKey)), disabledVersionsDefault)
+	}
+}
+
+func DisabledVersionUnaryServerInterceptor(c ConfigProvider) grpc.UnaryServerInterceptor {
 	log := logrus.StandardLogger().WithField("type", "version/interceptor")
+	var conf conf
+	c(&conf)
+
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		defaultVersion := version.KinVersion(conf.defaultVersion.Get(ctx))
+		disabledVersions := conf.getDisabledVersions(ctx)
+
 		if strings.Contains(info.FullMethod, "GetMinimumKinVersion") {
 			return handler(ctx, req)
 		}
@@ -62,9 +136,15 @@ func DisabledVersionUnaryServerInterceptor(defaultVersion version.KinVersion, di
 	}
 }
 
-func DisabledVersionStreamServerInterceptor(defaultVersion version.KinVersion, disabledVersions []int) grpc.StreamServerInterceptor {
+func DisabledVersionStreamServerInterceptor(c ConfigProvider) grpc.StreamServerInterceptor {
 	log := logrus.StandardLogger().WithField("type", "version/interceptor")
+	var conf conf
+	c(&conf)
+
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		defaultVersion := version.KinVersion(conf.defaultVersion.Get(ss.Context()))
+		disabledVersions := conf.getDisabledVersions(ss.Context())
+
 		if strings.Contains(info.FullMethod, "v4") {
 			for _, v := range disabledVersions {
 				if v == 4 {
@@ -167,16 +247,4 @@ func MinVersionStreamServerInterceptor() grpc.StreamServerInterceptor {
 
 		return handler(srv, ss)
 	}
-}
-
-func registerMetrics() error {
-	if err := prometheus.Register(preconditionFailedCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			preconditionFailedCounter = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			return err
-		}
-	}
-
-	return nil
 }

@@ -102,7 +102,7 @@ func (r *driftRepairer) Repair(start, end uint64) error {
 				log.WithFields(logrus.Fields{
 					"tx":   base58.Encode(txID),
 					"slot": se.Slot,
-					"time": se.BlockTime.AsTime(),
+					"time": asTime(se.BlockTime),
 				}).Debug("Repairing")
 				if err := r.rw.Write(context.Background(), e); err != nil {
 					return errors.Wrap(err, "failed to update entry")

@@ -160,7 +160,7 @@ func (p *Processor) queueHandler(ctx context.Context, msg *task.Message) error {
 			switch err {
 			case nil, ErrMultisig, ErrBurned, ErrNotFound, context.Canceled:
 			default:
-				log.Info("error running migration, retrying")
+				log.WithError(err).Warn("error running migration, retrying")
 			}
 
 			return err

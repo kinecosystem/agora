@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	agoraapp "github.com/kinecosystem/agora-common/app"
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/kin"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	sqstasks "github.com/kinecosystem/agora-common/taskqueue/sqs"
 	"github.com/kinecosystem/go/clients/horizon"
@@ -28,11 +30,12 @@ import (
 	xrate "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
+	"github.com/kinecosystem/agora/pkg/keypair"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/migration"
 	migrationstore "github.com/kinecosystem/agora/pkg/migration/dynamodb"
-	kin3migrator "github.com/kinecosystem/agora/pkg/migration/kin3"
 	migrationpb "github.com/kinecosystem/agora/pkg/migration/proto"
+	stellarmigrator "github.com/kinecosystem/agora/pkg/migration/stellar"
 	"github.com/kinecosystem/agora/pkg/rate"
 
 	// Configurable keystore options:
@@ -42,8 +45,9 @@ import (
 )
 
 const (
-	keystoreTypeEnv = "KEYSTORE_TYPE"
-	horizonURLEnv   = "HORIZON_URL"
+	keystoreTypeEnv        = "KEYSTORE_TYPE"
+	horizon2MigratorURLEnv = "HORIZON2_MIGRATOR_URL"
+	horizon3MigratorURLEnv = "HORIZON3_MIGRATOR_URL"
 
 	// Solana config
 	solanaEndpointEnv      = "SOLANA_ENDPOINT"
@@ -55,8 +59,30 @@ const (
 	mintKeyEnv             = "MINT_KEYPAIR_ID"
 	kin3MigrationSecretEnv = "KIN3_MIGRATION_SECRET"
 
+	// Solana kin2 migration config
+	kin2SourceEnv          = "KIN2_SOURCE_ADDRESS"
+	kin2SourceKeyEnv       = "KIN2_SOURCE_KEYPAIR_ID"
+	kin2MigrationSecretEnv = "KIN2_MIGRATION_SECRET"
+
 	// Concurrency configs
 	concurrencyEnv = "CONCURRENT_PROCESSORS"
+)
+
+var (
+	// We use the same transport for both horizon and Solana, as the total
+	// number of system connections is often what causes problems.
+	transport = &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          64,
+		MaxConnsPerHost:       512,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 )
 
 type app struct {
@@ -73,20 +99,14 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if os.Getenv(solanaEndpointEnv) == "" {
 		return errors.New("must specify solana endpoint")
 	}
-	if os.Getenv(horizonURLEnv) == "" {
-		return errors.New("must specify horizon endpoint")
+	if os.Getenv(horizon2MigratorURLEnv) == "" {
+		return errors.New("must specify horizon2 endpoint")
+	}
+	if os.Getenv(horizon3MigratorURLEnv) == "" {
+		return errors.New("must specify horizon3 endpoint")
 	}
 	if os.Getenv(subsidizerKeypairIDEnv) == "" {
 		return errors.New("must specify subsidizer keypair id")
-	}
-	if os.Getenv(kin3MigrationSecretEnv) == "" {
-		return errors.New("must specify migration secret")
-	}
-	if os.Getenv(mintEnv) == "" {
-		return errors.New("must specify mint")
-	}
-	if os.Getenv(mintKeyEnv) == "" {
-		return errors.New("must specify mint key")
 	}
 
 	var err error
@@ -120,29 +140,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrapf(err, "failed to create keystore using configured : %s", keystoreType)
 	}
 
-	// We use the same transport for both horizon and Solana, as the total
-	// number of system connections is often what causes problems.
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          64,
-		MaxConnsPerHost:       512,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-
-	client := &horizon.Client{
-		URL: os.Getenv(horizonURLEnv),
-		HTTP: &http.Client{
-			Transport: transport,
-			Timeout:   30 * time.Second,
-		},
-	}
-
 	solanaClient := solana.NewWithRPCOptions(
 		os.Getenv(solanaEndpointEnv),
 		&jsonrpc.RPCClientOpts{
@@ -156,6 +153,9 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to parse kin token address")
 	}
+	if len(kinToken) != ed25519.PublicKeySize {
+		return errors.Errorf("invalid kin token size: %d", len(kinToken))
+	}
 
 	subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
 	if err != nil {
@@ -167,41 +167,37 @@ func (a *app) Init(_ agoraapp.Config) error {
 	}
 	subsidizer := ed25519.NewKeyFromSeed(rawSeed)
 
-	mint, err := base58.Decode(os.Getenv(mintEnv))
+	issuer, err := kin.GetKin2Issuer()
 	if err != nil {
-		return errors.Wrap(err, "failed to parse mint")
-	}
-	mintKP, err := keystore.Get(context.Background(), os.Getenv(mintKeyEnv))
-	if err != nil {
-		return errors.Wrap(err, "failed to determine mint key")
-	}
-	rawSeed, err = strkey.Decode(strkey.VersionByteSeed, mintKP.Seed())
-	if err != nil {
-		return errors.Wrap(err, "invalid mint seed string")
-	}
-	mintKey := ed25519.NewKeyFromSeed(rawSeed)
-
-	// load from file;
-	kin3MigrationSecret, err := agoraapp.LoadFile(os.Getenv(kin3MigrationSecretEnv))
-	if err != nil {
-		return errors.Wrap(err, "failed to get migration secret")
-	}
-	if strings.Contains(string(kin3MigrationSecret), "\n") {
-		return errors.Wrap(err, "secret contains a newline")
+		return errors.Wrap(err, "failed to load kin2 issuer")
 	}
 
-	migrationStore := migrationstore.New(dynamoClient)
-	migrator := kin3migrator.New(
-		migrationStore,
+	kin2Migrator, err := initializeKin2Migrator(
+		migrationstore.New(dynamoClient, version.KinVersion2),
+		keystore,
+		issuer,
 		solanaClient,
-		client,
-		// we rely on the processor to do rate limiting
-		rate.NewLocalRateLimiter(xrate.Inf),
 		kinToken,
 		subsidizer,
-		mint,
-		mintKey,
-		[]byte(kin3MigrationSecret),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize kin2 migrator")
+	}
+	kin3Migrator, err := initializeKin3Migrator(
+		migrationstore.New(dynamoClient, version.KinVersion3),
+		keystore,
+		solanaClient,
+		kinToken,
+		subsidizer,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize kin3 migrator")
+	}
+
+	migrator := migration.NewDualChainMigrator(
+		kin2Migrator,
+		kin3Migrator,
+		migration.WithEnvConfig(),
 	)
 
 	sqsClient := sqs.New(cfg)
@@ -251,6 +247,149 @@ func (a *app) Stop() {
 		close(a.shutdownCh)
 		a.processor.Shutdown()
 	})
+}
+
+func initializeKin2Migrator(
+	store migration.Store,
+	keystore keypair.Keystore,
+	issuer string,
+	sc solana.Client,
+	kinToken ed25519.PublicKey,
+	subsidizer ed25519.PrivateKey,
+) (migration.Migrator, error) {
+	if os.Getenv(kin2SourceEnv) == "" {
+		return nil, errors.New("must specify kin2 source")
+	}
+	if os.Getenv(kin2SourceKeyEnv) == "" {
+		return nil, errors.New("must specify kin2 source key")
+	}
+	if os.Getenv(kin2MigrationSecretEnv) == "" {
+		return nil, errors.New("must specify kin2 migration secret")
+	}
+
+	kin2Source, err := base58.Decode(os.Getenv(kin2SourceEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse kin2 source")
+	}
+	kin2SourceKP, err := keystore.Get(context.Background(), os.Getenv(kin2SourceKeyEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to determine kin2 source key")
+	}
+	rawSeed, err := strkey.Decode(strkey.VersionByteSeed, kin2SourceKP.Seed())
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid kin2 source seed string")
+	}
+	kin2SourceKey := ed25519.NewKeyFromSeed(rawSeed)
+
+	secret, err := agoraapp.LoadFile(os.Getenv(kin2MigrationSecretEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin2 migration secret")
+	}
+	if strings.Contains(string(secret), "\n") {
+		return nil, errors.Wrap(err, "secret contains a newline")
+	}
+
+	var client *horizon.Client
+	if os.Getenv(horizon2MigratorURLEnv) != "" {
+		client = &horizon.Client{
+			URL: os.Getenv(horizon2MigratorURLEnv),
+			HTTP: &http.Client{
+				Transport: transport,
+				Timeout:   30 * time.Second,
+			},
+		}
+	} else {
+		client, err = kin.GetKin2Client()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get kin2 horizon client")
+		}
+	}
+
+	loader := stellarmigrator.NewKin2Loader(client, issuer)
+	return stellarmigrator.New(
+		store,
+		version.KinVersion2,
+		sc,
+		loader,
+		// we rely on the processor to do rate limiting
+		rate.NewLocalRateLimiter(xrate.Inf),
+		kinToken,
+		subsidizer,
+		kin2Source,
+		kin2SourceKey,
+		secret,
+	), nil
+}
+
+func initializeKin3Migrator(
+	store migration.Store,
+	keystore keypair.Keystore,
+	sc solana.Client,
+	kinToken ed25519.PublicKey,
+	subsidizer ed25519.PrivateKey,
+) (migration.Migrator, error) {
+	if os.Getenv(mintEnv) == "" {
+		return nil, errors.New("must specify mint")
+	}
+	if os.Getenv(mintKeyEnv) == "" {
+		return nil, errors.New("must specify mint key")
+	}
+	if os.Getenv(kin3MigrationSecretEnv) == "" {
+		return nil, errors.New("must specify kin3 migration secret")
+	}
+
+	mint, err := base58.Decode(os.Getenv(mintEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse mint")
+	}
+	mintKP, err := keystore.Get(context.Background(), os.Getenv(mintKeyEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to determine mint key")
+	}
+	rawSeed, err := strkey.Decode(strkey.VersionByteSeed, mintKP.Seed())
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid mint seed string")
+	}
+	mintKey := ed25519.NewKeyFromSeed(rawSeed)
+
+	secret, err := agoraapp.LoadFile(os.Getenv(kin3MigrationSecretEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin3 migration secret")
+	}
+	if strings.Contains(string(secret), "\n") {
+		return nil, errors.Wrap(err, "secret contains a newline")
+	}
+
+	var client *horizon.Client
+	if os.Getenv(horizon3MigratorURLEnv) != "" {
+		client = &horizon.Client{
+			URL: os.Getenv(horizon3MigratorURLEnv),
+			HTTP: &http.Client{
+				Transport: transport,
+				Timeout:   30 * time.Second,
+			},
+		}
+	} else {
+		client, err = kin.GetClient()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get kin2 horizon client")
+		}
+	}
+
+	loader := stellarmigrator.NewKin3Loader(client)
+	return stellarmigrator.New(
+		store,
+		version.KinVersion3,
+		sc,
+		loader,
+		// we rely on the processor to do rate limiting
+		rate.NewLocalRateLimiter(xrate.Inf),
+		kinToken,
+		subsidizer,
+		mint,
+		mintKey,
+		secret,
+	), nil
 }
 
 func main() {

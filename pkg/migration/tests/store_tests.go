@@ -13,7 +13,7 @@ import (
 )
 
 func RunStoreTests(t *testing.T, store migration.Store, teardown func()) {
-	for _, tf := range []func(*testing.T, migration.Store){testRoundTrip, testCount} {
+	for _, tf := range []func(*testing.T, migration.Store){testRoundTrip} {
 		tf(t, store)
 		teardown()
 	}
@@ -52,21 +52,4 @@ func testRoundTrip(t *testing.T, store migration.Store) {
 	assert.NoError(t, err)
 	assert.Equal(t, next, s)
 	assert.True(t, exists)
-
-}
-
-func testCount(t *testing.T, store migration.Store) {
-	account := testutil.GenerateSolanaKeys(t, 1)[0]
-
-	count, err := store.GetCount(context.Background(), account)
-	require.NoError(t, err)
-	assert.Equal(t, 0, count)
-
-	require.NoError(t, store.IncrementCount(context.Background(), account))
-	require.NoError(t, store.IncrementCount(context.Background(), account))
-	require.NoError(t, store.IncrementCount(context.Background(), account))
-
-	count, err = store.GetCount(context.Background(), account)
-	require.NoError(t, err)
-	assert.Equal(t, 3, count)
 }

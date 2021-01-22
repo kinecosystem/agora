@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -31,6 +32,7 @@ import (
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 
 	accountpbv3 "github.com/kinecosystem/agora-api/genproto/account/v3"
@@ -54,10 +56,11 @@ import (
 	channelpool "github.com/kinecosystem/agora/pkg/channel/dynamodb"
 	redisevents "github.com/kinecosystem/agora/pkg/events/redis"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
+	"github.com/kinecosystem/agora/pkg/keypair"
 	keypairdb "github.com/kinecosystem/agora/pkg/keypair"
 	"github.com/kinecosystem/agora/pkg/migration"
 	migrationstore "github.com/kinecosystem/agora/pkg/migration/dynamodb"
-	kin3migrator "github.com/kinecosystem/agora/pkg/migration/kin3"
+	stellarmigrator "github.com/kinecosystem/agora/pkg/migration/stellar"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/agora/pkg/transaction"
@@ -85,22 +88,22 @@ const (
 	rootKin2KeypairIDEnv = "ROOT_KIN_2_KEYPAIR_ID"
 	keystoreTypeEnv      = "KEYSTORE_TYPE"
 
+	etcdEndpointsEnv = "ETCD_ENDPOINTS"
+
 	// Solana config
-	solanaEndpointEnv         = "SOLANA_ENDPOINT"
-	solanaResolveEndpointEnv  = "SOLANA_RESOLVE_ENDPOINT"
-	solanaSubmitEndpointEnv   = "SOLANA_SUBMIT_ENDPOINT"
-	solanaMigratorEndpointEnv = "SOLANA_MIGRATOR_ENDPOINT"
-	kinTokenEnv               = "KIN_TOKEN"
-	airdropSourceEnv          = "AIRDROP_SOURCE"
-	subsidizerKeypairIDEnv    = "SUBSIDIZER_KEYPAIR_ID"
+	solanaEndpointEnv      = "SOLANA_ENDPOINT"
+	kinTokenEnv            = "KIN_TOKEN"
+	airdropSourceEnv       = "AIRDROP_SOURCE"
+	subsidizerKeypairIDEnv = "SUBSIDIZER_KEYPAIR_ID"
 
 	// Solana kin2 migration config
-	//kin2SourceAddressEnv   = "KIN2_SOURCE_ADDRESS"
-	//kin2SourceKeyEnv       = "KIN2_SOURCE_KEYPAIR_ID"
-	//kin2MigrationSecretEnv = "KIN2_MIGRATION_SECRET"
+	migratorHorizon2URLEnv = "MIGRATOR_HORIZON2_CLIENT_URL"
+	kin2SourceEnv          = "KIN2_SOURCE_ADDRESS"
+	kin2SourceKeyEnv       = "KIN2_SOURCE_KEYPAIR_ID"
+	kin2MigrationSecretEnv = "KIN2_MIGRATION_SECRET"
 
 	// Solana kin3 migration config
-	migratorHorizonURLEnv    = "MIGRATOR_HORIZON_CLIENT_URL"
+	migratorHorizon3URLEnv   = "MIGRATOR_HORIZON3_CLIENT_URL"
 	mintEnv                  = "MINT_ADDRESS"
 	mintKeyEnv               = "MINT_KEYPAIR_ID"
 	kin3MigrationSecretEnv   = "KIN3_MIGRATION_SECRET"
@@ -111,7 +114,8 @@ const (
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
 	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
-	migrationGlobalLimitEnv  = "MIGRATION_GLOBAL_LIMIT"
+	migrationKin2LimitEnv    = "MIGRATION_KIN2_LIMIT"
+	migrationKin3LimitEnv    = "MIGRATION_KIN3_LIMIT"
 
 	// Events config
 	eventsRedisConnStringEnv = "EVENTS_REDIS_CONN_STRING"
@@ -129,7 +133,26 @@ const (
 	dedupeTTL              = 24 * time.Hour
 )
 
+var (
+	// We use the same transport for both horizon and Solana, as the total
+	// number of system connections is often what causes problems.
+	transport = &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          64,
+		MaxConnsPerHost:       512,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+)
+
 type app struct {
+	etcdClient *clientv3.Client
+
 	accountStellar accountpbv3.AccountServer
 	accountSolana  accountpbv4.AccountServer
 	txnStellar     transactionpbv3.TransactionServer
@@ -143,7 +166,7 @@ type app struct {
 }
 
 // Init implements agorapp.App.Init.
-func (a *app) Init(_ agoraapp.Config) error {
+func (a *app) Init(_ agoraapp.Config) (err error) {
 	a.shutdownCh = make(chan struct{})
 
 	keystoreType := os.Getenv(keystoreTypeEnv)
@@ -156,28 +179,27 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to determine root keypair")
 	}
-
 	kin2RootAccountKP, err := keystore.Get(context.Background(), os.Getenv(rootKin2KeypairIDEnv))
 	if err != nil {
 		return errors.Wrap(err, "failed to determine kin 2 root keypair")
 	}
 
-	client, err := kin.GetClient()
-	if err != nil {
-		return errors.Wrap(err, "failed to get kin client")
-	}
 	kin2Client, err := kin.GetKin2Client()
 	if err != nil {
-		return errors.Wrap(err, "failed to get kin 2 client")
+		return errors.Wrap(err, "failed to get kin2 client")
+	}
+	kin3Client, err := kin.GetClient()
+	if err != nil {
+		return errors.Wrap(err, "failed to get kin3 client")
 	}
 
-	clientV2, err := kin.GetClientV2()
-	if err != nil {
-		return errors.Wrap(err, "failed to get v2 kin client")
-	}
 	kin2ClientV2, err := kin.GetKin2ClientV2()
 	if err != nil {
-		return errors.Wrap(err, "failed to get v2 kin 2 client")
+		return errors.Wrap(err, "failed to get v2 kin2 client")
+	}
+	kin3ClientV2, err := kin.GetClientV2()
+	if err != nil {
+		return errors.Wrap(err, "failed to get v2 kin3 client")
 	}
 
 	cfg, err := external.LoadDefaultAWSConfig()
@@ -210,19 +232,21 @@ func (a *app) Init(_ agoraapp.Config) error {
 	if err != nil {
 		return err
 	}
-
 	submitTxAppRL, err := parseRateLimit(submitTxAppRLEnv)
 	if err != nil {
 		return err
 	}
-
-	migrationGlobalRL, err := parseRateLimit(migrationGlobalLimitEnv)
+	migrationKin2RL, err := parseRateLimit(migrationKin2LimitEnv)
+	if err != nil {
+		return err
+	}
+	migrationKin3RL, err := parseRateLimit(migrationKin3LimitEnv)
 	if err != nil {
 		return err
 	}
 
 	var limiter *redis_rate.Limiter
-	if createAccountRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 || migrationGlobalRL > 0 {
+	if createAccountRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 || migrationKin2RL > 0 || migrationKin3RL > 0 {
 		rlRedisConnString := os.Getenv(rlRedisConnStringEnv)
 		if rlRedisConnString == "" {
 			return errors.Errorf("%s must be set", rlRedisConnStringEnv)
@@ -234,7 +258,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 	var channelPool channel.Pool
 	var kin2ChannelPool channel.Pool
-
 	maxChannelsStr := os.Getenv(maxChannelsEnv)
 	if maxChannelsStr != "" && maxChannelsStr != "0" {
 		maxChannels, err := strconv.Atoi(maxChannelsStr)
@@ -273,7 +296,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	accountLimiter := account.NewLimiter(rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(createAccountRL)))
 	a.accountStellar, err = accountstellar.New(
 		rootAccountKP,
-		client,
+		kin3Client,
 		accountNotifier,
 		channelPool,
 		kin2RootAccountKP,
@@ -303,18 +326,18 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to init events processor")
 	}
 
-	network, err := kin.GetNetwork()
-	if err != nil {
-		return errors.Wrap(err, "failed to get kin network")
-	}
 	kin2Network, err := kin.GetKin2Network()
 	if err != nil {
-		return errors.Wrap(err, "failed to get kin 2 network")
+		return errors.Wrap(err, "failed to get kin2 network")
+	}
+	kin3Network, err := kin.GetNetwork()
+	if err != nil {
+		return errors.Wrap(err, "failed to get kin3 network")
 	}
 
 	committer := ingestioncommitter.New(dynamoClient)
-	historyIngestor := stellaringestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
-	eventsIngestor := stellaringestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, clientV2, network.Passphrase)
+	historyIngestor := stellaringestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, kin3ClientV2, kin3Network.Passphrase)
+	eventsIngestor := stellaringestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, kin3ClientV2, kin3Network.Passphrase)
 	historyLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin3", 10*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "failed to init history ingestion lock")
@@ -360,7 +383,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 		historyRW,
 		committer,
 		authorizer,
-		client,
+		kin3Client,
 		kin2Client,
 	)
 	if err != nil {
@@ -371,7 +394,7 @@ func (a *app) Init(_ agoraapp.Config) error {
 	// Kin3 Ingestion and Streams
 	//
 	go func() {
-		transactionstellar.StreamTransactions(ctx, clientV2, accountNotifier)
+		transactionstellar.StreamTransactions(ctx, kin3ClientV2, accountNotifier)
 	}()
 	go func() {
 		err := ingestion.Run(ctx, historyLock, committer, historyRW, historyIngestor)
@@ -412,232 +435,205 @@ func (a *app) Init(_ agoraapp.Config) error {
 		}
 	}()
 
-	if os.Getenv(solanaEndpointEnv) != "" {
-		var (
-			solanaClient         solana.Client
-			solanaResolveClient  solana.Client
-			solanaSubmitClient   solana.Client
-			solanaMigratorClient solana.Client
+	if os.Getenv(solanaEndpointEnv) == "" {
+		return errors.New("missing solana endpoint")
+	}
+
+	solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
+
+	kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
+	if err != nil {
+		return errors.Wrap(err, "failed to parse kin token address")
+	}
+	tokenAccountTTLSeconds, err := strconv.Atoi(os.Getenv(tokenAccountTTLEnv))
+	if err != nil {
+		return errors.Wrap(err, "failed to parse token account TTL")
+	}
+	consistencyCheckFreq, err := strconv.ParseFloat(os.Getenv(consistencyCheckProbEnv), 32)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse token account consistency check frequency (should be in range [0.0, 1.0])")
+	} else if consistencyCheckFreq > 1.0 {
+		return errors.Errorf("invalid token account consistency check frequency (should be in range [0.0, 1.0]): %f", consistencyCheckFreq)
+	}
+
+	var subsidizer []byte
+	if os.Getenv(subsidizerKeypairIDEnv) != "" {
+		subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
+		if err != nil {
+			return errors.Wrap(err, "failed to determine subsidizer keypair")
+		}
+
+		rawSeed, err := strkey.Decode(strkey.VersionByteSeed, subsidizerKP.Seed())
+		if err != nil {
+			return errors.Wrap(err, "invalid subsidizer seed string")
+		}
+
+		subsidizer = ed25519.NewKeyFromSeed(rawSeed)
+		solanautil.MonitorAccount(
+			ctx,
+			solanaClient,
+			ed25519.PrivateKey(subsidizer).Public().(ed25519.PublicKey),
 		)
-
-		solanaClient = solana.New(os.Getenv(solanaEndpointEnv))
-
-		if os.Getenv(solanaResolveEndpointEnv) != "" {
-			solanaResolveClient = solana.New(os.Getenv(solanaResolveEndpointEnv))
-		} else {
-			solanaResolveClient = solanaClient
-		}
-
-		if os.Getenv(solanaSubmitEndpointEnv) != "" {
-			solanaSubmitClient = solana.New(os.Getenv(solanaSubmitEndpointEnv))
-		} else {
-			solanaSubmitClient = solanaClient
-		}
-
-		if os.Getenv(solanaMigratorEndpointEnv) != "" {
-			solanaMigratorClient = solana.New(os.Getenv(solanaMigratorEndpointEnv))
-		} else {
-			solanaMigratorClient = solanaClient
-		}
-
-		kinToken, err := base58.Decode(os.Getenv(kinTokenEnv))
+	}
+	var airdropSource []byte
+	if os.Getenv(airdropSourceEnv) != "" {
+		airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
 		if err != nil {
-			return errors.Wrap(err, "failed to parse kin token address")
+			log.Fatal(err)
 		}
+	}
 
-		tokenAccountTTLSeconds, err := strconv.Atoi(os.Getenv(tokenAccountTTLEnv))
+	if len(subsidizer) > 0 && len(airdropSource) > 0 {
+		a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
+	}
+
+	issuer, err := kin.GetKin2Issuer()
+	if err != nil {
+		return errors.Wrap(err, "failed to get kin2 issuer")
+	}
+
+	var migrator2Client *horizon.Client
+	if os.Getenv(migratorHorizon2URLEnv) != "" {
+		migrator2Client = &horizon.Client{
+			URL: os.Getenv(migratorHorizon2URLEnv),
+			HTTP: &http.Client{
+				Transport: transport,
+				Timeout:   30 * time.Second,
+			},
+		}
+	} else {
+		migrator2Client = kin2Client
+	}
+
+	var migrator3Client *horizon.Client
+	if os.Getenv(migratorHorizon3URLEnv) != "" {
+		migrator3Client = &horizon.Client{
+			URL: os.Getenv(migratorHorizon3URLEnv),
+			HTTP: &http.Client{
+				Transport: transport,
+				Timeout:   30 * time.Second,
+			},
+		}
+	} else {
+		migrator3Client = kin3Client
+	}
+
+	kin2Loader := stellarmigrator.NewKin2Loader(migrator2Client, issuer)
+	kin3Loader := stellarmigrator.NewKin3Loader(migrator3Client)
+	compositeLoader := stellarmigrator.NewCompositeLoader(kin2Loader, kin3Loader)
+
+	kin2Migrator, err := initializeKin2Migrator(
+		migrationstore.New(dynamoClient, kinversion.KinVersion2),
+		keystore,
+		rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationKin2RL)),
+		solanaClient,
+		kin2Loader,
+		kinToken,
+		subsidizer,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize kin2 migrator")
+	}
+	kin3Migrator, err := initializeKin3Migrator(
+		migrationstore.New(dynamoClient, kinversion.KinVersion3),
+		keystore,
+		rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationKin3RL)),
+		solanaClient,
+		kin3Loader,
+		kinToken,
+		subsidizer,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize kin2 migrator")
+	}
+
+	migrationConf := migration.WithEnvConfig()
+	if a.etcdClient != nil {
+		migrationConf = migration.WithETCDConfigs(a.etcdClient)
+	}
+	migrator := migration.NewDualChainMigrator(kin2Migrator, kin3Migrator, migrationConf)
+
+	kin4AccountNotifier := accountsolana.NewAccountNotifier()
+	tokenAccountCache := accountcache.New(dynamoClient, time.Duration(tokenAccountTTLSeconds)*time.Second)
+	cacheInvalidator, err := tokenaccount.NewCacheUpdater(tokenAccountCache, kinToken)
+	if err != nil {
+		return errors.Wrap(err, "faild to initialize token account cache invalidator")
+	}
+	mapperStore := mapperdb.New(dynamoClient)
+	tokenClient := token.NewClient(solanaClient, kinToken)
+	mapper := account.NewMapper(tokenClient, mapperStore)
+	infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
+	deduper := deduper.New(dynamoClient, dedupeTTL)
+
+	if os.Getenv(eventsRedisConnStringEnv) == "" {
+		return errors.New("missing events redis connection string")
+	}
+	redisEvents, err := redisevents.New(
+		redis.NewClient(&redis.Options{
+			Addr: os.Getenv(eventsRedisConnStringEnv),
+		}),
+		redisevents.TransactionChannel,
+		transactionsolana.MapTransactionEvent(kin4AccountNotifier),
+		transactionsolana.MapTransactionEvent(cacheInvalidator),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize redis events")
+	}
+
+	var createWhitelistSecret string
+	if len(os.Getenv(createWhitelistSecretEnv)) > 0 {
+		loaded, err := agoraapp.LoadFile(os.Getenv(createWhitelistSecretEnv))
 		if err != nil {
-			return errors.Wrap(err, "failed to parse token account TTL")
+			return errors.Wrap(err, "failed to get create whitelist secret")
 		}
-
-		consistencyCheckFreq, err := strconv.ParseFloat(os.Getenv(consistencyCheckProbEnv), 32)
-		if err != nil {
-			return errors.Wrap(err, "failed to parse token account consistency check frequency (should be in range [0.0, 1.0])")
-		} else if consistencyCheckFreq > 1.0 {
-			return errors.Errorf("invalid token account consistency check frequency (should be in range [0.0, 1.0]): %f", consistencyCheckFreq)
-		}
-
-		var subsidizer []byte
-		if os.Getenv(subsidizerKeypairIDEnv) != "" {
-			subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
-			if err != nil {
-				return errors.Wrap(err, "failed to determine subsidizer keypair")
-			}
-
-			rawSeed, err := strkey.Decode(strkey.VersionByteSeed, subsidizerKP.Seed())
-			if err != nil {
-				return errors.Wrap(err, "invalid subsidizer seed string")
-			}
-
-			subsidizer = ed25519.NewKeyFromSeed(rawSeed)
-			solanautil.MonitorAccount(
-				ctx,
-				solanaClient,
-				ed25519.PrivateKey(subsidizer).Public().(ed25519.PublicKey),
-			)
-		}
-		var airdropSource []byte
-		if os.Getenv(airdropSourceEnv) != "" {
-			airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-
-		if len(subsidizer) > 0 && len(airdropSource) > 0 {
-			a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
-		}
-
-		kin3MigrationSecret, err := agoraapp.LoadFile(os.Getenv(kin3MigrationSecretEnv))
-		if err != nil {
-			return errors.Wrap(err, "failed to get migration secret")
-		}
-		if strings.Contains(string(kin3MigrationSecret), "\n") {
+		if strings.Contains(string(loaded), "\n") {
 			return errors.New("secret contains a newline")
 		}
-
-		var createWhitelistSecret string
-		if len(os.Getenv(createWhitelistSecretEnv)) > 0 {
-			loaded, err := agoraapp.LoadFile(os.Getenv(createWhitelistSecretEnv))
-			if err != nil {
-				return errors.Wrap(err, "failed to get create whitelist secret")
-			}
-			if strings.Contains(string(loaded), "\n") {
-				return errors.New("secret contains a newline")
-			}
-			createWhitelistSecret = string(loaded)
-		}
-
-		var mint ed25519.PublicKey
-		if os.Getenv(mintEnv) != "" {
-			mint, err = base58.Decode(os.Getenv(mintEnv))
-			if err != nil {
-				return errors.Wrap(err, "failed to parse mint")
-			}
-		}
-		var mintKey ed25519.PrivateKey
-		if os.Getenv(mintKeyEnv) != "" {
-			mintKP, err := keystore.Get(context.Background(), os.Getenv(mintKeyEnv))
-			if err != nil {
-				return errors.Wrap(err, "failed to determine mint keypair")
-			}
-
-			rawSeed, err := strkey.Decode(strkey.VersionByteSeed, mintKP.Seed())
-			if err != nil {
-				return errors.Wrap(err, "invalid mint seed string")
-			}
-
-			mintKey = ed25519.NewKeyFromSeed(rawSeed)
-		}
-
-		var kin3Migrator migration.Migrator
-		migrationStore := migrationstore.New(dynamoClient)
-
-		var migratorHorizonClient *horizon.Client
-		if os.Getenv(migratorHorizonURLEnv) != "" {
-			migratorHorizonClient = &horizon.Client{
-				URL:  os.Getenv(migratorHorizonURLEnv),
-				HTTP: http.DefaultClient,
-			}
-		} else {
-			migratorHorizonClient = client
-		}
-
-		if len(kin3MigrationSecret) > 0 {
-			if len(mint) == 0 || len(mintKey) == 0 {
-				return errors.New("must specify mint and mint key if kin3 migration is enabled")
-			}
-
-			kin3Migrator = kin3migrator.New(
-				migrationStore,
-				solanaMigratorClient,
-				migratorHorizonClient,
-				rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(migrationGlobalRL)),
-				kinToken,
-				subsidizer,
-				mint,
-				mintKey,
-				kin3MigrationSecret,
-			)
-		} else {
-			kin3Migrator = migration.NewNoopMigrator()
-		}
-
-		kin4AccountNotifier := accountsolana.NewAccountNotifier()
-		tokenAccountCache := accountcache.New(dynamoClient, time.Duration(tokenAccountTTLSeconds)*time.Second)
-		cacheInvalidator, err := tokenaccount.NewCacheUpdater(tokenAccountCache, kinToken)
-		if err != nil {
-			return errors.Wrap(err, "faild to initialize token account cache invalidator")
-		}
-		mapperStore := mapperdb.New(dynamoClient)
-		tokenClient := token.NewClient(solanaClient, kinToken)
-		mapper := account.NewMapper(tokenClient, mapperStore)
-		infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
-		deduper := deduper.New(dynamoClient, dedupeTTL)
-
-		if os.Getenv(eventsRedisConnStringEnv) == "" {
-			return errors.New("missing events redis connection string")
-		}
-		redisEvents, err := redisevents.New(
-			redis.NewClient(&redis.Options{
-				Addr: os.Getenv(eventsRedisConnStringEnv),
-			}),
-			redisevents.TransactionChannel,
-			transactionsolana.MapTransactionEvent(kin4AccountNotifier),
-			transactionsolana.MapTransactionEvent(cacheInvalidator),
-		)
-		if err != nil {
-			return errors.Wrap(err, "failed to initialize redis events")
-		}
-
-		a.accountSolana, err = accountsolana.New(
-			solanaClient,
-			solanaResolveClient,
-			solanaSubmitClient,
-			migratorHorizonClient,
-			accountLimiter,
-			kin4AccountNotifier,
-			tokenAccountCache,
-			infoCache,
-			accountinfo.NewLoader(tokenClient, infoCache, tokenAccountCache),
-			kin3Migrator,
-			migrationStore,
-			mapper,
-			kinToken,
-			subsidizer,
-			float32(consistencyCheckFreq),
-			createWhitelistSecret,
-		)
-		if err != nil {
-			return errors.Wrap(err, "failed to initialize v4 account serve")
-		}
-
-		a.txnSolana = transactionsolana.New(
-			solanaClient,
-			solanaSubmitClient,
-			invoiceStore,
-			historyRW,
-			committer,
-			authorizer,
-			kin3Migrator,
-			infoCache,
-			eventsProcessor,
-			redisEvents,
-			deduper,
-			kinToken,
-			subsidizer,
-			migratorHorizonClient,
-		)
-
-		//
-		// Kin4 Streams
-		//
-		go func() {
-			transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
-		}()
-	} else {
-		a.txnSolana = transactionsolana.NewNoopServer()
+		createWhitelistSecret = string(loaded)
 	}
+
+	a.accountSolana, err = accountsolana.New(
+		solanaClient,
+		accountLimiter,
+		kin4AccountNotifier,
+		tokenAccountCache,
+		infoCache,
+		accountinfo.NewLoader(tokenClient, infoCache, tokenAccountCache),
+		compositeLoader,
+		migrator,
+		mapper,
+		kinToken,
+		subsidizer,
+		float32(consistencyCheckFreq),
+		createWhitelistSecret,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize v4 account serve")
+	}
+
+	a.txnSolana = transactionsolana.New(
+		solanaClient,
+		invoiceStore,
+		historyRW,
+		committer,
+		authorizer,
+		compositeLoader,
+		migrator,
+		infoCache,
+		eventsProcessor,
+		redisEvents,
+		deduper,
+		kinToken,
+		subsidizer,
+		nil, // ugh
+	)
+
+	//
+	// Kin4 Streams
+	//
+	go func() {
+		transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
+	}()
 
 	return nil
 }
@@ -670,19 +666,115 @@ func (a *app) Stop() {
 	})
 }
 
-func main() {
-	if err := agoraapp.Run(
-		&app{},
-		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
-		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor(kinversion.KinVersion3, []int{3})),
-		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
-		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor(kinversion.KinVersion3, []int{3})),
-		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
-	); err != nil {
-		log.WithError(err).Fatal("error running service")
+func initializeKin2Migrator(
+	store migration.Store,
+	keystore keypair.Keystore,
+	limiter rate.Limiter,
+	sc solana.Client,
+	loader migration.Loader,
+	kinToken ed25519.PublicKey,
+	subsidizer ed25519.PrivateKey,
+) (migration.Migrator, error) {
+	if os.Getenv(kin2SourceEnv) == "" {
+		return nil, errors.New("must specify kin2 source")
 	}
+	if os.Getenv(kin2SourceKeyEnv) == "" {
+		return nil, errors.New("must specify kin2 source key")
+	}
+	if os.Getenv(kin2MigrationSecretEnv) == "" {
+		return nil, errors.New("must specify kin2 migration secret")
+	}
+
+	kin2Source, err := base58.Decode(os.Getenv(kin2SourceEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse kin2 source")
+	}
+	kin2SourceKP, err := keystore.Get(context.Background(), os.Getenv(kin2SourceKeyEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to determine kin2 source key")
+	}
+	rawSeed, err := strkey.Decode(strkey.VersionByteSeed, kin2SourceKP.Seed())
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid kin2 source seed string")
+	}
+	kin2SourceKey := ed25519.NewKeyFromSeed(rawSeed)
+
+	secret, err := agoraapp.LoadFile(os.Getenv(kin2MigrationSecretEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin2 migration secret")
+	}
+	if strings.Contains(string(secret), "\n") {
+		return nil, errors.Wrap(err, "secret contains a newline")
+	}
+
+	return stellarmigrator.New(
+		store,
+		kinversion.KinVersion2,
+		sc,
+		loader,
+		limiter,
+		kinToken,
+		subsidizer,
+		kin2Source,
+		kin2SourceKey,
+		secret,
+	), nil
 }
 
+func initializeKin3Migrator(
+	store migration.Store,
+	keystore keypair.Keystore,
+	limiter rate.Limiter,
+	sc solana.Client,
+	loader migration.Loader,
+	kinToken ed25519.PublicKey,
+	subsidizer ed25519.PrivateKey,
+) (migration.Migrator, error) {
+	if os.Getenv(mintEnv) == "" {
+		return nil, errors.New("must specify mint")
+	}
+	if os.Getenv(mintKeyEnv) == "" {
+		return nil, errors.New("must specify mint key")
+	}
+	if os.Getenv(kin3MigrationSecretEnv) == "" {
+		return nil, errors.New("must specify kin3 migration secret")
+	}
+
+	mint, err := base58.Decode(os.Getenv(mintEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse mint")
+	}
+	mintKP, err := keystore.Get(context.Background(), os.Getenv(mintKeyEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to determine mint key")
+	}
+	rawSeed, err := strkey.Decode(strkey.VersionByteSeed, mintKP.Seed())
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid mint seed string")
+	}
+	mintKey := ed25519.NewKeyFromSeed(rawSeed)
+
+	secret, err := agoraapp.LoadFile(os.Getenv(kin3MigrationSecretEnv))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get kin3 migration secret")
+	}
+	if strings.Contains(string(secret), "\n") {
+		return nil, errors.Wrap(err, "secret contains a newline")
+	}
+
+	return stellarmigrator.New(
+		store,
+		kinversion.KinVersion3,
+		sc,
+		loader,
+		limiter,
+		kinToken,
+		subsidizer,
+		mint,
+		mintKey,
+		secret,
+	), nil
+}
 func parseAddrsFromConnString(redisConnString string) map[string]string {
 	hosts := strings.Split(redisConnString, ",")
 	addrs := make(map[string]string)
@@ -707,4 +799,35 @@ func parseRateLimit(env string) (int, error) {
 		return -1, errors.Errorf("if set, %s must be > 0", env)
 	}
 	return val, nil
+}
+
+func main() {
+	versionConf := version.WithEnvConfig()
+
+	var err error
+	var etcdClient *clientv3.Client
+	if os.Getenv(etcdEndpointsEnv) != "" {
+		etcdClient, err = clientv3.New(clientv3.Config{
+			Endpoints:            strings.Split(os.Getenv(etcdEndpointsEnv), ","),
+			DialTimeout:          5 * time.Second,
+			DialKeepAliveTime:    10 * time.Second,
+			DialKeepAliveTimeout: 10 * time.Second,
+		})
+		if err != nil {
+			log.WithError(err).Fatal("error running service")
+		}
+
+		versionConf = version.WithETCDConfig(etcdClient)
+	}
+
+	if err := agoraapp.Run(
+		&app{etcdClient: etcdClient},
+		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
+		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor(versionConf)),
+		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
+		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor(versionConf)),
+		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
+	); err != nil {
+		log.WithError(err).Fatal("error running service")
+	}
 }

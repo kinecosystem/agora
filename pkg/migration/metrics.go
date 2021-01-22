@@ -41,16 +41,16 @@ var (
 		Help:      "Number of initiate migration calls after context filtering",
 	})
 
-	MigrationAllowedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	MigrationAllowedCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "migration_allowed",
 		Help:      "Number of initiate migration calls allowed",
-	})
-	MigrationRateLimitedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	}, []string{"kin_version"})
+	MigrationRateLimitedCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "migration_rate_limited",
 		Help:      "Number of initiate migration calls rate limited",
-	})
+	}, []string{"kin_version"})
 )
 
 func init() {
@@ -110,7 +110,7 @@ func registerMetrics() error {
 
 	if err := prometheus.Register(MigrationAllowedCounter); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			MigrationAllowedCounter = e.ExistingCollector.(prometheus.Counter)
+			MigrationAllowedCounter = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			return errors.Wrap(err, "failed to register migration allowed counter")
 		}
@@ -118,7 +118,7 @@ func registerMetrics() error {
 
 	if err := prometheus.Register(MigrationRateLimitedCounter); err != nil {
 		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			MigrationRateLimitedCounter = e.ExistingCollector.(prometheus.Counter)
+			MigrationRateLimitedCounter = e.ExistingCollector.(*prometheus.CounterVec)
 		} else {
 			return errors.Wrap(err, "failed to register migration rate limited counter")
 		}

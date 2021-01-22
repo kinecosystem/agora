@@ -54,19 +54,19 @@ var destWhitelist = map[string]struct{}{
 }
 
 type server struct {
-	log          *logrus.Entry
-	sc           solana.Client
-	scSubmit     solana.Client
-	tc           *token.Client
-	loader       *loader
-	invoiceStore invoice.Store
-	history      history.ReaderWriter
-	authorizer   transaction.Authorizer
-	migrator     migration.Migrator
-	infoCache    accountinfo.Cache
-	webEvents    webevents.Submitter
-	streamEvents events.Submitter
-	deduper      dedupe.Deduper
+	log             *logrus.Entry
+	sc              solana.Client
+	tc              *token.Client
+	loader          *loader
+	invoiceStore    invoice.Store
+	history         history.ReaderWriter
+	authorizer      transaction.Authorizer
+	migrationLoader migration.Loader
+	migrator        migration.Migrator
+	infoCache       accountinfo.Cache
+	webEvents       webevents.Submitter
+	streamEvents    events.Submitter
+	deduper         dedupe.Deduper
 
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
@@ -80,11 +80,11 @@ type server struct {
 
 func New(
 	sc solana.Client,
-	scSubmit solana.Client,
 	invoiceStore invoice.Store,
 	history history.ReaderWriter,
 	committer ingestion.Committer,
 	authorizer transaction.Authorizer,
+	migrationLoader migration.Loader,
 	migrator migration.Migrator,
 	infoCache accountinfo.Cache,
 	webEvents webevents.Submitter,
@@ -95,10 +95,9 @@ func New(
 	hc horizon.ClientInterface,
 ) transactionpb.TransactionServer {
 	return &server{
-		log:      logrus.StandardLogger().WithField("type", "transaction/solana/server"),
-		sc:       sc,
-		scSubmit: scSubmit,
-		tc:       token.NewClient(sc, tokenAccount),
+		log: logrus.StandardLogger().WithField("type", "transaction/solana/server"),
+		sc:  sc,
+		tc:  token.NewClient(sc, tokenAccount),
 		loader: newLoader(
 			sc,
 			history,
@@ -109,6 +108,7 @@ func New(
 		history:         history,
 		invoiceStore:    invoiceStore,
 		authorizer:      authorizer,
+		migrationLoader: migrationLoader,
 		migrator:        migrator,
 		infoCache:       infoCache,
 		webEvents:       webEvents,
@@ -160,7 +160,7 @@ func (s *server) GetMinimumKinVersion(ctx context.Context, _ *transactionpb.GetM
 // which should be used when crafting transactions. If a transaction fails, it
 // is recommended that a new block hash is retrieved.
 func (s *server) GetRecentBlockhash(_ context.Context, _ *transactionpb.GetRecentBlockhashRequest) (*transactionpb.GetRecentBlockhashResponse, error) {
-	hash, err := s.scSubmit.GetRecentBlockhash()
+	hash, err := s.sc.GetRecentBlockhash()
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to get recent block hash")
 	}
@@ -285,7 +285,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	log.Debug("Triggering migration batch")
 
 	// todo: migration timings, maybe could be global by scope
-	if err := migration.MigrateTransferAccounts(ctx, s.hc, s.migrator, transferAccountPairs...); err != nil && err != migration.ErrNotFound {
+	if err := migration.MigrateTransferAccounts(ctx, s.migrationLoader, s.migrator, transferAccountPairs...); err != nil && err != migration.ErrNotFound {
 		return nil, status.Errorf(codes.Internal, "failed to migrate transfer accounts: %v", err)
 	}
 
@@ -456,7 +456,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 
 	submitStart := time.Now()
 	var submitResult transactionpb.SubmitTransactionResponse_Result
-	sig, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
+	sig, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
 	submitTime := time.Since(submitStart)
 	if err != nil {
 		log.WithError(err).Warn("unhandled SubmitTransaction")
@@ -600,7 +600,10 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		"account": base64.StdEncoding.EncodeToString(req.AccountId.Value),
 	})
 
-	if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentSingle); err != nil && err != migration.ErrNotFound {
+	err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentSingle)
+	switch err {
+	case nil, migration.ErrNotFound, migration.ErrBurned:
+	default:
 		return nil, status.Errorf(codes.Internal, "failed to migrate account: %v", err)
 	}
 

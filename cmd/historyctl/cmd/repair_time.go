@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/ptypes"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/mr-tron/base58/base58"
 	"github.com/pkg/errors"
@@ -73,7 +74,7 @@ func (r *timeRepairer) Repair(start, end uint64) error {
 				continue
 			}
 
-			if !se.BlockTime.AsTime().IsZero() && se.BlockTime.AsTime().Unix() != 0 {
+			if !asTime(se.BlockTime).IsZero() && asTime(se.BlockTime).Unix() != 0 {
 				continue
 			}
 
@@ -95,7 +96,7 @@ func (r *timeRepairer) Repair(start, end uint64) error {
 				log.WithFields(logrus.Fields{
 					"tx":   base58.Encode(txID),
 					"slot": se.Slot,
-					"time": se.BlockTime.AsTime(),
+					"time": asTime(se.BlockTime),
 				}).Debug("Repairing")
 				if err := r.rw.Write(context.Background(), e); err != nil {
 					return errors.Wrap(err, "failed to update entry")
@@ -150,4 +151,8 @@ func (r *timeRepairer) Repair(start, end uint64) error {
 	}
 
 	return nil
+}
+
+func asTime(x *timestamp.Timestamp) time.Time {
+	return time.Unix(int64(x.GetSeconds()), int64(x.GetNanos())).UTC()
 }

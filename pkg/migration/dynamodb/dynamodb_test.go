@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbiface"
 	dynamotest "github.com/kinecosystem/agora-common/aws/dynamodb/test"
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/ory/dockertest"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -45,7 +46,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	testStore = New(dynamoClient)
+	testStore = New(dynamoClient, version.KinVersion3)
 	teardown = func() {
 		if pc := recover(); pc != nil {
 			cleanUpFunc()
@@ -87,51 +88,14 @@ func setupTestTables(client dynamodbiface.ClientAPI) error {
 		KeySchema:            keySchema,
 		AttributeDefinitions: attrDefinitions,
 		BillingMode:          dynamodb.BillingModePayPerRequest,
-		TableName:            stateTableStr,
-	}).Send(context.Background())
-	if err != nil {
-		return err
-	}
-
-	reqKeySchema := []dynamodb.KeySchemaElement{
-		{
-			AttributeName: requestTableHashKeyStr,
-			KeyType:       dynamodb.KeyTypeHash,
-		},
-	}
-
-	reqAttrDefinitions := []dynamodb.AttributeDefinition{
-		{
-			AttributeName: requestTableHashKeyStr,
-			AttributeType: dynamodb.ScalarAttributeTypeB,
-		},
-	}
-
-	_, err = client.CreateTableRequest(&dynamodb.CreateTableInput{
-		KeySchema:            reqKeySchema,
-		AttributeDefinitions: reqAttrDefinitions,
-		BillingMode:          dynamodb.BillingModePayPerRequest,
-		TableName:            requestTableStr,
+		TableName:            stateTableKin3Str,
 	}).Send(context.Background())
 	return err
 }
 
 func resetTestTables(client dynamodbiface.ClientAPI) error {
 	_, err := client.DeleteTableRequest(&dynamodb.DeleteTableInput{
-		TableName: stateTableStr,
-	}).Send(context.Background())
-	if err != nil {
-		if awsErr, ok := err.(awserr.Error); ok {
-			if awsErr.Code() != dynamodb.ErrCodeResourceNotFoundException {
-				return errors.Wrap(err, "failed to delete table")
-			}
-		} else {
-			return errors.Wrap(err, "failed to delete table")
-		}
-	}
-
-	_, err = client.DeleteTableRequest(&dynamodb.DeleteTableInput{
-		TableName: requestTableStr,
+		TableName: stateTableKin3Str,
 	}).Send(context.Background())
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {

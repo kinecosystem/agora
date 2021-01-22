@@ -109,7 +109,7 @@ func verifyRange(reader history.Reader, start, end uint64) error {
 
 			last = append(orderingKey, 0)
 
-			bt := e.GetSolana().BlockTime.AsTime()
+			bt := asTime(e.GetSolana().BlockTime)
 			if bt.IsZero() || bt.Unix() == 0 {
 				log.WithFields(log.Fields{
 					"block": e.GetSolana().Slot,

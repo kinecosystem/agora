@@ -7,13 +7,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -208,7 +208,7 @@ func TestMigrationTransaction(t *testing.T) {
 			Solana: &model.SolanaEntry{
 				Slot:        slot,
 				Confirmed:   true,
-				BlockTime:   timestamppb.Now(),
+				BlockTime:   ptypes.TimestampNow(),
 				Transaction: txn.Marshal(),
 			},
 		},
@@ -275,7 +275,7 @@ func generateSolanaEntry(t *testing.T, slot uint64, confirmed bool, instructions
 			Solana: &model.SolanaEntry{
 				Slot:        slot,
 				Confirmed:   confirmed,
-				BlockTime:   timestamppb.Now(),
+				BlockTime:   ptypes.TimestampNow(),
 				Transaction: txn.Marshal(),
 			},
 		},

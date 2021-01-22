@@ -1,39 +1,38 @@
-package kin2
+package stellar
 
 import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"io"
-	"net/http"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
-	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
-	"github.com/kinecosystem/go/clients/horizon"
-	hProtocol "github.com/kinecosystem/go/protocols/horizon"
-	"github.com/kinecosystem/go/protocols/horizon/base"
-	"github.com/kinecosystem/go/strkey"
+	"github.com/mr-tron/base58"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	xrate "golang.org/x/time/rate"
 
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/migration/memory"
+	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
-type kin2Env struct {
-	sc    *solana.MockClient
-	tc    *token.Client
-	hc    *horizon.MockClient
-	store migration.Store
+type testEnv struct {
+	sc     *solana.MockClient
+	tc     *token.Client
+	loader *testLoader
+	store  migration.Store
 
 	migrationSecret []byte
 	token           ed25519.PublicKey
@@ -43,14 +42,36 @@ type kin2Env struct {
 	mint    ed25519.PublicKey
 	mintKey ed25519.PrivateKey
 
-	migrator *kin2Migrator
+	migrator *migrator
 }
 
-func setupKin3Env(t *testing.T) (env kin2Env) {
+type accountState struct {
+	owner   ed25519.PublicKey
+	balance uint64
+	err     error
+}
+type testLoader struct {
+	sync.Mutex
+	accountState map[string]*accountState
+}
+
+func (t *testLoader) LoadAccount(account ed25519.PublicKey) (ed25519.PublicKey, uint64, error) {
+	t.Lock()
+	defer t.Unlock()
+
+	s, ok := t.accountState[string(account)]
+	if !ok {
+		return nil, 0, migration.ErrNotFound
+	}
+
+	return s.owner, s.balance, s.err
+}
+
+func setupEnv(t *testing.T) (env testEnv) {
 	env.token = testutil.GenerateSolanaKeys(t, 1)[0]
 	env.sc = solana.NewMockClient()
 	env.tc = token.NewClient(env.sc, env.token)
-	env.hc = &horizon.MockClient{}
+	env.loader = &testLoader{accountState: make(map[string]*accountState)}
 	env.store = memory.New()
 	env.migrationSecret = []byte("test")
 
@@ -58,23 +79,41 @@ func setupKin3Env(t *testing.T) (env kin2Env) {
 	env.mint = testutil.GenerateSolanaKeys(t, 1)[0]
 	env.mintKey = testutil.GenerateSolanaKeypair(t)
 
-	migrator := New(
+	m := New(
 		env.store,
+		version.KinVersion3,
 		env.sc,
-		env.hc,
-		kin.Kin2TestIssuer,
+		env.loader,
+		rate.NewLocalRateLimiter(xrate.Inf),
 		env.token,
 		env.subsidizerKey,
 		env.mint,
 		env.mintKey,
 		env.migrationSecret,
 	)
-	env.migrator = migrator.(*kin2Migrator)
+	env.migrator = m.(*migrator)
 	return env
 }
 
+func TestDerivation(t *testing.T) {
+	raw, err := base58.Decode("56TFPGGNL97wWLA9iiesmcbt9WRcMGmEFUbUqyXKPtaj")
+	require.NoError(t, err)
+
+	for _, s := range []string{
+		"",
+		"testmigrationkey1",
+		"testmigrationkey2",
+		"testmigrationkey3",
+		"testmigrationkey4",
+	} {
+		pub, _, err := migration.DeriveMigrationAccount(raw, []byte(s))
+		require.NoError(t, err)
+		fmt.Printf("%s: %s\n", s, base58.Encode(pub))
+	}
+}
+
 func TestMigrateAccount(t *testing.T) {
-	env := setupKin3Env(t)
+	env := setupEnv(t)
 
 	info := accountInfo{
 		account: testutil.GenerateSolanaKeys(t, 1)[0],
@@ -136,7 +175,7 @@ func TestMigrateAccount(t *testing.T) {
 }
 
 func TestRecover(t *testing.T) {
-	env := setupKin3Env(t)
+	env := setupEnv(t)
 
 	testCases := []struct {
 		initialStatus  migration.Status
@@ -182,31 +221,6 @@ func TestRecover(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, headers.SetASCIIHeader(ctx, version.DesiredKinVersionHeader, "4"))
 
-	hAccount := hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, testutil.GenerateSolanaKeys(t, 1)[0]),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "100",
-			},
-		},
-	}
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
-
 	var signature solana.Signature
 	_, err = io.CopyN(bytes.NewBuffer(signature[:]), rand.Reader, int64(len(signature[:])))
 	require.NoError(t, err)
@@ -227,6 +241,10 @@ func TestRecover(t *testing.T) {
 		account := testutil.GenerateSolanaKeys(t, 1)[0]
 		migrationAccount, _, err := migration.DeriveMigrationAccount(account, env.migrationSecret)
 		require.NoError(t, err)
+		env.loader.accountState[string(account)] = &accountState{
+			owner:   account,
+			balance: 100,
+		}
 
 		state := migration.State{
 			Status: tc.initialStatus,
@@ -266,150 +284,20 @@ func TestRecover(t *testing.T) {
 }
 
 func TestLoadAccount(t *testing.T) {
-	env := setupKin3Env(t)
+	env := setupEnv(t)
 
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
 	_, migrationKey, err := migration.DeriveMigrationAccount(account, env.migrationSecret)
 	require.NoError(t, err)
 
-	notFoundError := &horizon.Error{
-		Problem: horizon.Problem{
-			Status: http.StatusNotFound,
-		},
-	}
-
-	//
-	// Not Found
-	//
-	env.hc.On("LoadAccount", mock.Anything).Return(hProtocol.Account{}, notFoundError)
-	_, err = env.migrator.loadAccount(context.Background(), account, migrationKey)
-	assert.Equal(t, migration.ErrNotFound, err)
-
-	//
-	// Found - negative balance
-	//
-	hAccount := hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "-1",
-			},
-		},
-	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
-	_, err = env.migrator.loadAccount(context.Background(), account, migrationKey)
-	assert.Error(t, err)
-
-	//
-	// Found - burned
-	//
-	hAccount = hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 0,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "100",
-			},
-		},
-	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
-	_, err = env.migrator.loadAccount(context.Background(), account, migrationKey)
-	assert.Equal(t, migration.ErrBurned, err)
-
-	//
-	// Found, multi-sig
-	//
-	hAccount = hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 1,
-			},
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, testutil.GenerateSolanaKeys(t, 1)[0]),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "100",
-			},
-		},
-	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
-	_, err = env.migrator.loadAccount(context.Background(), account, migrationKey)
-	assert.Error(t, err)
-
 	//
 	// Found
 	//
-	hAccount = hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "100",
-			},
-		},
+	env.loader.accountState[string(account)] = &accountState{
+		owner:   account,
+		balance: 100 * 1e5,
 	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
+
 	info, err := env.migrator.loadAccount(context.Background(), account, migrationKey)
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(100*1e5), info.balance)
@@ -420,7 +308,7 @@ func TestLoadAccount(t *testing.T) {
 }
 
 func TestInitiateMigration_HorizonStates(t *testing.T) {
-	env := setupKin3Env(t)
+	env := setupEnv(t)
 
 	ctx, err := headers.ContextWithHeaders(context.Background())
 	require.NoError(t, err)
@@ -432,87 +320,60 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	migrationAccount, _, err := migration.DeriveMigrationAccount(account, env.migrationSecret)
 	require.NoError(t, err)
 
-	notFoundError := &horizon.Error{
-		Problem: horizon.Problem{
-			Status: http.StatusNotFound,
-		},
-	}
-
 	//
 	// Not Found
 	//
-	env.hc.On("LoadAccount", mock.Anything).Return(hProtocol.Account{}, notFoundError)
 	assert.Equal(t, migration.ErrNotFound, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, exists, err := env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
 	assert.False(t, exists)
-	count, err := env.store.GetCount(ctx, account)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
+
+	//
+	// Found - Burned
+	//
+	env.loader.accountState[string(account)] = &accountState{
+		owner:   account,
+		balance: 10,
+		err:     migration.ErrBurned,
+	}
+	assert.Equal(t, migration.ErrBurned, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
+	state, exists, err = env.store.Get(ctx, account)
+	assert.NoError(t, err)
+	assert.Equal(t, migration.ZeroState, state)
+	assert.False(t, exists)
+
+	//
+	// Found - Multisig
+	//
+	env.loader.accountState[string(account)] = &accountState{
+		owner:   account,
+		balance: 10,
+		err:     migration.ErrMultisig,
+	}
+	assert.Equal(t, migration.ErrMultisig, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
+	state, exists, err = env.store.Get(ctx, account)
+	assert.NoError(t, err)
+	assert.Equal(t, migration.ZeroState, state)
+	assert.False(t, exists)
 
 	//
 	// Found - Zero Balance
 	//
-	hAccount := hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "0",
-			},
-		},
+	env.loader.accountState[string(account)] = &accountState{
+		owner:   account,
+		balance: 0,
 	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
 	assert.NoError(t, env.migrator.InitiateMigration(ctx, account, false, solana.CommitmentMax))
 	state, exists, err = env.store.Get(ctx, account)
 	assert.NoError(t, err)
 	assert.Equal(t, migration.ZeroState, state)
 	assert.False(t, exists)
-	count, err = env.store.GetCount(ctx, account)
-	require.NoError(t, err)
-	assert.Equal(t, 2, count)
 
-	hAccount = hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "10",
-			},
-		},
+	env.loader.accountState[string(account)] = &accountState{
+		owner:   account,
+		balance: 10,
 	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
 
 	var submitted solana.Transaction
 	var signature solana.Signature
@@ -530,20 +391,17 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
 	assert.True(t, exists)
-	count, err = env.store.GetCount(ctx, account)
-	require.NoError(t, err)
-	assert.Equal(t, 3, count)
 
 	transfer, err := token.DecompileTransferAccount(submitted.Message, 4)
 	require.NoError(t, err)
 	assert.Equal(t, env.mint, transfer.Source)
 	assert.Equal(t, env.mintKey.Public().(ed25519.PublicKey), transfer.Owner)
 	assert.Equal(t, migrationAccount, transfer.Destination)
-	assert.Equal(t, uint64(10*1e5), transfer.Amount)
+	assert.Equal(t, uint64(10), transfer.Amount)
 }
 
 func TestInitiateMigration_AlreadyMigrated(t *testing.T) {
-	env := setupKin3Env(t)
+	env := setupEnv(t)
 
 	ctx, err := headers.ContextWithHeaders(context.Background())
 	require.NoError(t, err)
@@ -559,7 +417,7 @@ func TestInitiateMigration_AlreadyMigrated(t *testing.T) {
 }
 
 func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
-	env := setupKin3Env(t)
+	env := setupEnv(t)
 
 	ctx, err := headers.ContextWithHeaders(context.Background())
 	require.NoError(t, err)
@@ -567,32 +425,22 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
 	require.NoError(t, err)
+	migrationAccount, _, err := migration.DeriveMigrationAccount(account, env.migrationSecret)
+	require.NoError(t, err)
 
-	hAccount := hProtocol.Account{
-		Signers: []hProtocol.Signer{
-			{
-				Key:    strkey.MustEncode(strkey.VersionByteAccountID, account),
-				Weight: 1,
-			},
-		},
-		Balances: []hProtocol.Balance{
-			{
-				Asset: base.Asset{
-					Type: "native",
-				},
-				Balance: "2",
-			},
-			{
-				Asset: base.Asset{
-					Code:   "KIN",
-					Issuer: kin.Kin2TestIssuer,
-				},
-				Balance: "10",
-			},
-		},
+	env.loader.accountState[string(account)] = &accountState{
+		owner:   account,
+		balance: 10,
 	}
-	env.hc.ExpectedCalls = nil
-	env.hc.On("LoadAccount", mock.Anything).Return(hAccount, nil)
+	tokenAccount := token.Account{
+		Mint:   env.token,
+		Owner:  account,
+		Amount: 10,
+	}
+	solanaAccount := solana.AccountInfo{
+		Data:  tokenAccount.Marshal(),
+		Owner: token.ProgramKey,
+	}
 
 	var signature solana.Signature
 	_, err = io.CopyN(bytes.NewBuffer(signature[:]), rand.Reader, int64(len(signature[:])))
@@ -600,6 +448,7 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 
 	env.sc.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(10, nil)
 	env.sc.On("GetRecentBlockhash").Return(solana.Blockhash{}, nil)
+	env.sc.On("GetAccountInfo", migrationAccount, solana.CommitmentMax).Return(solanaAccount, nil)
 
 	txnErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
 		Index: 0,
@@ -618,9 +467,6 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusInProgress, state.Status)
 	assert.True(t, exists)
-	count, err := env.store.GetCount(ctx, account)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
 
 	// If we don't reset the store, the migrator will query the state first, rather than
 	// check the transaction error. This is fine, but not what we're testing for here.
@@ -631,7 +477,4 @@ func TestInitiateMigration_AlreadyMigrated_FromError(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, migration.StatusComplete, state.Status)
 	assert.True(t, exists)
-	count, err = env.store.GetCount(ctx, account)
-	require.NoError(t, err)
-	assert.Equal(t, 2, count)
 }

@@ -6,15 +6,11 @@ import (
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
-	"net/http"
 	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
-	"github.com/kinecosystem/go/amount"
-	"github.com/kinecosystem/go/clients/horizon"
-	"github.com/kinecosystem/go/strkey"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
@@ -44,7 +40,7 @@ func MigrateBatch(ctx context.Context, m Migrator, accounts ...ed25519.PublicKey
 // Migrate the accounts involved in a transaction in parallel.
 //
 // Ensures a migration for destinations occurs if a sender sending a transfer to it has a native balance.
-func MigrateTransferAccounts(ctx context.Context, hc horizon.ClientInterface, m Migrator, transferAccountPairs ...[]ed25519.PublicKey) error {
+func MigrateTransferAccounts(ctx context.Context, loader Loader, m Migrator, transferAccountPairs ...[]ed25519.PublicKey) error {
 	sendersToDests := make(map[string][]ed25519.PublicKey)
 	for _, pair := range transferAccountPairs {
 		if len(pair) != 2 {
@@ -56,36 +52,9 @@ func MigrateTransferAccounts(ctx context.Context, hc horizon.ClientInterface, m 
 	normalAccounts := make(map[string]struct{})
 	ignoreBalanceAccounts := make(map[string]struct{})
 	for sender, dests := range sendersToDests {
-		address, err := strkey.Encode(strkey.VersionByteAccountID, []byte(sender))
-		if err != nil {
-			return errors.Wrap(err, "failed to encode sender as stellar address")
-		}
-
-		stellarAccount, err := hc.LoadAccount(address)
-		if err != nil {
-			if hErr, ok := err.(*horizon.Error); ok {
-				switch hErr.Problem.Status {
-				case http.StatusNotFound:
-					for _, dest := range dests {
-						if _, ok := ignoreBalanceAccounts[string(dest)]; !ok {
-							normalAccounts[string(dest)] = struct{}{}
-						}
-					}
-
-					continue
-				}
-			}
-			return errors.Wrap(err, "failed to load account")
-		} else {
-			strBalance, err := stellarAccount.GetNativeBalance()
-			if err != nil {
-				return errors.Wrap(err, "failed to get native balance")
-			}
-			balance, err := amount.ParseInt64(strBalance)
-			if err != nil {
-				return errors.Wrap(err, "failed to parse balance")
-			}
-
+		_, balance, err := loader.LoadAccount([]byte(sender))
+		switch err {
+		case nil, ErrMultisig:
 			if balance > 0 {
 				for _, a := range append([]ed25519.PublicKey{ed25519.PublicKey(sender)}, dests...) {
 					delete(normalAccounts, string(a))
@@ -98,6 +67,16 @@ func MigrateTransferAccounts(ctx context.Context, hc horizon.ClientInterface, m 
 					}
 				}
 			}
+		case ErrBurned, ErrNotFound:
+			for _, dest := range dests {
+				if _, ok := ignoreBalanceAccounts[string(dest)]; !ok {
+					normalAccounts[string(dest)] = struct{}{}
+				}
+			}
+
+			continue
+		default:
+			return errors.Wrap(err, "failed to load account")
 		}
 	}
 

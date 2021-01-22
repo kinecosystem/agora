@@ -1,21 +1,15 @@
-package kin3
+package stellar
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
-	"math/rand"
-	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
-	"github.com/kinecosystem/go/amount"
-	"github.com/kinecosystem/go/clients/horizon"
-	"github.com/kinecosystem/go/strkey"
 	"github.com/mr-tron/base58/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -23,14 +17,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/solanautil"
-)
-
-var (
-	onDemandSuccessCounter = migration.OnDemandSuccessCounterVec.WithLabelValues("3")
-	onDemandFailureCounter = migration.OnDemandFailureCounterVec.WithLabelValues("3")
-
-	migrationAllowedCounter     = migration.MigrationAllowedCounter
-	migrationRateLimitedCounter = migration.MigrationRateLimitedCounter
 )
 
 type accountInfo struct {
@@ -41,61 +27,61 @@ type accountInfo struct {
 	balance             uint64
 }
 
-type kin3Migrator struct {
+type migrator struct {
 	log     *logrus.Entry
+	version version.KinVersion
 	sc      solana.Client
 	tc      *token.Client
-	hc      horizon.ClientInterface
-	store   migration.Store
+	ml      migration.Loader
 	limiter rate.Limiter
+	store   migration.Store
 
 	migrationSecret []byte
 
 	subsidizer    ed25519.PublicKey
 	subsidizerKey ed25519.PrivateKey
-	mint          ed25519.PublicKey
-	mintKey       ed25519.PrivateKey
+	source        ed25519.PublicKey
+	sourceKey     ed25519.PrivateKey
 
 	// Guarded by sync/atomc
 	lamportSize uint64
-
-	blockhashMu sync.RWMutex
-	lastAccess  time.Time
-	blockhash   solana.Blockhash
 }
 
 func New(
 	store migration.Store,
+	version version.KinVersion,
 	sc solana.Client,
-	hc horizon.ClientInterface,
+	sl migration.Loader,
 	limiter rate.Limiter,
 	tokenAccount ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
-	mint ed25519.PublicKey,
-	mintKey ed25519.PrivateKey,
+	source ed25519.PublicKey,
+	sourceKey ed25519.PrivateKey,
 	migrationSecret []byte,
 ) migration.Migrator {
-	return &kin3Migrator{
-		log:             logrus.StandardLogger().WithField("type", "migration/kin3migrator"),
+	return &migrator{
+		log:             logrus.StandardLogger().WithField("type", "migration/stellar"),
+		version:         version,
 		sc:              sc,
 		tc:              token.NewClient(sc, tokenAccount),
-		store:           store,
-		hc:              hc,
+		ml:              sl,
 		limiter:         limiter,
+		store:           store,
 		subsidizer:      subsidizer.Public().(ed25519.PublicKey),
 		subsidizerKey:   subsidizer,
-		mint:            mint,
-		mintKey:         mintKey,
+		source:          source,
+		sourceKey:       sourceKey,
 		migrationSecret: migrationSecret,
 	}
 }
 
-func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
+func (m *migrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
 	log := m.log.WithFields(logrus.Fields{
 		"account":        base58.Encode(account),
 		"ignore_balance": ignoreBalance,
 		"commitment":     commitment,
 	})
+
 	migrationAccount, migrationAccountKey, err := migration.DeriveMigrationAccount(account, m.migrationSecret)
 	if err != nil {
 		return err
@@ -103,12 +89,6 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 
 	migrationCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-
-	err = m.store.IncrementCount(migrationCtx, account)
-	if err != nil {
-		// Maybe shouldn't nuke the migration by returning error, just log instead
-		m.log.WithError(err).Warn("failed to increment request count")
-	}
 
 	//
 	// Check migration state store.
@@ -147,22 +127,23 @@ func (m *kin3Migrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 		return errors.Wrap(err, "failed to check migration rate limit")
 	}
 	if !allowed {
-		migrationRateLimitedCounter.Inc()
+		migration.MigrationRateLimitedCounter.WithLabelValues(m.version.String()).Inc()
 		return errors.New("rate limited")
 	}
 
-	migrationAllowedCounter.Inc()
+	migration.MigrationAllowedCounter.WithLabelValues(m.version.String()).Inc()
 
 	if err := m.migrateAccount(migrationCtx, info, commitment); err != nil {
-		onDemandFailureCounter.Inc()
+		migration.OnDemandFailureCounterVec.WithLabelValues(m.version.String()).Inc()
 		log.WithError(err).Warn("failed to migrate account")
+		return err
 	}
 
-	onDemandSuccessCounter.Inc()
-	return err
+	migration.OnDemandSuccessCounterVec.WithLabelValues(m.version.String()).Inc()
+	return nil
 }
 
-func (m *kin3Migrator) GetMigrationAccount(ctx context.Context, account ed25519.PublicKey) (ed25519.PublicKey, error) {
+func (m *migrator) GetMigrationAccounts(ctx context.Context, account ed25519.PublicKey) ([]ed25519.PublicKey, error) {
 	migrationAccount, migrationAccountKey, err := migration.DeriveMigrationAccount(account, m.migrationSecret)
 	if err != nil {
 		return nil, err
@@ -177,10 +158,10 @@ func (m *kin3Migrator) GetMigrationAccount(ctx context.Context, account ed25519.
 		return nil, errors.Wrap(err, "failed to load account info")
 	}
 
-	return migrationAccount, nil
+	return []ed25519.PublicKey{migrationAccount}, nil
 }
 
-func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, commitment solana.Commitment) (err error) {
+func (m *migrator) migrateAccount(ctx context.Context, info accountInfo, commitment solana.Commitment) (err error) {
 	log := m.log.WithField("method", "createMigrationAccount")
 
 	lamports := atomic.LoadUint64(&m.lamportSize)
@@ -193,32 +174,10 @@ func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 		atomic.StoreUint64(&m.lamportSize, lamports)
 	}
 
-	var bh solana.Blockhash
-
-	// To avoid having thrashing around a similar periodic interval, we
-	// randomize when we refresh our block hash. This is mostly only a
-	// concern when running a batch migrator with a _ton_ of goroutines.
-	window := time.Duration(float64(20*time.Second) * (0.5 + rand.Float64()/2.0))
-
-	m.blockhashMu.RLock()
-	if m.blockhash == (solana.Blockhash{}) || time.Since(m.lastAccess) > window {
-		m.blockhashMu.RUnlock()
-
-		// We query outside of the exclusive zone. We _should_ be well within
-		// the recent blockhash times (quoted from the devs at ~2 minutes), so
-		// it's ok if someone else set a newer or older value.
-		bh, err = m.sc.GetRecentBlockhash()
-		if err != nil {
-			return errors.Wrap(err, "failed to get block hash")
-		}
-
-		m.blockhashMu.Lock()
-		m.blockhash = bh
-		m.lastAccess = time.Now()
-		m.blockhashMu.Unlock()
-	} else {
-		bh = m.blockhash
-		m.blockhashMu.RUnlock()
+	// Note: we rely on the solana client for caching
+	bh, err := m.sc.GetRecentBlockhash()
+	if err != nil {
+		return errors.Wrap(err, "failed to get block hash")
 	}
 
 	// todo: support multisig (which involves adding more information in here)
@@ -249,14 +208,14 @@ func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 			token.AuthorityTypeAccountHolder,
 		),
 		token.Transfer(
-			m.mint,
+			m.source,
 			info.migrationAccount,
-			m.mintKey.Public().(ed25519.PublicKey),
+			m.sourceKey.Public().(ed25519.PublicKey),
 			info.balance,
 		),
 	)
 	txn.SetBlockhash(bh)
-	if err := txn.Sign(m.subsidizerKey, m.mintKey, info.migrationAccountKey); err != nil {
+	if err := txn.Sign(m.subsidizerKey, m.sourceKey, info.migrationAccountKey); err != nil {
 		return errors.Wrap(err, "failed to sign migration transaction")
 	}
 
@@ -294,29 +253,29 @@ func (m *kin3Migrator) migrateAccount(ctx context.Context, info accountInfo, com
 		return errors.Wrapf(err, "failed to submit transaction: %s", base58.Encode(txn.Signature()))
 	}
 	if stat.ErrorResult != nil {
-		if !solanautil.IsAccountAlreadyExistsError(stat.ErrorResult) {
+		if !solanautil.IsAccountAlreadyExistsError(stat.ErrorResult) && !solanautil.IsDuplicateSignature(stat.ErrorResult) {
 			return errors.Wrap(stat.ErrorResult, "submit transaction failed")
 		}
 
 		if commitment == solana.CommitmentMax {
-			return errors.Wrap(migration.MarkComplete(ctx, m.store, info.account, state), "failed to mark migration as complete")
+			if _, tcErr := m.tc.GetAccount(info.migrationAccount, commitment); tcErr == nil {
+				return errors.Wrap(migration.MarkComplete(ctx, m.store, info.account, state), "failed to mark migration as complete")
+			}
 		}
-
 	}
 
-	// If the confirmations is nil, then the transaction was rooted, and therefore
-	// considered irreversible. At this point we can mark the account as migrated.
+	// If the transaction was finalized, we can mark the account as migrated.
 	//
 	// If not, we simply return a nil error, as SubmitTransaction() blocks until
 	// the specified commitment has been met.
-	if stat.Confirmations == nil {
+	if stat.Finalized() {
 		return errors.Wrap(migration.MarkComplete(ctx, m.store, info.account, state), "failed to mark migration as complete")
 	}
 
 	return nil
 }
 
-func (m *kin3Migrator) recover(ctx context.Context, account, migrationAccount ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
+func (m *migrator) recover(ctx context.Context, account, migrationAccount ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
 	log := m.log.WithField("method", "recover")
 
 	log.Trace("Recovering migration status")
@@ -354,64 +313,11 @@ func (m *kin3Migrator) recover(ctx context.Context, account, migrationAccount ed
 	return errors.Errorf("unhandled state status: %v", state.Status)
 }
 
-func (m *kin3Migrator) loadAccount(ctx context.Context, account ed25519.PublicKey, migrationKey ed25519.PrivateKey) (info accountInfo, err error) {
+func (m *migrator) loadAccount(ctx context.Context, account ed25519.PublicKey, migrationKey ed25519.PrivateKey) (info accountInfo, err error) {
 	info.account = account
 	info.migrationAccount = migrationKey.Public().(ed25519.PublicKey)
 	info.migrationAccountKey = migrationKey
 
-	address, err := strkey.Encode(strkey.VersionByteAccountID, account)
-	if err != nil {
-		return info, errors.Wrap(err, "failed to encode account as stellar address")
-	}
-
-	stellarAccount, err := m.hc.LoadAccount(address)
-	if err != nil {
-		if hErr, ok := err.(*horizon.Error); ok {
-			switch hErr.Problem.Status {
-			case http.StatusNotFound:
-				return info, migration.ErrNotFound
-			}
-		}
-
-		return info, errors.Wrap(err, "failed to check kin3 account status")
-	}
-	strBalance, err := stellarAccount.GetNativeBalance()
-	if err != nil {
-		return info, errors.Wrap(err, "failed to get native balance")
-	}
-	balance, err := amount.ParseInt64(strBalance)
-	if err != nil {
-		return info, errors.Wrap(err, "failed to parse balance")
-	}
-	if balance < 0 {
-		return info, errors.Errorf("cannot migrate negative balance: %d", balance)
-	}
-
-	info.balance = uint64(balance)
-
-	nonZeroSigners := make([]horizon.Signer, 0, len(stellarAccount.Signers))
-	for _, s := range stellarAccount.Signers {
-		if s.Weight > 0 {
-			nonZeroSigners = append(nonZeroSigners, s)
-		}
-	}
-
-	if len(nonZeroSigners) > 1 {
-		return info, migration.ErrMultisig
-	} else if len(nonZeroSigners) == 0 {
-		return info, migration.ErrBurned
-	}
-
-	info.owner, err = strkey.Decode(strkey.VersionByteAccountID, nonZeroSigners[0].Key)
-	if err != nil {
-		return info, errors.Wrap(err, "failed to decode owner key")
-	}
-
-	emptyKey := make([]byte, len(ed25519.PublicKey{}))
-	if len(info.owner) == 0 || bytes.Equal(info.owner, emptyKey) {
-		// note: this should _never_ happen except for the single adddress that is all zeros.
-		return info, errors.Errorf("zero key for: %s", base58.Encode(account))
-	}
-
-	return info, nil
+	info.owner, info.balance, err = m.ml.LoadAccount(account)
+	return info, err
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
-	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -50,7 +49,6 @@ type testEnv struct {
 
 	sc *solana.MockClient
 	tc *token.Client
-	hc *horizon.MockClient
 
 	notifier          *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
@@ -74,7 +72,6 @@ func setup(t *testing.T, migrator migration.Migrator) (env testEnv, cleanup func
 	env.client = accountpb.NewAccountClient(conn)
 	env.sc = solana.NewMockClient()
 	env.tc = token.NewClient(env.sc, env.token)
-	env.hc = &horizon.MockClient{}
 	env.notifier = NewAccountNotifier()
 	env.mapper = memorymapper.New()
 
@@ -96,16 +93,13 @@ func setup(t *testing.T, migrator migration.Migrator) (env testEnv, cleanup func
 
 	s, err := New(
 		env.sc,
-		env.sc,
-		env.sc,
-		env.hc,
 		account.NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,
 		env.tokenAccountCache,
 		env.infoCache,
 		accountinfo.NewLoader(env.tc, env.infoCache, env.tokenAccountCache),
+		migration.NewNoopLoader(),
 		env.migrator,
-		env.migrationStore,
 		env.mapper,
 		env.token,
 		env.subsidizer,
@@ -991,8 +985,8 @@ func TestResolveTokenAccounts_MigrationSkip(t *testing.T) {
 	mig.On("InitiateMigration", mock.Anything, migrated[0], false, solana.CommitmentRecent).Return(nil)
 	mig.On("InitiateMigration", mock.Anything, notMigrated[0], false, solana.CommitmentRecent).Return(nil)
 
-	mig.On("GetMigrationAccount", mock.Anything, migrated[0]).Return(migrated[1], nil)
-	mig.On("GetMigrationAccount", mock.Anything, notMigrated[0]).Return(ed25519.PublicKey{}, migration.ErrNotFound)
+	mig.On("GetMigrationAccounts", mock.Anything, migrated[0]).Return(migrated[1:2], nil)
+	mig.On("GetMigrationAccounts", mock.Anything, notMigrated[0]).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
 	env.sc.On("GetAccountInfo", notMigrated[0], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo).Times(1)
 	env.sc.On("GetTokenAccountsByOwner", notMigrated[0], env.token).Return(notMigrated[1:], nil).Times(1)
 
@@ -1053,14 +1047,15 @@ func TestResolveTokenAccounts_ReverseMap(t *testing.T) {
 	// Kin3 migration hooks.
 	mig.On("InitiateMigration", mock.Anything, kin3, false, solana.CommitmentRecent).Return(nil)
 	mig.On("InitiateMigration", mock.Anything, misc, false, solana.CommitmentRecent).Return(migration.ErrNotFound)
-	mig.On("GetMigrationAccount", mock.Anything, kin3).Return(kin4, nil)
-	mig.On("GetMigrationAccount", mock.Anything, kin4).Return(ed25519.PublicKey{}, migration.ErrNotFound)
-	mig.On("GetMigrationAccount", mock.Anything, misc).Return(ed25519.PublicKey{}, migration.ErrNotFound)
-	mig.On("GetMigrationAccount", mock.Anything, miscToken[0]).Return(ed25519.PublicKey{}, migration.ErrNotFound)
+	mig.On("GetMigrationAccounts", mock.Anything, kin3).Return([]ed25519.PublicKey{kin4}, nil)
+	mig.On("GetMigrationAccounts", mock.Anything, kin4).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
+	mig.On("GetMigrationAccounts", mock.Anything, misc).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
+	mig.On("GetMigrationAccounts", mock.Anything, miscToken[0]).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
 	env.sc.On("GetAccountInfo", kin4Account, mock.Anything).Return(accountInfos[0], nil).Times(1)
 	env.sc.On("GetAccountInfo", misc, mock.Anything).Return(accountInfos[1], nil).Times(1)
 	env.sc.On("GetTokenAccountsByOwner", misc, env.token).Return(miscToken, nil).Times(1)
 	env.sc.On("GetTokenAccountsByOwner", miscToken[0], env.token).Return([]ed25519.PublicKey{}, nil).Times(1)
+	env.sc.On("GetTokenAccountsByOwner", kin4, env.token).Return([]ed25519.PublicKey{kin4}, nil).Times(1)
 
 	// Resolving kin3 should work from here, no other calls
 	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
@@ -1332,10 +1327,10 @@ func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	return args.Error(0)
 }
 
-func (m *mockMigrator) GetMigrationAccount(ctx context.Context, account ed25519.PublicKey) (ed25519.PublicKey, error) {
+func (m *mockMigrator) GetMigrationAccounts(ctx context.Context, account ed25519.PublicKey) ([]ed25519.PublicKey, error) {
 	m.Lock()
 	defer m.Unlock()
 
 	args := m.Called(ctx, account)
-	return args.Get(0).(ed25519.PublicKey), args.Error(1)
+	return args.Get(0).([]ed25519.PublicKey), args.Error(1)
 }

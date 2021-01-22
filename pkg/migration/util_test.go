@@ -9,8 +9,6 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
-	"github.com/kinecosystem/go/clients/horizon"
-	"github.com/kinecosystem/go/strkey"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -19,6 +17,28 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
+
+type accountState struct {
+	owner   ed25519.PublicKey
+	balance uint64
+	err     error
+}
+type testLoader struct {
+	sync.Mutex
+	accountState map[string]*accountState
+}
+
+func (t *testLoader) LoadAccount(account ed25519.PublicKey) (ed25519.PublicKey, uint64, error) {
+	t.Lock()
+	defer t.Unlock()
+
+	s, ok := t.accountState[string(account)]
+	if !ok {
+		return nil, 0, ErrNotFound
+	}
+
+	return s.owner, s.balance, s.err
+}
 
 type mockMigrator struct {
 	sync.Mutex
@@ -33,12 +53,12 @@ func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.Pu
 	return args.Error(0)
 }
 
-func (m *mockMigrator) GetMigrationAccount(ctx context.Context, account ed25519.PublicKey) (ed25519.PublicKey, error) {
+func (m *mockMigrator) GetMigrationAccounts(ctx context.Context, account ed25519.PublicKey) ([]ed25519.PublicKey, error) {
 	m.Lock()
 	defer m.Unlock()
 
 	args := m.Called(ctx, account)
-	return args.Get(0).(ed25519.PublicKey), args.Error(1)
+	return args.Get(0).([]ed25519.PublicKey), args.Error(1)
 }
 
 func TestMigrateBatch(t *testing.T) {
@@ -72,14 +92,15 @@ func TestMigrateTransferAccounts(t *testing.T) {
 
 	accounts := testutil.GenerateSolanaKeys(t, 6)
 
-	sender1, err := strkey.Encode(strkey.VersionByteAccountID, accounts[0])
-	require.NoError(t, err)
-	sender2, err := strkey.Encode(strkey.VersionByteAccountID, accounts[3])
-	require.NoError(t, err)
-
-	hc := &horizon.MockClient{}
-	hc.On("LoadAccount", sender1).Return(*testutil.GenerateHorizonAccount("", "100", "1"), nil)
-	hc.On("LoadAccount", sender2).Return(*testutil.GenerateHorizonAccount("", "0", "1"), nil)
+	loader := &testLoader{accountState: make(map[string]*accountState)}
+	loader.accountState[string(accounts[0])] = &accountState{
+		owner:   accounts[0],
+		balance: 100,
+	}
+	loader.accountState[string(accounts[3])] = &accountState{
+		owner:   accounts[3],
+		balance: 0,
+	}
 
 	pairs := [][]ed25519.PublicKey{
 		{accounts[0], accounts[1]},
@@ -107,7 +128,7 @@ func TestMigrateTransferAccounts(t *testing.T) {
 		mu.Unlock()
 	})
 
-	assert.NoError(t, MigrateTransferAccounts(ctx, hc, m, pairs...))
+	assert.NoError(t, MigrateTransferAccounts(ctx, loader, m, pairs...))
 	assert.Equal(t, len(callCount), 5) // accounts[3] doesn't get migrated
 	for _, v := range callCount {
 		assert.Equal(t, 1, v)
