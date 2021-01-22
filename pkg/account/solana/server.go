@@ -269,20 +269,10 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		}
 	}
 
-	if err := s.mapper.Add(ctx, tokenInitialize.Account, tokenInitialize.Owner); err != nil {
-		log.WithError(err).Warn("failed to store account mapping")
-		createAccountFailures.WithLabelValues("mapper").Inc()
-		return nil, status.Error(codes.Internal, "failed to store account mapping")
-	}
-
 	info := &accountpb.AccountInfo{
 		AccountId: &commonpb.SolanaAccountId{
 			Value: sysCreate.Address,
 		},
-	}
-	if err := s.infoCache.Put(ctx, info); err != nil {
-		// Don't fail here since it's for perf only
-		log.WithError(err).Warn("failed to store info cache")
 	}
 
 	_, stat, err := s.scSubmit.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))
@@ -294,8 +284,20 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 	if stat.ErrorResult != nil {
 		if solanautil.IsAccountAlreadyExistsError(stat.ErrorResult) {
 			createAccountResultCounterVec.WithLabelValues("exists").Inc()
-			// todo: use the load (another branch) to seed the initial value.
-			//       we expect this to be mostly zero.
+
+			// Attempt to load the existing data, but if it fails, it's
+			// not a _huge_ deal to just return a zero balance, which is
+			// the expected case here.
+			existing, err := s.infoCache.Get(ctx, info.AccountId.Value)
+			if err == nil {
+				return &accountpb.CreateAccountResponse{
+					Result:      accountpb.CreateAccountResponse_OK,
+					AccountInfo: existing,
+				}, nil
+			} else {
+				log.WithError(err).Warn("failed to load existing account info")
+			}
+
 			return &accountpb.CreateAccountResponse{
 				Result:      accountpb.CreateAccountResponse_OK,
 				AccountInfo: info,
@@ -314,6 +316,15 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		}
 
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", stat.ErrorResult)
+	}
+
+	if err := s.mapper.Add(ctx, tokenInitialize.Account, tokenInitialize.Owner); err != nil {
+		log.WithError(err).Warn("failed to store account mapping")
+		createAccountFailures.WithLabelValues("mapper").Inc()
+		return nil, status.Error(codes.Internal, "failed to store account mapping")
+	}
+	if err := s.loader.Update(ctx, tokenInitialize.Owner, info); err != nil {
+		log.WithError(err).Warn("failed to update info loader")
 	}
 
 	createAccountResultCounterVec.WithLabelValues("ok").Inc()

@@ -237,6 +237,14 @@ func TestCreateAccount_Exists(t *testing.T) {
 	)
 	require.NoError(t, createTxn.Sign(env.subsidizer))
 
+	err := env.server.loader.Update(context.Background(), owner.Public().(ed25519.PublicKey), &accountpb.AccountInfo{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: account.Public().(ed25519.PublicKey),
+		},
+		Balance: 20,
+	})
+	require.NoError(t, err)
+
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
 
@@ -259,7 +267,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
 	assert.EqualValues(t, account.Public().(ed25519.PublicKey), resp.AccountInfo.AccountId.Value)
-	assert.EqualValues(t, 0, resp.AccountInfo.Balance)
+	assert.EqualValues(t, 20, resp.AccountInfo.Balance)
 }
 
 func TestCreateAccount_NoSubsidizer(t *testing.T) {

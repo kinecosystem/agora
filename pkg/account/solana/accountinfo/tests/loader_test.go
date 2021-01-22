@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/protobuf/proto"
+	"github.com/kinecosystem/agora-api/genproto/account/v4"
+	"github.com/kinecosystem/agora-api/genproto/common/v4"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +21,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
-func TestLoader(t *testing.T) {
+func TestLoader_Load(t *testing.T) {
 	accounts := testutil.GenerateSolanaKeys(t, 4)
 	owner := testutil.GenerateSolanaKeys(t, 1)[0]
 
@@ -84,4 +87,48 @@ func TestLoader(t *testing.T) {
 	ownedAccounts, err := tokenCache.Get(context.Background(), owner)
 	assert.NoError(t, err)
 	assert.EqualValues(t, []ed25519.PublicKey{accounts[2]}, ownedAccounts)
+}
+
+func TestLoader_Update(t *testing.T) {
+	accounts := testutil.GenerateSolanaKeys(t, 4)
+	owner := testutil.GenerateSolanaKeys(t, 1)[0]
+
+	sc := solana.NewMockClient()
+	tc := token.NewClient(sc, accounts[0])
+
+	accountInfoCache, err := accountinfocache.NewCache(time.Minute, time.Minute, 100)
+	require.NoError(t, err)
+	tokenCache, err := tokencache.New(time.Minute, 30)
+	require.NoError(t, err)
+
+	loader := accountinfo.NewLoader(tc, accountInfoCache, tokenCache)
+	for i, accountID := range accounts {
+		err := loader.Update(context.Background(), owner, &account.AccountInfo{
+			AccountId: &common.SolanaAccountId{
+				Value: accountID,
+			},
+			Balance: int64(i),
+		})
+		require.NoError(t, err)
+	}
+
+	// Since overwrite overwrites entries
+	tokenAccounts, err := tokenCache.Get(context.Background(), owner)
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, accounts, tokenAccounts)
+
+	for i, accountID := range accounts {
+		info, err := loader.Load(context.Background(), accountID, solana.CommitmentRoot)
+		assert.NoError(t, err)
+		expected := &account.AccountInfo{
+			AccountId: &common.SolanaAccountId{
+				Value: accountID,
+			},
+			Balance: int64(i),
+		}
+		assert.True(t, proto.Equal(expected, info))
+	}
+
+	sc.AssertNotCalled(t, "GetAccountInfo")
+
 }

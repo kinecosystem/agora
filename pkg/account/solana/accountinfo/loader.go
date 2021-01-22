@@ -7,6 +7,7 @@ import (
 	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
@@ -124,4 +125,21 @@ func (l *Loader) Load(ctx context.Context, account ed25519.PublicKey, commitment
 	}
 
 	return info, nil
+}
+
+func (l *Loader) Update(ctx context.Context, owner ed25519.PublicKey, info *accountpb.AccountInfo) error {
+	if err := l.cache.Put(ctx, info); err != nil {
+		infoLoaderWritebackFailures.WithLabelValues("accountinfo").Inc()
+	}
+
+	existing, err := l.tokenCache.Get(ctx, owner)
+	if err != nil && err != tokenaccount.ErrTokenAccountsNotFound {
+		return errors.Wrap(err, "failed to get existing token accounts")
+	}
+
+	tokenAccounts := append(existing, info.AccountId.Value)
+	if err := l.tokenCache.Put(ctx, owner, tokenAccounts); err != nil {
+		infoLoaderWritebackFailures.WithLabelValues("tokenaccount").Inc()
+	}
+	return nil
 }
