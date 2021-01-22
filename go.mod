@@ -14,7 +14,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.1
 	github.com/jackc/pgx/v4 v4.9.2
 	github.com/kinecosystem/agora-api v0.25.0
-	github.com/kinecosystem/agora-common v0.67.0
+	github.com/kinecosystem/agora-common v0.70.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mr-tron/base58 v1.2.0
