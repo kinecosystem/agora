@@ -459,7 +459,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 
 		// Get the set of migration accounts (accounts that _are_ eligible for migration)
 		migratedAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
-		if err != nil {
+		if err != nil && err != migration.ErrBurned && err != migration.ErrNotFound {
 			// Not great, but we can fall back
 			log.WithError(err).Warn("failed to check migration status")
 		} else if len(migratedAccounts) > 0 {
