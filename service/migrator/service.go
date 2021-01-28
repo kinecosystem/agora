@@ -27,6 +27,7 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/ybbus/jsonrpc"
+	"go.etcd.io/etcd/clientv3"
 	xrate "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
@@ -45,7 +46,9 @@ import (
 )
 
 const (
-	keystoreTypeEnv        = "KEYSTORE_TYPE"
+	keystoreTypeEnv  = "KEYSTORE_TYPE"
+	etcdEndpointsEnv = "ETCD_ENDPOINTS"
+
 	horizon2MigratorURLEnv = "HORIZON2_MIGRATOR_URL"
 	horizon3MigratorURLEnv = "HORIZON3_MIGRATOR_URL"
 
@@ -98,12 +101,6 @@ func (a *app) Init(_ agoraapp.Config) error {
 
 	if os.Getenv(solanaEndpointEnv) == "" {
 		return errors.New("must specify solana endpoint")
-	}
-	if os.Getenv(horizon2MigratorURLEnv) == "" {
-		return errors.New("must specify horizon2 endpoint")
-	}
-	if os.Getenv(horizon3MigratorURLEnv) == "" {
-		return errors.New("must specify horizon3 endpoint")
 	}
 	if os.Getenv(subsidizerKeypairIDEnv) == "" {
 		return errors.New("must specify subsidizer keypair id")
@@ -194,10 +191,21 @@ func (a *app) Init(_ agoraapp.Config) error {
 		return errors.Wrap(err, "failed to initialize kin3 migrator")
 	}
 
+	migrationConf := migration.WithEnvConfig()
+	if os.Getenv(etcdEndpointsEnv) != "" {
+		etcdClient, err := clientv3.New(clientv3.Config{
+			Endpoints: strings.Split(os.Getenv(etcdEndpointsEnv), ","),
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize etcd client")
+		}
+		migrationConf = migration.WithETCDConfigs(etcdClient)
+	}
+
 	migrator := migration.NewDualChainMigrator(
 		kin2Migrator,
 		kin3Migrator,
-		migration.WithEnvConfig(),
+		migrationConf,
 	)
 
 	sqsClient := sqs.New(cfg)

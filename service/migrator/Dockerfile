@@ -8,8 +8,8 @@ RUN chmod +x /bin/grpc_health_probe
 
 COPY build/linux-amd64/migrator /migrator
 
-EXPOSE 443
 EXPOSE 8123
+EXPOSE 8085
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 CMD /bin/grpc_health_probe -addr=localhost:8085 -connect-timeout 250ms -rpc-timeout 100ms || exit 1
 
