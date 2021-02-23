@@ -26,10 +26,10 @@ const (
 	configNamespace = "version"
 
 	defaultVersionKey     = "default"
-	defaultVersionDefault = 3
+	defaultVersionDefault = 4
 
 	disabledVersionsKey     = "disabled"
-	disabledVersionsDefault = "3"
+	disabledVersionsDefault = "2,3"
 )
 
 var (

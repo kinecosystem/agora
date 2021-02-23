@@ -12,7 +12,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	dynamocommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/solana"
-	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
 	"github.com/kinecosystem/agora/pkg/transaction/history/kre"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 )
@@ -42,8 +41,6 @@ var setCommitCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(commitCmd)
-	commitCmd.PersistentFlags().IntVar(&kinVersion, "v", 4, "Kin Version")
-
 	commitCmd.AddCommand(getCommitCmd)
 	commitCmd.AddCommand(setCommitCmd)
 }
@@ -67,20 +64,11 @@ func getCommit(_ *cobra.Command, args []string) error {
 		return errors.Wrap(err, "failed to get latest pointer")
 	}
 
-	switch v {
-	case model.KinVersion_KIN2, model.KinVersion_KIN3:
-		seq, err := stellar.SequenceFromPointer(ptr)
-		if err != nil {
-			return errors.Wrap(err, "invalid stellar pointer")
-		}
-		fmt.Println("Sequence:", seq)
-	case model.KinVersion_KIN4:
-		slot, err := solana.SlotFromPointer(ptr)
-		if err != nil {
-			return errors.Wrap(err, "invalid solana pointer")
-		}
-		fmt.Println("Slot:", slot)
+	slot, err := solana.SlotFromPointer(ptr)
+	if err != nil {
+		return errors.Wrap(err, "invalid solana pointer")
 	}
+	fmt.Println("Slot:", slot)
 
 	return nil
 }
@@ -103,14 +91,6 @@ func setCommit(_ *cobra.Command, args []string) error {
 		return errors.Errorf("invalid commit type: %s", args[0])
 	}
 
-	var ptr ingestion.Pointer
-
-	switch v {
-	case model.KinVersion_KIN2, model.KinVersion_KIN3:
-		ptr = stellar.PointerFromSequence(v, uint32(val))
-	case model.KinVersion_KIN4:
-		ptr = solana.PointerFromSlot(val)
-	}
-
+	ptr := solana.PointerFromSlot(val)
 	return c.CommitUnsafe(context.Background(), ingestor, ptr)
 }

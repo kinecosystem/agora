@@ -15,8 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/aws/aws-sdk-go/aws/session"
-	dynamodbv1 "github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/go-redis/redis/v7"
 	"github.com/go-redis/redis_rate/v8"
 	agoraapp "github.com/kinecosystem/agora-common/app"
@@ -35,25 +33,18 @@ import (
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 
-	accountpbv3 "github.com/kinecosystem/agora-api/genproto/account/v3"
 	accountpbv4 "github.com/kinecosystem/agora-api/genproto/account/v4"
 	airdroppb "github.com/kinecosystem/agora-api/genproto/airdrop/v4"
-	transactionpbv3 "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
-	"github.com/kinecosystem/agora/pkg/account"
-	mapperdb "github.com/kinecosystem/agora/pkg/account/dynamodb"
-	accountsolana "github.com/kinecosystem/agora/pkg/account/solana"
-	"github.com/kinecosystem/agora/pkg/account/solana/accountinfo"
-	infodb "github.com/kinecosystem/agora/pkg/account/solana/accountinfo/dynamodb"
-	"github.com/kinecosystem/agora/pkg/account/solana/tokenaccount"
-	accountcache "github.com/kinecosystem/agora/pkg/account/solana/tokenaccount/dynamodb"
-	accountstellar "github.com/kinecosystem/agora/pkg/account/stellar"
+	"github.com/kinecosystem/agora/pkg/account/info"
+	infodb "github.com/kinecosystem/agora/pkg/account/info/dynamodb"
+	accountserver "github.com/kinecosystem/agora/pkg/account/server"
+	"github.com/kinecosystem/agora/pkg/account/tokenaccount"
+	accountcache "github.com/kinecosystem/agora/pkg/account/tokenaccount/dynamodb"
 	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
 	appconfigdb "github.com/kinecosystem/agora/pkg/app/dynamodb"
 	appmapper "github.com/kinecosystem/agora/pkg/app/dynamodb/mapper"
-	"github.com/kinecosystem/agora/pkg/channel"
-	channelpool "github.com/kinecosystem/agora/pkg/channel/dynamodb"
 	redisevents "github.com/kinecosystem/agora/pkg/events/redis"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/dynamodb"
 	"github.com/kinecosystem/agora/pkg/keypair"
@@ -66,13 +57,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/transaction"
 	deduper "github.com/kinecosystem/agora/pkg/transaction/dedupe/dynamodb"
 	historyrw "github.com/kinecosystem/agora/pkg/transaction/history/dynamodb"
-	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
 	ingestioncommitter "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/committer"
-	ingestionlock "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/dynamodb/locker"
-	stellaringestor "github.com/kinecosystem/agora/pkg/transaction/history/ingestion/stellar"
-	"github.com/kinecosystem/agora/pkg/transaction/history/model"
-	transactionsolana "github.com/kinecosystem/agora/pkg/transaction/solana"
-	transactionstellar "github.com/kinecosystem/agora/pkg/transaction/stellar"
+	txnserver "github.com/kinecosystem/agora/pkg/transaction/server"
 	"github.com/kinecosystem/agora/pkg/version"
 	"github.com/kinecosystem/agora/pkg/webhook"
 	webevents "github.com/kinecosystem/agora/pkg/webhook/events"
@@ -84,9 +70,7 @@ import (
 )
 
 const (
-	rootKeypairIDEnv     = "ROOT_KEYPAIR_ID"
-	rootKin2KeypairIDEnv = "ROOT_KIN_2_KEYPAIR_ID"
-	keystoreTypeEnv      = "KEYSTORE_TYPE"
+	keystoreTypeEnv = "KEYSTORE_TYPE"
 
 	etcdEndpointsEnv = "ETCD_ENDPOINTS"
 
@@ -120,10 +104,6 @@ const (
 	// Events config
 	eventsRedisConnStringEnv = "EVENTS_REDIS_CONN_STRING"
 
-	// Channel Configs
-	maxChannelsEnv = "MAX_CHANNELS"
-	channelSaltEnv = "CHANNEL_SALT"
-
 	// Token Account Cache Configs
 	tokenAccountTTLEnv = "TOKEN_ACCOUNT_TTL"
 
@@ -152,11 +132,9 @@ var (
 type app struct {
 	etcdClient *clientv3.Client
 
-	accountStellar accountpbv3.AccountServer
-	accountSolana  accountpbv4.AccountServer
-	txnStellar     transactionpbv3.TransactionServer
-	txnSolana      transactionpbv4.TransactionServer
-	airdropServer  airdroppb.AirdropServer
+	accountSolana accountpbv4.AccountServer
+	txnSolana     transactionpbv4.TransactionServer
+	airdropServer airdroppb.AirdropServer
 
 	streamCancelFunc context.CancelFunc
 
@@ -174,15 +152,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrapf(err, "failed to create keystore using configured : %s", keystoreType)
 	}
 
-	rootAccountKP, err := keystore.Get(context.Background(), os.Getenv(rootKeypairIDEnv))
-	if err != nil {
-		return errors.Wrap(err, "failed to determine root keypair")
-	}
-	kin2RootAccountKP, err := keystore.Get(context.Background(), os.Getenv(rootKin2KeypairIDEnv))
-	if err != nil {
-		return errors.Wrap(err, "failed to determine kin 2 root keypair")
-	}
-
 	kin2Client, err := kin.GetKin2Client()
 	if err != nil {
 		return errors.Wrap(err, "failed to get kin2 client")
@@ -192,29 +161,10 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrap(err, "failed to get kin3 client")
 	}
 
-	kin2ClientV2, err := kin.GetKin2ClientV2()
-	if err != nil {
-		return errors.Wrap(err, "failed to get v2 kin2 client")
-	}
-	kin3ClientV2, err := kin.GetClientV2()
-	if err != nil {
-		return errors.Wrap(err, "failed to get v2 kin3 client")
-	}
-
 	cfg, err := external.LoadDefaultAWSConfig()
 	if err != nil {
 		return errors.Wrap(err, "failed to init v2 aws sdk")
 	}
-
-	// dynamodb locking library requires aws v1, unfortunately.
-	sess, err := session.NewSession()
-	if err != nil {
-		return errors.Wrap(err, "failed to init v1 aws sdk")
-	}
-	dynamoV1Client := dynamodbv1.New(sess)
-
-	accountNotifier := accountstellar.NewAccountNotifier()
-	kin2AccountNotifier := accountstellar.NewAccountNotifier()
 
 	dynamoClient := dynamodb.New(cfg)
 	appConfigStore := appconfigdb.New(dynamoClient)
@@ -255,58 +205,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		}))
 	}
 
-	var channelPool channel.Pool
-	var kin2ChannelPool channel.Pool
-	maxChannelsStr := os.Getenv(maxChannelsEnv)
-	if maxChannelsStr != "" && maxChannelsStr != "0" {
-		maxChannels, err := strconv.Atoi(maxChannelsStr)
-		if err != nil || maxChannels < 0 {
-			return errors.Errorf("%s must be set to an integer >= 0", maxChannelsEnv)
-		}
-
-		channelSalt := os.Getenv(channelSaltEnv)
-		if channelSalt == "" {
-			return errors.Errorf("%s must be set if %s is set", channelSaltEnv, maxChannelsEnv)
-		}
-
-		channelPool, err = channelpool.New(
-			dynamoV1Client,
-			maxChannels,
-			kinversion.KinVersion3,
-			rootAccountKP,
-			channelSalt,
-		)
-		if err != nil {
-			return errors.Wrap(err, "failed to initialize channel pool")
-		}
-
-		kin2ChannelPool, err = channelpool.New(
-			dynamoV1Client,
-			maxChannels,
-			kinversion.KinVersion2,
-			kin2RootAccountKP,
-			channelSalt,
-		)
-		if err != nil {
-			return errors.Wrap(err, "failed to initialize channel pool")
-		}
-	}
-
-	accountLimiter := account.NewLimiter(rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(createAccountRL)))
-	a.accountStellar, err = accountstellar.New(
-		rootAccountKP,
-		kin3Client,
-		accountNotifier,
-		channelPool,
-		kin2RootAccountKP,
-		kin2Client,
-		kin2AccountNotifier,
-		kin2ChannelPool,
-		accountLimiter,
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed to init account server")
-	}
+	accountLimiter := accountserver.NewLimiter(rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(createAccountRL)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.streamCancelFunc = cancel
@@ -325,38 +224,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrap(err, "failed to init events processor")
 	}
 
-	kin2Network, err := kin.GetKin2Network()
-	if err != nil {
-		return errors.Wrap(err, "failed to get kin2 network")
-	}
-	kin3Network, err := kin.GetNetwork()
-	if err != nil {
-		return errors.Wrap(err, "failed to get kin3 network")
-	}
-
 	committer := ingestioncommitter.New(dynamoClient)
-	historyIngestor := stellaringestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, kin3ClientV2, kin3Network.Passphrase)
-	eventsIngestor := stellaringestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN3), model.KinVersion_KIN3, kin3ClientV2, kin3Network.Passphrase)
-	historyLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin3", 10*time.Second)
-	if err != nil {
-		return errors.Wrap(err, "failed to init history ingestion lock")
-	}
-	eventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin3", 10*time.Second)
-	if err != nil {
-		return errors.Wrap(err, "failed to init events ingestion lock")
-	}
-
-	kin2HistoryIngestor := stellaringestor.New(ingestion.GetHistoryIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
-	kin2EventsIngestor := stellaringestor.New(ingestion.GetEventsIngestorName(model.KinVersion_KIN2), model.KinVersion_KIN2, kin2ClientV2, kin2Network.Passphrase)
-	kin2HistoryLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_history_kin2", 10*time.Second)
-	if err != nil {
-		return errors.Wrap(err, "failed to init kin 2 history ingestion lock")
-	}
-	kin2EventsLock, err := ingestionlock.New(dynamodbv1.New(sess), "ingestor_events_kin2", 10*time.Second)
-	if err != nil {
-		return errors.Wrap(err, "failed to init kin 2 events ingestion lock")
-	}
-
 	historyRW := historyrw.New(dynamoClient)
 	txLimiter := transaction.NewLimiter(
 		func(limit int) rate.Limiter {
@@ -373,69 +241,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to initialize authorizer")
-	}
-
-	a.txnStellar, err = transactionstellar.New(
-		appConfigStore,
-		appMapper,
-		invoiceStore,
-		historyRW,
-		committer,
-		authorizer,
-		kin3Client,
-		kin2Client,
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed to init transaction server")
-	}
-
-	//
-	// Kin3 Ingestion and Streams
-	//
-	go func() {
-		transactionstellar.StreamTransactions(ctx, kin3ClientV2, accountNotifier)
-	}()
-	go func() {
-		err := ingestion.Run(ctx, historyLock, committer, historyRW, historyIngestor)
-		if err != nil && err != context.Canceled {
-			log.WithError(err).Warn("history ingestion loop terminated")
-		} else {
-			log.WithError(err).Info("history ingestion loop terminated")
-		}
-	}()
-	go func() {
-		err := ingestion.Run(ctx, eventsLock, committer, eventsProcessor, eventsIngestor)
-		if err != nil && err != context.Canceled {
-			log.WithError(err).Warn("events ingestion loop terminated")
-		} else {
-			log.WithError(err).Info("events ingestion loop terminated")
-		}
-	}()
-	//
-	// Kin2 Ingestion and Streams
-	//
-	go func() {
-		transactionstellar.StreamTransactions(ctx, kin2ClientV2, kin2AccountNotifier)
-	}()
-	go func() {
-		err := ingestion.Run(ctx, kin2HistoryLock, committer, historyRW, kin2HistoryIngestor)
-		if err != nil && err != context.Canceled {
-			log.WithError(err).Warn("kin 2 history ingestion loop terminated")
-		} else {
-			log.WithError(err).Info("kin 2 history ingestion loop terminated")
-		}
-	}()
-	go func() {
-		err := ingestion.Run(ctx, kin2EventsLock, committer, eventsProcessor, kin2EventsIngestor)
-		if err != nil && err != context.Canceled {
-			log.WithError(err).Warn("kin 2 events ingestion loop terminated")
-		} else {
-			log.WithError(err).Info("kin 2 events ingestion loop terminated")
-		}
-	}()
-
-	if os.Getenv(solanaEndpointEnv) == "" {
-		return errors.New("missing solana endpoint")
 	}
 
 	solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
@@ -546,15 +351,13 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	}
 	migrator := migration.NewDualChainMigrator(kin2Migrator, kin3Migrator, migrationConf)
 
-	kin4AccountNotifier := accountsolana.NewAccountNotifier()
+	kin4AccountNotifier := accountserver.NewAccountNotifier()
 	tokenAccountCache := accountcache.New(dynamoClient, time.Duration(tokenAccountTTLSeconds)*time.Second)
 	cacheInvalidator, err := tokenaccount.NewCacheUpdater(tokenAccountCache, kinToken)
 	if err != nil {
 		return errors.Wrap(err, "faild to initialize token account cache invalidator")
 	}
-	mapperStore := mapperdb.New(dynamoClient)
 	tokenClient := token.NewClient(solanaClient, kinToken)
-	mapper := account.NewMapper(tokenClient, mapperStore)
 	infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
 	deduper := deduper.New(dynamoClient, dedupeTTL)
 
@@ -566,8 +369,8 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 			Addr: os.Getenv(eventsRedisConnStringEnv),
 		}),
 		redisevents.TransactionChannel,
-		transactionsolana.MapTransactionEvent(kin4AccountNotifier),
-		transactionsolana.MapTransactionEvent(cacheInvalidator),
+		txnserver.MapTransactionEvent(kin4AccountNotifier),
+		txnserver.MapTransactionEvent(cacheInvalidator),
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to initialize redis events")
@@ -585,21 +388,20 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		createWhitelistSecret = string(loaded)
 	}
 
-	accountConfig := accountsolana.WithEnvConfig()
+	accountConfig := accountserver.WithEnvConfig()
 	if a.etcdClient != nil {
-		accountConfig = accountsolana.WithETCDConfigs(a.etcdClient)
+		accountConfig = accountserver.WithETCDConfigs(a.etcdClient)
 	}
-	a.accountSolana, err = accountsolana.New(
+	a.accountSolana, err = accountserver.New(
 		accountConfig,
 		solanaClient,
 		accountLimiter,
 		kin4AccountNotifier,
 		tokenAccountCache,
 		infoCache,
-		accountinfo.NewLoader(tokenClient, infoCache, tokenAccountCache),
+		info.NewLoader(tokenClient, infoCache, tokenAccountCache),
 		compositeLoader,
 		migrator,
-		mapper,
 		kinToken,
 		subsidizer,
 		createWhitelistSecret,
@@ -608,7 +410,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrap(err, "failed to initialize v4 account serve")
 	}
 
-	a.txnSolana = transactionsolana.New(
+	a.txnSolana = txnserver.New(
 		solanaClient,
 		invoiceStore,
 		historyRW,
@@ -622,14 +424,13 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		deduper,
 		kinToken,
 		subsidizer,
-		nil, // ugh
 	)
 
 	//
 	// Kin4 Streams
 	//
 	go func() {
-		transactionsolana.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
+		txnserver.StreamTransactions(ctx, solanaClient, kin4AccountNotifier, cacheInvalidator)
 	}()
 
 	return nil
@@ -637,17 +438,12 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 
 // RegisterWithGRPC implements agorapp.App.RegisterWithGRPC.
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
-	accountpbv3.RegisterAccountServer(server, a.accountStellar)
-	transactionpbv3.RegisterTransactionServer(server, a.txnStellar)
+	accountpbv4.RegisterAccountServer(server, a.accountSolana)
+	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 
 	if a.airdropServer != nil {
 		airdroppb.RegisterAirdropServer(server, a.airdropServer)
 	}
-	if a.accountSolana != nil {
-		accountpbv4.RegisterAccountServer(server, a.accountSolana)
-	}
-
-	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 }
 
 // ShutdownChan implements agorapp.App.ShutdownChan.
