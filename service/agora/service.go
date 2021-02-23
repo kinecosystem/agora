@@ -592,7 +592,12 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		createWhitelistSecret = string(loaded)
 	}
 
+	accountConfig := accountsolana.WithEnvConfig()
+	if a.etcdClient != nil {
+		accountConfig = accountsolana.WithETCDConfigs(a.etcdClient)
+	}
 	a.accountSolana, err = accountsolana.New(
+		accountConfig,
 		solanaClient,
 		accountLimiter,
 		kin4AccountNotifier,

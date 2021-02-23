@@ -108,6 +108,7 @@ func (s sortableAccounts) Swap(i int, j int) {
 
 type server struct {
 	log               *logrus.Entry
+	conf              conf
 	sc                solana.Client
 	tc                *token.Client
 	limiter           *account.Limiter
@@ -136,6 +137,7 @@ func init() {
 }
 
 func New(
+	conf ConfigProvider,
 	sc solana.Client,
 	limiter *account.Limiter,
 	accountNotifier *AccountNotifier,
@@ -167,6 +169,8 @@ func New(
 		cacheCheckProbability: cacheCheckFreq,
 		createWhitelistSecret: createWhitelistSecret,
 	}
+
+	conf(&s.conf)
 
 	backupValue := uint64(2039280)
 	minAccountLamports, err := sc.GetMinimumBalanceForRentExemption(token.AccountSize)
@@ -457,17 +461,19 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	if len(cached) == 0 {
 		resolveAccountMissCounter.Inc()
 
-		// Get the set of migration accounts (accounts that _are_ eligible for migration)
-		migratedAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
-		if err != nil && err != migration.ErrBurned && err != migration.ErrNotFound {
-			// Not great, but we can fall back
-			log.WithError(err).Warn("failed to check migration status")
-		} else if len(migratedAccounts) > 0 {
-			// (1) and (2a) from above have the same resultant behavior, so we
-			// combine the two.
-			shouldMigrate = true
-			resolveShortCuts.WithLabelValues("migration").Inc()
-			accounts = migratedAccounts
+		if s.conf.resolveShortcutsEnabled.Get(ctx) {
+			// Get the set of migration accounts (accounts that _are_ eligible for migration)
+			migratedAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
+			if err != nil && err != migration.ErrBurned && err != migration.ErrNotFound {
+				// Not great, but we can fall back
+				log.WithError(err).Warn("failed to check migration status")
+			} else if len(migratedAccounts) > 0 {
+				// (1) and (2a) from above have the same resultant behavior, so we
+				// combine the two.
+				shouldMigrate = true
+				resolveShortCuts.WithLabelValues("migration").Inc()
+				accounts = migratedAccounts
+			}
 		}
 	} else {
 		resolveAccountHitCounter.Inc()
