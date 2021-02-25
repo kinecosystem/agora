@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 
 	"github.com/kinecosystem/agora/pkg/app"
@@ -29,7 +30,7 @@ func (m *mapper) reset() {
 
 // Add implements app.Mapper.Add
 func (m *mapper) Add(ctx context.Context, appID string, appIndex uint16) error {
-	if !app.IsValidAppID(appID) {
+	if !kin.IsValidAppID(appID) {
 		return errors.New("invalid app ID")
 	}
 

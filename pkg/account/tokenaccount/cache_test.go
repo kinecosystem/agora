@@ -40,8 +40,12 @@ func TestCacheUpdater_OnTransaction(t *testing.T) {
 	)
 	require.NoError(t, txn.Sign(subsidizer))
 
-	invalidator.OnTransaction(solana.BlockTransaction{Transaction: txn})
 	cached, err := cache.Get(context.Background(), owners[0])
+	assert.NoError(t, err)
+	assert.Equal(t, tokenAccounts, cached)
+
+	invalidator.OnTransaction(solana.BlockTransaction{Transaction: txn})
+	cached, err = cache.Get(context.Background(), owners[0])
 	assert.Equal(t, ErrTokenAccountsNotFound, err)
 	assert.Nil(t, cached)
 
@@ -77,6 +81,43 @@ func TestCacheUpdater_OnTransaction(t *testing.T) {
 	cached, err = cache.Get(context.Background(), owners[0])
 	require.NoError(t, err)
 	assert.NotNil(t, cached)
+
+	// Re-add owners 1 and 2
+	require.NoError(t, cache.Put(context.Background(), owners[1], tokenAccounts))
+	require.NoError(t, cache.Put(context.Background(), owners[2], tokenAccounts))
+
+	// Invalidate owner 1 with CloseAccount
+	txn = solana.NewTransaction(
+		subsidizer.Public().(ed25519.PublicKey),
+		token.CloseAccount(tokenAccounts[0], tokenAccounts[1], owners[0]),
+	)
+	require.NoError(t, txn.Sign(subsidizer))
+
+	invalidator.OnTransaction(solana.BlockTransaction{Transaction: txn})
+
+	cached, err = cache.Get(context.Background(), owners[0])
+	assert.Equal(t, ErrTokenAccountsNotFound, err)
+	assert.Nil(t, cached)
+
+	// Re-add owners 1 and 2
+	require.NoError(t, cache.Put(context.Background(), owners[1], tokenAccounts))
+	require.NoError(t, cache.Put(context.Background(), owners[2], tokenAccounts))
+
+	// Invalidate owner 1 with CreateAssoc
+	createAssoc, _, err := token.CreateAssociatedTokenAccount(subsidizer.Public().(ed25519.PublicKey), owners[1], mint)
+	require.NoError(t, err)
+
+	txn = solana.NewTransaction(
+		subsidizer.Public().(ed25519.PublicKey),
+		createAssoc,
+	)
+	require.NoError(t, txn.Sign(subsidizer))
+
+	invalidator.OnTransaction(solana.BlockTransaction{Transaction: txn})
+
+	cached, err = cache.Get(context.Background(), owners[1])
+	assert.Equal(t, ErrTokenAccountsNotFound, err)
+	assert.Nil(t, cached)
 }
 
 type testCache struct {

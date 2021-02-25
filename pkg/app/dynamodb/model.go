@@ -26,6 +26,7 @@ var (
 type configItem struct {
 	AppIndex           uint16 `dynamodbav:"app_index"`
 	AppName            string `dynamodbav:"app_name,omitempty"`
+	CreateAccountURL   string `dynamodbav:"create_account_url,omitempty"`
 	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
 	EventsURL          string `dynamodbav:"events_url,omitempty"`
 	WebhookSecret      string `dynamodbav:"webhook_secret,omitempty"`
@@ -50,6 +51,9 @@ func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeV
 		WebhookSecret: config.WebhookSecret,
 	}
 
+	if config.CreateAccountURL != nil {
+		configItem.CreateAccountURL = config.CreateAccountURL.String()
+	}
 	if config.SignTransactionURL != nil {
 		configItem.SignTransactionURL = config.SignTransactionURL.String()
 	}
@@ -71,6 +75,13 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*app.Config, error) {
 		WebhookSecret: configItem.WebhookSecret,
 	}
 
+	if len(configItem.CreateAccountURL) != 0 {
+		createAccountURL, err := url.Parse(configItem.CreateAccountURL)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error parsing create account url")
+		}
+		config.CreateAccountURL = createAccountURL
+	}
 	if len(configItem.SignTransactionURL) != 0 {
 		signTxURL, err := url.Parse(configItem.SignTransactionURL)
 		if err != nil {

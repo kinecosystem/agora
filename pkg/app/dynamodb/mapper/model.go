@@ -3,9 +3,8 @@ package dynamodb
 import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbattribute"
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
-
-	"github.com/kinecosystem/agora/pkg/app"
 )
 
 type mappingItem struct {
@@ -14,7 +13,7 @@ type mappingItem struct {
 }
 
 func toItem(appID string, appIndex uint16) (map[string]dynamodb.AttributeValue, error) {
-	if !app.IsValidAppID(appID) {
+	if !kin.IsValidAppID(appID) {
 		return nil, errors.New("invalid app ID")
 	}
 	if appIndex == 0 {

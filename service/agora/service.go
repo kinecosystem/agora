@@ -39,6 +39,7 @@ import (
 	transactionpbv3 "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
+	"github.com/kinecosystem/agora/pkg/account"
 	"github.com/kinecosystem/agora/pkg/account/info"
 	infodb "github.com/kinecosystem/agora/pkg/account/info/dynamodb"
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
@@ -98,6 +99,7 @@ const (
 
 	// Rate Limit Configs
 	createAccountGlobalRLEnv = "CREATE_ACCOUNT_GLOBAL_LIMIT"
+	createAccountAppRLEnv    = "CREATE_ACCOUNT_APP_LIMIT"
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
 	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
@@ -157,7 +159,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 			DialKeepAliveTimeout: 10 * time.Second,
 		})
 		if err != nil {
-			log.WithError(err).Fatal("error running service")
+			return errors.Wrap(err, "failed to create etcd client")
 		}
 	}
 
@@ -187,7 +189,11 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	invoiceStore := invoicedb.New(dynamoClient)
 	webhookClient := webhook.NewClient(&http.Client{Timeout: 10 * time.Second})
 
-	createAccountRL, err := parseRateLimit(createAccountGlobalRLEnv)
+	createAccountGlobalRL, err := parseRateLimit(createAccountGlobalRLEnv)
+	if err != nil {
+		return err
+	}
+	createAccountAppRL, err := parseRateLimit(createAccountAppRLEnv)
 	if err != nil {
 		return err
 	}
@@ -210,7 +216,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	}
 
 	var limiter *redis_rate.Limiter
-	if createAccountRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 || migrationKin2RL > 0 || migrationKin3RL > 0 {
+	if createAccountGlobalRL > 0 || createAccountAppRL > 0 || submitTxGlobalRL > 0 || submitTxAppRL > 0 || migrationKin2RL > 0 || migrationKin3RL > 0 {
 		rlRedisConnString := os.Getenv(rlRedisConnStringEnv)
 		if rlRedisConnString == "" {
 			return errors.Errorf("%s must be set", rlRedisConnStringEnv)
@@ -220,7 +226,13 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		}))
 	}
 
-	accountLimiter := accountserver.NewLimiter(rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(createAccountRL)))
+	accountLimiter := account.NewLimiter(
+		func(r int) rate.Limiter {
+			return rate.NewRedisRateLimiter(limiter, redis_rate.PerSecond(r))
+		},
+		createAccountGlobalRL,
+		createAccountAppRL,
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.streamCancelFunc = cancel
@@ -248,15 +260,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		submitTxGlobalRL,
 		submitTxAppRL,
 	)
-	authorizer, err := transaction.NewAuthorizer(
-		appMapper,
-		appConfigStore,
-		webhookClient,
-		txLimiter,
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed to initialize authorizer")
-	}
 
 	solanaClient := solana.New(os.Getenv(solanaEndpointEnv))
 
@@ -269,7 +272,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrap(err, "failed to parse token account TTL")
 	}
 
-	var subsidizer []byte
+	var subsidizer ed25519.PrivateKey
 	if os.Getenv(subsidizerKeypairIDEnv) != "" {
 		subsidizerKP, err := keystore.Get(context.Background(), os.Getenv(subsidizerKeypairIDEnv))
 		if err != nil {
@@ -393,28 +396,52 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		createWhitelistSecret = string(loaded)
 	}
 
+	accountLamports, err := solanaClient.GetMinimumBalanceForRentExemption(token.AccountSize)
+	if err != nil {
+		return errors.Wrap(err, "failed to load minimum balance for rent exception")
+	}
+
 	accountConfig := accountserver.WithEnvConfig()
 	if a.etcdClient != nil {
 		accountConfig = accountserver.WithETCDConfigs(a.etcdClient)
 	}
-	a.accountSolana, err = accountserver.New(
+	accountAuthorizer := account.NewAuthorizer(
+		appMapper,
+		appConfigStore,
+		webhookClient,
+		accountLimiter,
+		accountLamports,
+		subsidizer,
+		kinToken,
+	)
+	a.accountSolana = accountserver.New(
 		accountConfig,
 		solanaClient,
-		accountLimiter,
 		kin4AccountNotifier,
 		tokenAccountCache,
 		infoCache,
 		info.NewLoader(tokenClient, infoCache, tokenAccountCache),
+		accountAuthorizer,
 		compositeLoader,
 		migrator,
 		kinToken,
 		subsidizer,
 		createWhitelistSecret,
+		accountLamports,
+	)
+
+	authorizer, err := transaction.NewAuthorizer(
+		appMapper,
+		appConfigStore,
+		webhookClient,
+		txLimiter,
+		subsidizer,
+		kinToken,
+		accountLamports,
 	)
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize v4 account serve")
+		return errors.Wrap(err, "failed to initialize authorizer")
 	}
-
 	a.txnSolana = txnserver.New(
 		solanaClient,
 		invoiceStore,

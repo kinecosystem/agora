@@ -23,10 +23,12 @@ import (
 
 func TestLoader_Load(t *testing.T) {
 	accounts := testutil.GenerateSolanaKeys(t, 4)
-	owner := testutil.GenerateSolanaKeys(t, 1)[0]
+	mints := testutil.GenerateSolanaKeys(t, 2)
+	owners := testutil.GenerateSolanaKeys(t, 3)
+	closeAuthority := testutil.GenerateSolanaKeys(t, 1)[0]
 
 	sc := solana.NewMockClient()
-	tc := token.NewClient(sc, accounts[0])
+	tc := token.NewClient(sc, mints[0])
 
 	accountInfoCache, err := infocache.NewCache(time.Minute, time.Minute, 100)
 	require.NoError(t, err)
@@ -36,13 +38,19 @@ func TestLoader_Load(t *testing.T) {
 	loader := info.NewLoader(tc, accountInfoCache, tokenCache)
 
 	tokenInfo := token.Account{
-		Mint:   accounts[0],
-		Owner:  owner,
+		Mint:   mints[0],
+		Owner:  owners[0],
 		Amount: 1,
 	}
+	closeAuthorityTokenInfo := token.Account{
+		Mint:           mints[0],
+		Owner:          owners[1],
+		CloseAuthority: closeAuthority,
+		Amount:         2,
+	}
 	otherTokenInfo := token.Account{
-		Mint:   accounts[1],
-		Owner:  accounts[2],
+		Mint:   mints[1],
+		Owner:  owners[2],
 		Amount: 1,
 	}
 	accountInfos := []solana.AccountInfo{
@@ -51,42 +59,57 @@ func TestLoader_Load(t *testing.T) {
 			Owner: token.ProgramKey,
 		},
 		{
+			Data:  closeAuthorityTokenInfo.Marshal(),
+			Owner: token.ProgramKey,
+		},
+		{
 			Data:  otherTokenInfo.Marshal(),
 			Owner: token.ProgramKey,
 		},
 	}
 
-	sc.On("GetAccountInfo", accounts[1], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
-	sc.On("GetAccountInfo", accounts[2], mock.Anything).Return(accountInfos[0], nil)
-	sc.On("GetAccountInfo", accounts[3], mock.Anything).Return(accountInfos[1], nil)
+	sc.On("GetAccountInfo", accounts[0], mock.Anything).Return(accountInfos[0], nil)
+	sc.On("GetAccountInfo", accounts[1], mock.Anything).Return(accountInfos[1], nil)
+	sc.On("GetAccountInfo", accounts[2], mock.Anything).Return(accountInfos[2], nil)
+	sc.On("GetAccountInfo", accounts[3], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
 
-	_, err = loader.Load(context.Background(), accounts[1], solana.CommitmentMax)
+	// Not found is returned if there is no solana account, or the account is not for the mint.
+	_, err = loader.Load(context.Background(), accounts[2], solana.CommitmentMax)
 	assert.Equal(t, err, info.ErrAccountInfoNotFound)
 	_, err = loader.Load(context.Background(), accounts[3], solana.CommitmentMax)
 	assert.Equal(t, err, info.ErrAccountInfoNotFound)
 
-	accountInfo, err := loader.Load(context.Background(), accounts[2], solana.CommitmentMax)
+	accountInfo, err := loader.Load(context.Background(), accounts[0], solana.CommitmentMax)
 	assert.NoError(t, err)
-	assert.EqualValues(t, accounts[2], accountInfo.AccountId.Value)
+	assert.EqualValues(t, accounts[0], accountInfo.AccountId.Value)
+	assert.EqualValues(t, owners[0], accountInfo.Owner.Value)
+	assert.EqualValues(t, owners[0], accountInfo.CloseAuthority.Value)
 	assert.EqualValues(t, 1, accountInfo.Balance)
+
+	accountInfo, err = loader.Load(context.Background(), accounts[1], solana.CommitmentMax)
+	assert.NoError(t, err)
+	assert.EqualValues(t, owners[1], accountInfo.Owner.Value)
+	assert.EqualValues(t, closeAuthority, accountInfo.CloseAuthority.Value)
+	assert.EqualValues(t, 2, accountInfo.Balance)
 
 	// writeback
 	sc.ExpectedCalls = nil
 
 	// Negative caching
-	_, err = loader.Load(context.Background(), accounts[1], solana.CommitmentMax)
+	_, err = loader.Load(context.Background(), accounts[2], solana.CommitmentMax)
 	assert.Equal(t, err, info.ErrAccountInfoNotFound)
 
 	// Positive caching
-	accountInfo, err = loader.Load(context.Background(), accounts[2], solana.CommitmentMax)
+	accountInfo, err = loader.Load(context.Background(), accounts[1], solana.CommitmentMax)
 	assert.NoError(t, err)
-	assert.EqualValues(t, accounts[2], accountInfo.AccountId.Value)
-	assert.EqualValues(t, 1, accountInfo.Balance)
+	assert.EqualValues(t, owners[1], accountInfo.Owner.Value)
+	assert.EqualValues(t, closeAuthority, accountInfo.CloseAuthority.Value)
+	assert.EqualValues(t, 2, accountInfo.Balance)
 
 	// Retrieve token mapping
-	ownedAccounts, err := tokenCache.Get(context.Background(), owner)
+	ownedAccounts, err := tokenCache.Get(context.Background(), owners[0])
 	assert.NoError(t, err)
-	assert.EqualValues(t, []ed25519.PublicKey{accounts[2]}, ownedAccounts)
+	assert.EqualValues(t, []ed25519.PublicKey{accounts[0]}, ownedAccounts)
 }
 
 func TestLoader_Update(t *testing.T) {

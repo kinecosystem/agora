@@ -114,7 +114,19 @@ func (l *Loader) Load(ctx context.Context, account ed25519.PublicKey, commitment
 		AccountId: &commonpb.SolanaAccountId{
 			Value: account,
 		},
+		Owner: &commonpb.SolanaAccountId{
+			Value: acc.Owner,
+		},
 		Balance: int64(acc.Amount),
+	}
+	if len(acc.CloseAuthority) > 0 {
+		info.CloseAuthority = &commonpb.SolanaAccountId{
+			Value: acc.CloseAuthority,
+		}
+	} else {
+		info.CloseAuthority = &commonpb.SolanaAccountId{
+			Value: acc.Owner,
+		}
 	}
 
 	if err := l.cache.Put(ctx, info); err != nil {

@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/webhook/createaccount"
 	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/kinecosystem/go/xdr"
 	"github.com/stretchr/testify/assert"
@@ -77,6 +79,78 @@ func setup(t *testing.T) (env testEnv) {
 	env.client = NewClient(http.DefaultClient)
 
 	return env
+}
+
+func TestCreateAccountRequest_InvalidWebhookSecret(t *testing.T) {
+	env := setup(t)
+
+	createAccountURL, err := url.Parse("www.webhook.com")
+	require.NoError(t, err)
+
+	result, err := env.client.CreateAccount(ctxWithHeaders, *createAccountURL, "", &createaccount.Request{
+		KinVersion:        4,
+		SolanaTransaction: []byte("test"),
+	})
+	require.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestCreateAccountRequest_200(t *testing.T) {
+	env := setup(t)
+
+	webhookResp := &createaccount.SuccessResponse{
+		Signature: make([]byte, ed25519.SignatureSize),
+	}
+	_, err := rand.Read(webhookResp.Signature)
+	require.NoError(t, err)
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+
+	req := &createaccount.Request{
+		KinVersion:        4,
+		SolanaTransaction: make([]byte, 4),
+	}
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	testServer := newTestServerWithJSONResponse(t, env, 200, b, appUserID, appUserPasskey, reqBytes)
+	defer func() { testServer.Close() }()
+
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+
+	resp, err := env.client.CreateAccount(ctxWithHeaders, *signURL, env.secretKey, req)
+	require.NoError(t, err)
+
+	assert.Equal(t, webhookResp.Signature, resp.Signature)
+}
+func TestCreateAccountRequest_403(t *testing.T) {
+	env := setup(t)
+
+	webhookResp := struct{}{}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+
+	req := &createaccount.Request{
+		KinVersion:        4,
+		SolanaTransaction: make([]byte, 4),
+	}
+	reqBytes, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	testServer := newTestServerWithJSONResponse(t, env, 403, b, appUserID, appUserPasskey, reqBytes)
+	defer func() { testServer.Close() }()
+
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+
+	_, err = env.client.CreateAccount(ctxWithHeaders, *signURL, env.secretKey, req)
+	assert.Error(t, err)
+
+	createAccountErr, ok := err.(*CreateAccountError)
+	assert.True(t, ok)
+	assert.Equal(t, 403, createAccountErr.StatusCode)
+
 }
 
 func TestSendSignTransactionRequest_InvalidWebhookSecret(t *testing.T) {

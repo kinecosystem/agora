@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"math"
 	"sync"
@@ -15,8 +16,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kinecosystem/agora-common/solana"
+	"github.com/kinecosystem/agora-common/solana/token"
+	"github.com/kinecosystem/agora/pkg/transaction/history"
 	historyrw "github.com/kinecosystem/agora/pkg/transaction/history/dynamodb"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
+	"github.com/kinecosystem/go/strkey"
 )
 
 var (
@@ -83,52 +87,105 @@ func getTxn(_ *cobra.Command, args []string) error {
 	reader := historyrw.New(dynamodb.New(awsConfig))
 
 	for i := range args {
-		txID, err := base58.Decode(args[i])
+		id, err := base58.Decode(args[i])
 		if err != nil {
 			return errors.Wrapf(err, "invalid id at %d", i)
 		}
 
-		entry, err := reader.GetTransaction(context.Background(), txID)
-		if err != nil {
-			return errors.Wrap(err, "failed to get entry")
-		}
+		switch len(id) {
+		case ed25519.PublicKeySize:
+			var opts history.ReadOptions
+			opts.Limit = 500
+			txIDs := make(map[string]struct{})
 
-		se := entry.GetSolana()
-		if se == nil {
-			log.Info("not a solana entry, continuing")
-			continue
-		}
+			for {
+				entries, err := reader.GetAccountTransactions(context.Background(), strkey.MustEncode(strkey.VersionByteAccountID, id), &opts)
+				if err != nil {
+					return errors.Wrap(err, "failed to get account transactions")
+				}
 
-		orderingKey, _ := entry.GetOrderingKey()
-		transactions, err := reader.GetTransactions(context.Background(), orderingKey, append(orderingKey, 1), 1024)
-		if err != nil {
-			return errors.Wrap(err, "failed to get transactions for block")
-		}
+				for _, e := range entries {
+					txID, err := e.GetTxID()
+					if err != nil {
+						return errors.Wrap(err, "entry had invalid transaction id")
+					}
 
-		var matching []*model.Entry
-		for i, e := range transactions {
-			entryID, _ := e.GetTxID()
-			if bytes.Equal(entryID, txID) {
-				matching = append(matching, transactions[i])
+					txIDs[string(txID)] = struct{}{}
+				}
+
+				if len(entries) == 0 {
+					break
+				}
+
+				ok, err := entries[len(entries)-1].GetOrderingKey()
+				if err != nil {
+					return errors.Wrap(err, "invalid ordering key")
+				}
+				opts.Start = append(ok, 0)
 			}
-		}
 
-		fmt.Printf("%s:\n", args[i])
-		fmt.Println("Direct:")
-		jStr, err := marshaller.MarshalToString(entry)
-		if err != nil {
-			return errors.Wrap(err, "failed to marshal stored entry")
-		}
-		fmt.Println("\t", jStr)
+			for txID := range txIDs {
+				fmt.Println(base58.Encode([]byte(txID)))
+			}
+		case ed25519.SignatureSize:
+			entry, err := reader.GetTransaction(context.Background(), id)
+			if err != nil {
+				return errors.Wrap(err, "failed to get entry")
+			}
 
-		for _, m := range matching {
-			jStr, err := marshaller.MarshalToString(m)
+			se := entry.GetSolana()
+			if se == nil {
+				log.Info("not a solana entry, continuing")
+				continue
+			}
+
+			orderingKey, _ := entry.GetOrderingKey()
+			transactions, err := reader.GetTransactions(context.Background(), orderingKey, append(orderingKey, 1), 1024)
+			if err != nil {
+				return errors.Wrap(err, "failed to get transactions for block")
+			}
+
+			var matching []*model.Entry
+			for i, e := range transactions {
+				entryID, _ := e.GetTxID()
+				if bytes.Equal(entryID, id) {
+					matching = append(matching, transactions[i])
+				}
+			}
+
+			fmt.Printf("%s:\n", args[i])
+			fmt.Println("Direct:")
+			fmt.Printf("\tConfirmed:%v\n", entry.GetSolana().Confirmed)
+
+			var tx solana.Transaction
+			if err := tx.Unmarshal(entry.GetSolana().Transaction); err != nil {
+				return errors.Wrap(err, "invalid solana transaction")
+			}
+			fmt.Println(tx.String())
+			d, err := token.DecompileTransfer(tx.Message, 1)
+			if err != nil {
+				return errors.Wrap(err, "failed to decompile")
+			}
+			fmt.Println("Amount:", d.Amount/1e5)
+
+			jStr, err := marshaller.MarshalToString(entry)
 			if err != nil {
 				return errors.Wrap(err, "failed to marshal stored entry")
 			}
 			fmt.Println("\t", jStr)
+
+			for _, m := range matching {
+				jStr, err := marshaller.MarshalToString(m)
+				if err != nil {
+					return errors.Wrap(err, "failed to marshal stored entry")
+				}
+				fmt.Println("\t", jStr)
+			}
+		default:
+			return errors.Errorf("invalid id size: %d", len(id))
 		}
 	}
+
 	return nil
 }
 

@@ -21,7 +21,6 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/invoice"
-	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/agora/pkg/webhook"
 )
@@ -150,7 +149,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 		}
 
 		if envelope.Tx.Memo.Text != nil {
-			if appID, ok := transaction.AppIDFromTextMemo(*envelope.Tx.Memo.Text); ok {
+			if appID, ok := kin.AppIDFromTextMemo(*envelope.Tx.Memo.Text); ok {
 				index, err := p.appMapper.GetAppIndex(ctx, appID)
 				if err != nil {
 					if err != app.ErrMappingNotFound {
@@ -214,7 +213,7 @@ func (p *Processor) queueHandler(ctx context.Context, task *task.Message) error 
 			if m, err := kin.MemoFromBase64String(string(memoInstruction.Data), true); err == nil {
 				appIndex = int(m.AppIndex())
 			} else {
-				if appID, ok := transaction.AppIDFromTextMemo(string(memoInstruction.Data)); ok {
+				if appID, ok := kin.AppIDFromTextMemo(string(memoInstruction.Data)); ok {
 					index, err := p.appMapper.GetAppIndex(ctx, appID)
 					if err != nil {
 						if err != app.ErrMappingNotFound {

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/app"
-	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	"github.com/kinecosystem/agora/pkg/transaction/history/processor"
 )
@@ -87,7 +87,7 @@ func (e *exporter) Export(start, end uint64) error {
 
 		for _, c := range sc.Creations {
 			if c.AppIndex == 0 && c.MemoText != nil {
-				if appID, ok := transaction.AppIDFromTextMemo(*c.MemoText); ok {
+				if appID, ok := kin.AppIDFromTextMemo(*c.MemoText); ok {
 					appIndex, err := e.mapper.GetAppIndex(ctx, appID)
 					if err != nil && err != app.ErrMappingNotFound {
 						return errors.Wrap(err, "failed to map app index")
@@ -113,7 +113,7 @@ func (e *exporter) Export(start, end uint64) error {
 		}
 		for _, p := range sc.Payments {
 			if p.AppIndex == 0 && p.MemoText != nil {
-				if appID, ok := transaction.AppIDFromTextMemo(*p.MemoText); ok {
+				if appID, ok := kin.AppIDFromTextMemo(*p.MemoText); ok {
 					appIndex, err := e.mapper.GetAppIndex(ctx, appID)
 					if err != nil && err != app.ErrMappingNotFound {
 						return errors.Wrap(err, "failed to map app index")

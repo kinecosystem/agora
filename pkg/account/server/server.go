@@ -11,7 +11,6 @@ import (
 
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/solana"
-	"github.com/kinecosystem/agora-common/solana/system"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
@@ -24,6 +23,7 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
+	"github.com/kinecosystem/agora/pkg/account"
 	"github.com/kinecosystem/agora/pkg/account/info"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/migration"
@@ -110,11 +110,11 @@ type server struct {
 	conf              conf
 	sc                solana.Client
 	tc                *token.Client
-	limiter           *Limiter
 	accountNotifier   *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         info.Cache
 	loader            *info.Loader
+	auth              account.Authorizer
 	migrationLoader   migration.Loader
 	migrator          migration.Migrator
 
@@ -135,17 +135,18 @@ func init() {
 func New(
 	conf ConfigProvider,
 	sc solana.Client,
-	limiter *Limiter,
 	accountNotifier *AccountNotifier,
 	tokenAccountCache tokenaccount.Cache,
 	infoCache info.Cache,
 	loader *info.Loader,
+	authorizer account.Authorizer,
 	migrationLoader migration.Loader,
 	migrator migration.Migrator,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	createWhitelistSecret string,
-) (accountpb.AccountServer, error) {
+	minAccountLamports uint64,
+) accountpb.AccountServer {
 	s := &server{
 		log:                   logrus.StandardLogger().WithField("type", "account/server"),
 		sc:                    sc,
@@ -154,33 +155,18 @@ func New(
 		tokenAccountCache:     tokenAccountCache,
 		infoCache:             infoCache,
 		loader:                loader,
+		auth:                  authorizer,
 		migrationLoader:       migrationLoader,
 		migrator:              migrator,
-		limiter:               limiter,
 		token:                 mint,
 		subsidizer:            subsidizer,
 		createWhitelistSecret: createWhitelistSecret,
+		minAccountLamports:    minAccountLamports,
 	}
 
 	conf(&s.conf)
 
-	backupValue := uint64(2039280)
-	minAccountLamports, err := sc.GetMinimumBalanceForRentExemption(token.AccountSize)
-	if err != nil {
-		s.log.WithError(err).Warn("Failed to load minimum balance for rent exemption, falling back.")
-		s.minAccountLamports = backupValue
-	} else {
-		s.minAccountLamports = minAccountLamports
-	}
-
-	if minAccountLamports != backupValue {
-		s.log.WithFields(logrus.Fields{
-			"actual": minAccountLamports,
-			"backup": backupValue,
-		}).Warn("backup value does not match actual")
-	}
-
-	return s, nil
+	return s
 }
 
 func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccountRequest) (*accountpb.CreateAccountResponse, error) {
@@ -197,85 +183,19 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Error(codes.InvalidArgument, "bad transaction encoding")
 	}
 
-	if len(s.subsidizer) == 0 {
-		if len(txn.Message.Instructions) != 2 {
-			return nil, status.Error(codes.InvalidArgument, "expected 2 instructions (Sys::CreateAccount, Token::InitializeAccount)")
-		}
-	} else {
-		if len(txn.Message.Instructions) != 3 {
-			return nil, status.Error(codes.InvalidArgument, "expected 3 instructions (Sys::CreateAccount, Token::InitializeAccount)")
-		}
-
-	}
-
-	allowed, err := s.limiter.Allow()
+	auth, err := s.auth.Authorize(ctx, txn)
 	if err != nil {
-		log.WithError(err).Warn("failed to check rate limit")
-	} else if !allowed {
-		return nil, status.Error(codes.ResourceExhausted, "rate limited")
+		return nil, err
 	}
-
-	//
-	// Validate System::Create command
-	//
-	sysCreate, err := system.DecompileCreateAccount(txn.Message, 0)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid Sys::CreateAccount instruction")
-	}
-	if sysCreate.Size != token.AccountSize {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid account size. expected %d", token.AccountSize)
-	}
-	if !bytes.Equal(sysCreate.Owner, token.ProgramKey) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid account owner. expected %s", base58.Encode(token.ProgramKey))
-	}
-	if sysCreate.Lamports != s.minAccountLamports {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid amount of lamports. expected: %d", s.minAccountLamports)
-	}
-
-	//
-	// Validate Token::InitializeAccount command
-	//
-	tokenInitialize, err := token.DecompileInitializeAccount(txn.Message, 1)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid Token::InitializeAccount instruction")
-	}
-	if !bytes.Equal(tokenInitialize.Account, sysCreate.Address) {
-		return nil, status.Error(codes.InvalidArgument, "different accounts in Sys::CreateAccount and Token::InitializeAccount")
-	}
-	if !bytes.Equal(tokenInitialize.Mint, s.token) {
-		return nil, status.Error(codes.InvalidArgument, "Token::InitializeAccount has incorrect mint")
-	}
-
-	//
-	// Validate Token::SetAuthority command
-	//
-	if len(s.subsidizer) > 0 {
-		setAuthority, err := token.DecompileSetAuthority(txn.Message, 2)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid Token::SetAuthority instruction: %v", err)
-		}
-		if setAuthority.Type != token.AuthorityTypeCloseAccount {
-			return nil, status.Errorf(codes.InvalidArgument, "Token::SetAuthority must be for CloseAuthority: %v", err)
-		}
-		if !bytes.Equal(setAuthority.Account, sysCreate.Address) {
-			return nil, status.Errorf(codes.InvalidArgument, "close authority is not for the created account: %v", err)
-		}
-		if !bytes.Equal(setAuthority.NewAuthority, s.subsidizer.Public().(ed25519.PublicKey)) {
-			return nil, status.Error(codes.InvalidArgument, "close authority is not the subsidizer")
-		}
-	}
-
-	// todo: extract to be function check
-	if len(s.subsidizer) > 0 && bytes.Equal(txn.Message.Accounts[0], s.subsidizer.Public().(ed25519.PublicKey)) {
-		if err := txn.Sign(s.subsidizer); err != nil {
-			createAccountFailures.WithLabelValues("co_sign").Inc()
-			return nil, status.Error(codes.Internal, "failed to co-sign txn")
-		}
+	if auth.Result == account.AuthorizationResultPayerRequired {
+		return &accountpb.CreateAccountResponse{
+			Result: accountpb.CreateAccountResponse_PAYER_REQUIRED,
+		}, nil
 	}
 
 	info := &accountpb.AccountInfo{
 		AccountId: &commonpb.SolanaAccountId{
-			Value: sysCreate.Address,
+			Value: auth.Address,
 		},
 	}
 
@@ -322,7 +242,7 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		return nil, status.Errorf(codes.Internal, "unhandled error from SubmitTransaction: %v", stat.ErrorResult)
 	}
 
-	if err := s.loader.Update(ctx, tokenInitialize.Owner, info); err != nil {
+	if err := s.loader.Update(ctx, auth.Owner, info); err != nil {
 		log.WithError(err).Warn("failed to update info loader")
 	}
 
@@ -384,58 +304,7 @@ func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountIn
 func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.ResolveTokenAccountsRequest) (*accountpb.ResolveTokenAccountsResponse, error) {
 	log := s.log.WithField("method", "ResolveTokenAccounts")
 
-	// Problem:
-	//   GetTokensByOwner is _super_ expensive. It does a table scan.
-	//   Therefore, we need to avoid this call at all costs.
-	//
-	// Assumptions:
-	//   1. SetAuthority is low to non-existent.
-	//     - That is, ownership rarely changes.
-	//   2. Key collision is unlikely, and protected by CreateAccount. If we resolve
-	//      an incorrect account; it must exist for the kin to be sent to the wrong person.
-	//   3. If the account was migrated, we know the mapping happened, and can optimistically return the mapping.
-	//   4. If the account was _not_ migrated, then either:
-	//     a) it has yet to be migrated.
-	//     b) it is a non-migratable kin account.
-	//     c) it does not exist.
-	//   5. Almost all users of this RPC is from consistent agora users.
-	//
-	// (1) allows us to cache heavily, so we will do so. If we can invalidate this by observing side
-	// operations, we can hopefully keep this.
-	//
-	// (2) consider the cases that we only return (without verification) the following:
-	//    a) Identity
-	//    b) Migrated
-	//    c) None
-	// - If we send to identity, then either the identity was a temporary keypair, or it is a correct
-	//   account. To prevent the former, we load GetAccountInfo() to verify.
-	// - If we return a migrated account, it must mean that the requested account _was_ a migrated account.
-	//   Therefore, this is safe, at least as long as, at least as long as (1) holds true.
-	// - None is trivially not a problem in terms of loosing the kin.
-	//
-	// (3) we can just return the mapping. We know a migration occurred if an entry exists in the migration table.
-	//
-	// (4a) we can check horizon to know whether or not it _would_ be migrated.
-	// (4b) we know from the account-mapper-table, since we write on creation. Note, this requires (5) until
-	//      we have a side updater.
-	// (4c) to know whether or not it does not exist, we have to assume:
-	//   1) a migration did _not_ occur.
-	//   2) a native create did not occur.
-	//
-	// Since we don't have total history for (4c2), we should not make any assumption.
-	//
-	// Therefore, until we have caught up history, we should:
-	//
-	// 1. If the account has been migrated, return the map.
-	// 2. If the account is not known to be migrated (i.e. not complete):
-	//    a) If the account exists in Horizon: GetAccount() on the _derived_ account. Worst case they've sent
-	//       to an address that doesn't exist. Note this is protected by the fact that only we can determine
-	//       the migration account.
-	//    b) else, fall back to the "query the chain" path.
-	//
-	// Note: we want to do this _after_ the cache, since the cache will (should?) contain values that
-	//       have been verified by the chain (at some point).
-	var putRequired bool
+	var cacheWriteback bool
 	var accounts []ed25519.PublicKey
 
 	// If we have a cached entry, return it.
@@ -443,35 +312,31 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	if err != nil && err != tokenaccount.ErrTokenAccountsNotFound {
 		log.WithError(err).Warn("failed to get token accounts from cache")
 	}
+	if len(cached) == 0 || rand.Float64() < s.conf.resolveConsistencyCheckRate.Get(ctx) {
+		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
+		if err != nil {
+			log.WithError(err).Warn("failed to get token accounts")
+			return nil, status.Error(codes.Internal, err.Error())
+		}
 
-	var shouldMigrate bool
-	if len(cached) == 0 {
-		resolveAccountMissCounter.Inc()
-
-		if s.conf.resolveShortcutsEnabled.Get(ctx) {
-			// Get the set of migration accounts (accounts that _are_ eligible for migration)
-			migratedAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
-			if err != nil && err != migration.ErrBurned && err != migration.ErrNotFound {
-				// Not great, but we can fall back
-				log.WithError(err).Warn("failed to check migration status")
-			} else if len(migratedAccounts) > 0 {
-				// (1) and (2a) from above have the same resultant behavior, so we
-				// combine the two.
-				shouldMigrate = true
-				resolveShortCuts.WithLabelValues("migration").Inc()
-				accounts = migratedAccounts
-			}
+		if len(cached) != 0 {
+			// Only need to writeback if the consistency check has failed
+			cacheWriteback = !checkCacheConsistency(cached, accounts)
+			resolveAccountHitCounter.Inc()
+		} else {
+			// Fresh load, always needs a writeback
+			cacheWriteback = true
+			resolveAccountMissCounter.Inc()
 		}
 	} else {
 		resolveAccountHitCounter.Inc()
 		accounts = cached
-
-		// This helps with recovery of migrations. Since the GetStatus table
-		// is well scaled, we can do this safely.
-		shouldMigrate = true
 	}
 
-	if shouldMigrate {
+	// We check to see if the requested account has any accounts that should be
+	// migrated.
+	migrationAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
+	if err == nil && len(migrationAccounts) > 0 {
 		// We only use recent here to ensure ResolveAccounts() is still fairly quick.
 		//
 		// Note: it's important we use the non-mapped value here.
@@ -480,84 +345,64 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 		}
 	}
 
-	if len(accounts) == 0 || rand.Float64() < s.conf.resolveConsistencyCheckRate.Get(ctx) {
-		putRequired = true
-		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
-		if err != nil {
-			log.WithError(err).Warn("failed to get token accounts")
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
-		if len(cached) != 0 {
-			checkCacheConsistency(cached, accounts)
-		}
-	}
-
 	resp := &accountpb.ResolveTokenAccountsResponse{
-		TokenAccounts: make([]*commonpb.SolanaAccountId, len(accounts)),
+		TokenAccounts:     make([]*commonpb.SolanaAccountId, len(accounts)),
+		TokenAccountInfos: make([]*accountpb.AccountInfo, len(accounts)),
 	}
 
-	// We sort the set of accounts to make the resolve order deterministic.
-	// With the exception of the identity account (outlined below), we just
-	// sort them in bytewise order.
+	associatedAccount, err := token.GetAssociatedAccount(req.AccountId.Value, s.token)
+	if err != nil {
+		log.WithError(err).Warn("failed to compute associated account")
+		return nil, status.Error(codes.Internal, "failed to compute associated account")
+	}
+
+	// The priority of account order is:
+	//
+	//   1. Associated account
+	//   2. Identity account
+	//   3. Others (in sort lexicographic order)
+	//
 	sort.Sort(sortableAccounts(accounts))
+	moveFront(accounts, req.AccountId.Value)
+	moveFront(accounts, associatedAccount)
 
-	// The number of accounts by owner is likely to be small, so this is fairly quick.
-	// If we find that the identity address is in the list, then we place it at the start,
-	// and shuffle as follows:
-	//
-	// Already in place:
-	//  [X A A A B B B B B]
-	//  [X A A A B B B B B]
-	//
-	// Mid list:
-	//  [A A A A X B B B B B]
-	//    \ \ \ \  | | | | |
-	//  [X A A A A B B B B B]
-	//
-	// End of list:
-	//  [A A A A B B B B B X]
-	//    \ \ \ \ \ \ \ \ \
-	//  [X A A A A B B B B B]
-	//
-	// when i < X, we insert at i+1
-	// when i = X, we skip
-	// when i > X, we insert at i
-	//
-	offset, identityIndex := 0, -1
 	for i := range accounts {
-		if bytes.Equal(accounts[i], req.AccountId.Value) {
-			identityIndex = i
-			offset = 1
-			break
-		}
-	}
-
-	if identityIndex >= 0 {
-		resp.TokenAccounts[0] = &commonpb.SolanaAccountId{
-			Value: accounts[identityIndex],
-		}
-	}
-	for i := range accounts {
-		if i == identityIndex {
-			offset--
-			continue
-		}
-
-		resp.TokenAccounts[i+offset] = &commonpb.SolanaAccountId{
+		resp.TokenAccounts[i] = &commonpb.SolanaAccountId{
 			Value: accounts[i],
 		}
+
+		// todo(perf): could be parallelized
+		if req.IncludeAccountInfo {
+			ai, err := s.loader.Load(ctx, accounts[i], solana.CommitmentRecent)
+			if err == info.ErrAccountInfoNotFound {
+				// This implies that the account index and state data are out of sync,
+				// which is possible if the two RPC nodes aren't in at the same point
+				// and two RPCs occur close together.
+				//
+				// For now, we just return an internal to cause the client to retry,
+				// which may help alleviate the problem. If we see a lot of these, we
+				// should look for a better, more involved, solution.
+				log.WithError(err).Warn("account index and state are out of sync")
+				return nil, status.Errorf(codes.Internal, "account index and state are out of sync")
+			} else if err != nil {
+				return nil, status.Error(codes.Internal, "failed to load account info")
+			}
+
+			resp.TokenAccountInfos[i] = ai
+		} else {
+			resp.TokenAccountInfos[i] = &accountpb.AccountInfo{
+				AccountId: &commonpb.SolanaAccountId{
+					Value: accounts[i],
+				},
+			}
+		}
 	}
 
-	if putRequired {
+	if cacheWriteback {
 		putCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if len(resp.TokenAccounts) > 0 {
-			keys := make([]ed25519.PublicKey, len(resp.TokenAccounts))
-			for i, tokenAccount := range resp.TokenAccounts {
-				keys[i] = tokenAccount.Value
-			}
-			if err = s.tokenAccountCache.Put(putCtx, req.AccountId.Value, keys); err != nil {
+		if len(accounts) > 0 {
+			if err = s.tokenAccountCache.Put(putCtx, req.AccountId.Value, accounts); err != nil {
 				log.WithError(err).Warn("failed to cache token accounts")
 			}
 		} else {
@@ -746,22 +591,30 @@ func (s *server) isWhitelisted(ctx context.Context) (userAgent string, whitelist
 	return val, true
 }
 
-func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) {
+// checkCacheConsistency returns whether or not the cached set is equivalent to the
+// actual set.
+func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) bool {
 	if len(cached) != len(fetched) {
 		consistencyCheckFailedCounter.Inc()
-	} else {
-		keys := make(map[string]struct{})
-		for _, a := range cached {
-			keys[base58.Encode(a)] = struct{}{}
-		}
+		return false
+	}
 
-		for _, a := range fetched {
-			if _, ok := keys[base58.Encode(a)]; !ok {
-				consistencyCheckFailedCounter.Inc()
-				break
-			}
+	cachedKeys := make(map[string]struct{})
+	for _, a := range cached {
+		cachedKeys[string(a)] = struct{}{}
+	}
+
+	// Note: we don't have to compute the reverse set as we assume that both
+	// cached and fetched are distinct. If this is _not_ true, then it is possible
+	// for this method to return a false positive.
+	for _, a := range fetched {
+		if _, ok := cachedKeys[string(a)]; !ok {
+			consistencyCheckFailedCounter.Inc()
+			return false
 		}
 	}
+
+	return true
 }
 
 func registerMetrics() (err error) {
@@ -832,4 +685,41 @@ func registerMetrics() (err error) {
 	}
 
 	return nil
+}
+
+func moveFront(accounts []ed25519.PublicKey, target ed25519.PublicKey) {
+	// The size of accounts is likely to be small, so this is fairly quick.
+	//
+	// If we find that the target address is in the list, then we place it at the start,
+	// and shuffle as follows:
+	//
+	// Already in place:
+	//  [X A A A B B B B B]
+	//  [X A A A B B B B B]
+	//
+	// Mid list:
+	//  [A A A A X B B B B B]
+	//    \ \ \ \  | | | | |
+	//  [X A A A A B B B B B]
+	//
+	// End of list:
+	//  [A A A A B B B B B X]
+	//    \ \ \ \ \ \ \ \ \
+	//  [X A A A A B B B B B]
+	targetIndex := -1
+	for i := range accounts {
+		if bytes.Equal(accounts[i], target) {
+			targetIndex = i
+			//offset = 1
+			break
+		}
+	}
+
+	if targetIndex <= 0 {
+		return
+	}
+	for i := targetIndex; i > 0; i-- {
+		accounts[i] = accounts[i-1]
+	}
+	accounts[0] = target
 }

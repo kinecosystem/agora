@@ -16,15 +16,14 @@ import (
 	solanamemo "github.com/kinecosystem/agora-common/solana/memo"
 	"github.com/kinecosystem/agora-common/solana/token"
 	agoratestutil "github.com/kinecosystem/agora-common/testutil"
+	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/kinecosystem/go/clients/horizon"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpbv3 "github.com/kinecosystem/agora-api/genproto/common/v3"
@@ -78,8 +77,8 @@ type mockAuthorizer struct {
 	mock.Mock
 }
 
-func (m *mockAuthorizer) Authorize(ctx context.Context, txn transaction.Transaction) (transaction.Authorization, error) {
-	args := m.Called(ctx, txn)
+func (m *mockAuthorizer) Authorize(ctx context.Context, tx solana.Transaction, il *commonpbv3.InvoiceList, ignoreSigned bool) (transaction.Authorization, error) {
+	args := m.Called(ctx, tx, (*commonpbv3.InvoiceList)(il), ignoreSigned)
 	return args.Get(0).(transaction.Authorization), args.Error(1)
 }
 
@@ -331,20 +330,148 @@ func TestGetHistory(t *testing.T) {
 	}
 }
 
+func TestSignTransaction(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
+	}
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), false).Return(auth, nil)
+
+	resp, err := env.client.SignTransaction(context.Background(), &transactionpb.SignTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SignTransactionResponse_OK, resp.Result)
+	assert.Equal(t, auth.SignResponse.Signature, resp.Signature.Value)
+	assert.Empty(t, env.rw.Writes)
+
+	// Neither the solana client or the webhooks should have been called.
+	env.sc.Mock.AssertExpectations(t)
+	env.webhookSubmitter.Mock.AssertExpectations(t)
+}
+
+func TestSignTransaction_Rejected(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultRejected,
+	}
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), false).Return(auth, nil)
+
+	resp, err := env.client.SignTransaction(context.Background(), &transactionpb.SignTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SignTransactionResponse_REJECTED, resp.Result)
+	assert.Nil(t, resp.Signature)
+	assert.Nil(t, resp.InvoiceErrors)
+
+	// Neither the solana client or the webhooks should have been called.
+	env.sc.Mock.AssertExpectations(t)
+	env.webhookSubmitter.Mock.AssertExpectations(t)
+}
+
+func TestSignTransaction_PayerRequired(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultPayerRequired,
+	}
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), false).Return(auth, nil)
+
+	resp, err := env.client.SignTransaction(context.Background(), &transactionpb.SignTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SignTransactionResponse_REJECTED, resp.Result)
+	assert.Nil(t, resp.Signature)
+	assert.Nil(t, resp.InvoiceErrors)
+
+	// Neither the solana client or the webhooks should have been called.
+	env.sc.Mock.AssertExpectations(t)
+	env.webhookSubmitter.Mock.AssertExpectations(t)
+}
+
+func TestSignTransaction_InvoiceErrors(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultInvoiceError,
+		InvoiceErrors: []*commonpbv3.InvoiceError{
+			{
+				OpIndex: 0,
+				Reason:  commonpbv3.InvoiceError_ALREADY_PAID,
+				Invoice: &commonpbv3.Invoice{
+					Items: []*commonpbv3.Invoice_LineItem{
+						{
+							Title: "test1",
+						},
+					},
+				},
+			},
+			{
+				OpIndex: 1,
+				Invoice: &commonpbv3.Invoice{
+					Items: []*commonpbv3.Invoice_LineItem{
+						{
+							Title: "test2",
+						},
+					},
+				},
+			},
+		},
+	}
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), false).Return(auth, nil)
+
+	resp, err := env.client.SignTransaction(context.Background(), &transactionpb.SignTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SignTransactionResponse_INVOICE_ERROR, resp.Result)
+	assert.Nil(t, resp.Signature)
+	assert.Equal(t, len(auth.InvoiceErrors), len(resp.InvoiceErrors))
+	for i := range auth.InvoiceErrors {
+		assert.True(t, proto.Equal(auth.InvoiceErrors[i], resp.InvoiceErrors[i]))
+	}
+
+	// Neither the solana client or the webhooks should have been called.
+	env.sc.Mock.AssertExpectations(t)
+	env.webhookSubmitter.Mock.AssertExpectations(t)
+}
+
 func TestSubmitTransaction_Plain(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
-	})
-
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
 
 	senderInfo := token.Account{
@@ -405,19 +532,7 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 1, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.Nil(t, authTx.InvoiceList)
-	assert.Nil(t, authTx.Memo.Memo)
-	assert.Nil(t, authTx.Memo.Text)
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 
 	// Ensure speculative updates is working
 	for i, a := range accounts {
@@ -438,19 +553,287 @@ func TestSubmitTransaction_Plain(t *testing.T) {
 	assert.Equal(t, txn.Marshal(), env.events[0].GetTransactionEvent().Transaction)
 }
 
+func TestSubmitTransaction_AlreadySigned(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
+	require.NoError(t, txn.Sign(env.subsidizer))
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
+
+	senderInfo := token.Account{
+		Mint:   env.token,
+		Owner:  accounts[0],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	receiverInfo := token.Account{
+		Mint:   env.token,
+		Owner:  accounts[1],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	accountInfos := []solana.AccountInfo{
+		{
+			Owner: token.ProgramKey,
+			Data:  senderInfo.Marshal(),
+		},
+		{
+			Owner: token.ProgramKey,
+			Data:  receiverInfo.Marshal(),
+		},
+	}
+
+	env.sc.On("GetAccountInfo", accounts[0], mock.Anything).Return(accountInfos[0], nil)
+	env.sc.On("GetAccountInfo", accounts[1], mock.Anything).Return(accountInfos[1], nil)
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	var submitted solana.Transaction
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).
+		Run(func(args mock.Arguments) {
+			submitted = args.Get(0).(solana.Transaction)
+		}).
+		Return(sig, &solana.SignatureStatus{}, nil)
+
+	for _, a := range accounts {
+		info := &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: a,
+			},
+			Balance: 10,
+		}
+		assert.NoError(t, env.infoCache.Put(context.Background(), info))
+	}
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	assert.Equal(t, sig[:], resp.Signature.Value)
+	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
+	assert.Len(t, env.rw.Writes, 1)
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
+	// Ensure speculative updates is working
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, 9, info.Balance)
+		} else {
+			assert.EqualValues(t, 11, info.Balance)
+		}
+	}
+
+	env.webhookSubmitter.AssertExpectations(t)
+	submittedEntry := env.webhookSubmitter.Calls[0].Arguments.Get(1).(*model.Entry)
+	assert.EqualValues(t, txn.Marshal(), submittedEntry.GetSolana().Transaction)
+	require.Equal(t, 1, len(env.events))
+	assert.Equal(t, txn.Marshal(), env.events[0].GetTransactionEvent().Transaction)
+}
+
+func TestSubmitTransaction_CloseAccount(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 4, 2, nil, nil)
+
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
+	}
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(1)
+
+	for i := 0; i < 5; i++ {
+		receiverInfo := token.Account{
+			Mint:   env.token,
+			Owner:  accounts[i],
+			Amount: 20,
+			State:  token.AccountStateInitialized,
+		}
+		accountInfo := solana.AccountInfo{
+			Owner: token.ProgramKey,
+			Data:  receiverInfo.Marshal(),
+		}
+
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(accountInfo, nil)
+	}
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+
+	var submitted solana.Transaction
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).
+		Run(func(args mock.Arguments) {
+			submitted = args.Get(0).(solana.Transaction)
+		}).
+		Return(sig, &solana.SignatureStatus{}, nil)
+
+	for _, a := range accounts {
+		pub := make(ed25519.PublicKey, ed25519.PublicKeySize)
+		copy(pub, a)
+		info := &accountpb.AccountInfo{
+			AccountId: &commonpb.SolanaAccountId{
+				Value: pub,
+			},
+			Balance: 10,
+		}
+		assert.NoError(t, env.infoCache.Put(context.Background(), info))
+	}
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	assert.Equal(t, sig[:], resp.Signature.Value)
+	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
+	assert.Len(t, env.rw.Writes, 1)
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
+	// Ensure speculative updates is working
+	for i, a := range accounts {
+		info, err := env.infoCache.Get(context.Background(), a)
+		assert.NoError(t, err)
+
+		if i == 0 {
+			assert.EqualValues(t, 10-(1+2+3+4), info.Balance)
+		} else {
+			assert.EqualValues(t, 10+i, info.Balance)
+		}
+	}
+
+	env.webhookSubmitter.AssertExpectations(t)
+	submittedEntry := env.webhookSubmitter.Calls[0].Arguments.Get(1).(*model.Entry)
+	assert.EqualValues(t, txn.Marshal(), submittedEntry.GetSolana().Transaction)
+	require.Equal(t, 1, len(env.events))
+	assert.Equal(t, txn.Marshal(), env.events[0].GetTransactionEvent().Transaction)
+}
+
+func TestSubmitTransaction_CreateAndFund(t *testing.T) {
+	env, cleanup := setupServerEnv(t)
+	defer cleanup()
+
+	keys := testutil.GenerateSolanaKeys(t, 3)
+
+	create, account, err := token.CreateAssociatedTokenAccount(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		keys[0],
+		env.token,
+	)
+	require.NoError(t, err)
+	txn := solana.NewTransaction(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		create,
+		token.Transfer(
+			keys[2],
+			account,
+			keys[1],
+			7,
+		),
+	)
+
+	auth := transaction.Authorization{
+		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
+	}
+
+	senderInfo := token.Account{
+		Mint:   env.token,
+		Owner:  keys[2],
+		Amount: 10,
+		State:  token.AccountStateInitialized,
+	}
+	receiverInfo := token.Account{
+		Mint:   env.token,
+		Owner:  account,
+		Amount: 0,
+		State:  token.AccountStateInitialized,
+	}
+	accountInfos := []solana.AccountInfo{
+		{
+			Owner: token.ProgramKey,
+			Data:  senderInfo.Marshal(),
+		},
+		{
+			Owner: token.ProgramKey,
+			Data:  receiverInfo.Marshal(),
+		},
+	}
+
+	var sig solana.Signature
+	var submitted solana.Transaction
+	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentRoot).
+		Run(func(args mock.Arguments) {
+			submitted = args.Get(0).(solana.Transaction)
+		}).
+		Return(sig, &solana.SignatureStatus{}, nil)
+
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
+	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
+	env.sc.On("GetAccountInfo", keys[2], mock.Anything).Return(accountInfos[0], nil)
+	env.sc.On("GetAccountInfo", account, mock.Anything).Return(accountInfos[1], nil)
+
+	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
+		Transaction: &commonpb.Transaction{
+			Value: txn.Marshal(),
+		},
+		Commitment: common.Commitment_ROOT,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, transactionpb.SubmitTransactionResponse_OK, resp.Result)
+	assert.Equal(t, sig[:], resp.Signature.Value)
+	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
+	assert.Len(t, env.rw.Writes, 1)
+
+	assert.NoError(t, txn.Sign(env.subsidizer))
+
+	// Ensure speculative updates is working
+	info, err := env.infoCache.Get(context.Background(), keys[2])
+	assert.NoError(t, err)
+	assert.EqualValues(t, 3, info.Balance)
+	info, err = env.infoCache.Get(context.Background(), account)
+	assert.NoError(t, err)
+	assert.EqualValues(t, 7, info.Balance)
+
+	env.webhookSubmitter.AssertExpectations(t)
+	submittedEntry := env.webhookSubmitter.Calls[0].Arguments.Get(1).(*model.Entry)
+	assert.EqualValues(t, txn.Marshal(), submittedEntry.GetSolana().Transaction)
+	require.Equal(t, 1, len(env.events))
+	assert.Equal(t, txn.Marshal(), env.events[0].GetTransactionEvent().Transaction)
+}
+
 func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
-	})
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
@@ -480,19 +863,7 @@ func TestSubmitTransaction_DuplicateSignature(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 1, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.Nil(t, authTx.InvoiceList)
-	assert.Nil(t, authTx.Memo.Memo)
-	assert.Nil(t, authTx.Memo.Text)
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 
 	// Update the entry information, and then submit again.
 	//
@@ -519,12 +890,15 @@ func TestSubmitTransaction_DedupeSuccess(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Once()
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Once()
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
@@ -570,13 +944,16 @@ func TestSubmitTransaction_DedupeFailed(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	// Since the calls fail, we expect that retries at a higher level go through.
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(4)
+	env.authorizer.On("Authorize", mock.Anything, mock.Anything, mock.Anything, true).Return(auth, nil).Times(4)
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, txn.Message.Marshal()))
@@ -631,12 +1008,15 @@ func TestSubmitTransaction_DedupeConcurrent(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(2)
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil).Times(7)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(2)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
@@ -708,7 +1088,7 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, 0, nil, nil)
 
 	for _, a := range accounts {
 		tokenAccountInfo := token.Account{
@@ -723,13 +1103,13 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 		env.sc.On("GetAccountInfo", a, mock.Anything).Return(accountInfo, nil)
 	}
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
-	})
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
@@ -753,13 +1133,6 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 3, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.Nil(t, authTx.InvoiceList)
-	assert.Nil(t, authTx.Memo.Memo)
-	assert.Nil(t, authTx.Memo.Text)
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
 
 	for i, a := range accounts {
@@ -774,18 +1147,13 @@ func TestSubmitTransaction_Plain_Batch(t *testing.T) {
 			assert.EqualValues(t, 100+i, info.Balance)
 		}
 	}
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, 0, nil, nil)
 
 	for i, a := range accounts {
 		if i == 0 {
@@ -805,13 +1173,13 @@ func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
 		env.sc.On("GetAccountInfo", a, mock.Anything).Return(accountInfo, nil)
 	}
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
-	})
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
 	var sig solana.Signature
@@ -835,13 +1203,6 @@ func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 3, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.Nil(t, authTx.InvoiceList)
-	assert.Nil(t, authTx.Memo.Memo)
-	assert.Nil(t, authTx.Memo.Text)
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
 
 	for i, a := range accounts {
@@ -854,23 +1215,21 @@ func TestSubmitTransaction_PartialSpeculativeFailure(t *testing.T) {
 			assert.EqualValues(t, 100+i, ai.Balance)
 		}
 	}
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_ChainedSpeculativeSubmissions(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, accounts := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Times(3)
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil).Times(3)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil).Times(3)
 
 	senderInfo := token.Account{
@@ -983,15 +1342,19 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	invoice, invoiceHash, invoiceBytes := generateInvoice(t, 1)
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, invoiceHash, nil)
+	invoice, invoiceHash, _ := generateInvoice(t, 1)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, invoiceHash, nil)
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
+
+	var calledInvoice *commonpbv3.InvoiceList
+	env.authorizer.On("Authorize", mock.Anything, txn, mock.Anything, true).Return(auth, nil).Run(func(args mock.Arguments) {
+		calledInvoice = args.Get(2).(*commonpbv3.InvoiceList)
 	})
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
@@ -1014,34 +1377,27 @@ func TestSubmitTransaction_Invoice(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, proto.Equal(stored, invoice))
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 1, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.True(t, proto.Equal(authTx.InvoiceList, invoice))
-	assert.Nil(t, authTx.Memo.Text)
-	assert.Equal(t, invoiceHash, authTx.Memo.Memo.ForeignKey()[:28])
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Equal(t, invoiceBytes, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
+	assert.True(t, proto.Equal(calledInvoice, invoice))
 }
 
 func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	invoice, invoiceHash, invoiceBytes := generateInvoice(t, 3)
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, invoiceHash, nil)
+	invoice, invoiceHash, _ := generateInvoice(t, 3)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, 0, invoiceHash, nil)
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
+
+	var calledInvoice *commonpbv3.InvoiceList
+	env.authorizer.On("Authorize", mock.Anything, txn, mock.Anything, true).Return(auth, nil).Run(func(args mock.Arguments) {
+		calledInvoice = args.Get(2).(*commonpbv3.InvoiceList)
 	})
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 
@@ -1064,36 +1420,8 @@ func TestSubmitTransaction_Invoice_Batch(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, proto.Equal(stored, invoice))
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 3, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.True(t, proto.Equal(authTx.InvoiceList, invoice))
-	assert.Nil(t, authTx.Memo.Text)
-	assert.Equal(t, invoiceHash, authTx.Memo.Memo.ForeignKey()[:28])
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Equal(t, invoiceBytes, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
-}
-
-func TestSubmitTransaction_Invoice_InvalidBatch(t *testing.T) {
-	env, cleanup := setupServerEnv(t)
-	defer cleanup()
-
-	invoice, invoiceHash, _ := generateInvoice(t, 5)
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 3, invoiceHash, nil)
-
-	_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-		Transaction: &commonpb.Transaction{
-			Value: txn.Marshal(),
-		},
-		InvoiceList: invoice,
-		Commitment:  common.Commitment_ROOT,
-	})
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.True(t, proto.Equal(calledInvoice, invoice))
 }
 
 func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
@@ -1101,15 +1429,15 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	defer cleanup()
 
 	memo := "test"
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, &memo)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, &memo)
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
-	})
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
@@ -1134,19 +1462,7 @@ func TestSubmitTransaction_Text_MaybeB64(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 1, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.Nil(t, authTx.InvoiceList)
-	assert.NotNil(t, memo, *authTx.Memo.Text)
-	assert.Nil(t, authTx.Memo.Memo)
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Text_NotB64(t *testing.T) {
@@ -1154,15 +1470,15 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	defer cleanup()
 
 	memo := "---test"
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, &memo)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, &memo)
 
-	var authTx transaction.Transaction
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil).Run(func(args mock.Arguments) {
-		authTx = args.Get(1).(transaction.Transaction)
-	})
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.webhookSubmitter.On("Submit", mock.Anything, mock.Anything).Return(nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
@@ -1187,31 +1503,19 @@ func TestSubmitTransaction_Text_NotB64(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 	assert.Len(t, env.rw.Writes, 1)
 
-	assert.EqualValues(t, 4, authTx.Version)
-	assert.EqualValues(t, 1, authTx.OpCount)
-	assert.EqualValues(t, sig[:], authTx.ID)
-	assert.Nil(t, authTx.InvoiceList)
-	assert.NotNil(t, memo, *authTx.Memo.Text)
-	assert.Nil(t, authTx.Memo.Memo)
-
 	assert.NoError(t, txn.Sign(env.subsidizer))
-
-	assert.NotNil(t, authTx.SignRequest)
-	assert.EqualValues(t, 4, authTx.SignRequest.KinVersion)
-	assert.Nil(t, authTx.SignRequest.InvoiceList)
-	assert.Equal(t, txn.Marshal(), authTx.SignRequest.SolanaTransaction)
 }
 
 func TestSubmitTransaction_Rejected(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultRejected,
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil)
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		Transaction: &commonpb.Transaction{
@@ -1228,7 +1532,7 @@ func TestSubmitTransaction_InvoiceErrors(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultInvoiceError,
@@ -1248,7 +1552,7 @@ func TestSubmitTransaction_InvoiceErrors(t *testing.T) {
 			},
 		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil)
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		Transaction: &commonpb.Transaction{
@@ -1268,12 +1572,12 @@ func TestSubmitTransaction_NoPayer(t *testing.T) {
 
 	env.server.subsidizer = nil
 
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
-		Result: transaction.AuthorizationResultOK,
+		Result: transaction.AuthorizationResultPayerRequired,
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil)
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 
 	resp, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
 		Transaction: &commonpb.Transaction{
@@ -1290,12 +1594,15 @@ func TestSubmitTransaction_SubmitError(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
-	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, nil, nil)
+	txn, _ := generateTransaction(t, env.subsidizer.Public().(ed25519.PublicKey), 1, 0, nil, nil)
 
 	auth := transaction.Authorization{
 		Result: transaction.AuthorizationResultOK,
+		SignResponse: &signtransaction.SuccessResponse{
+			Signature: ed25519.Sign(env.subsidizer, txn.Message.Marshal()),
+		},
 	}
-	env.authorizer.On("Authorize", mock.Anything, mock.Anything).Return(auth, nil)
+	env.authorizer.On("Authorize", mock.Anything, txn, (*commonpbv3.InvoiceList)(nil), true).Return(auth, nil)
 	env.sc.On("GetAccountInfo", mock.Anything, mock.Anything).Return(solana.AccountInfo{}, nil)
 
 	var sig solana.Signature
@@ -1329,65 +1636,7 @@ func TestSubmitTransaction_SubmitError(t *testing.T) {
 	assert.Equal(t, submitted.Signatures[0][:], resp.Signature.Value)
 }
 
-func TestSubmitTransaction_BadTransaction(t *testing.T) {
-	env, cleanup := setupServerEnv(t)
-	defer cleanup()
-
-	var transactions []solana.Transaction
-
-	payer := testutil.GenerateSolanaKeypair(t)
-	accounts := testutil.GenerateSolanaKeys(t, 2)
-
-	// No instructions
-	transactions = append(transactions, solana.NewTransaction(
-		payer.Public().(ed25519.PublicKey),
-	))
-
-	// memo only
-	transactions = append(transactions, solana.NewTransaction(
-		payer.Public().(ed25519.PublicKey),
-		solanamemo.Instruction("test"),
-	))
-
-	// Memo out of order
-	transactions = append(transactions, solana.NewTransaction(
-		payer.Public().(ed25519.PublicKey),
-		token.Transfer(
-			accounts[0],
-			accounts[1],
-			accounts[0],
-			1,
-		),
-		solanamemo.Instruction("test"),
-	))
-
-	// unknown instruction
-	transactions = append(transactions, solana.NewTransaction(
-		payer.Public().(ed25519.PublicKey),
-		token.Transfer(
-			accounts[0],
-			accounts[1],
-			accounts[0],
-			1,
-		),
-		solana.NewInstruction(
-			make([]byte, 32),
-			[]byte("data"),
-			solana.NewReadonlyAccountMeta(accounts[0], true),
-		),
-	))
-
-	for _, txn := range transactions {
-		_, err := env.client.SubmitTransaction(context.Background(), &transactionpb.SubmitTransactionRequest{
-			Transaction: &commonpb.Transaction{
-				Value: txn.Marshal(),
-			},
-		})
-		assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	}
-}
-
-func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceivers int, invoiceHash []byte, textMemo *string) (solana.Transaction, []ed25519.PublicKey) {
+func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceivers, numCloseAccounts int, invoiceHash []byte, textMemo *string) (solana.Transaction, []ed25519.PublicKey) {
 	sender := testutil.GenerateSolanaKeypair(t)
 	receivers := testutil.GenerateSolanaKeys(t, numReceivers)
 
@@ -1415,6 +1664,18 @@ func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceiver
 				uint64(i+1),
 			),
 		)
+
+		if numCloseAccounts > 0 {
+			instructions = append(
+				instructions,
+				token.CloseAccount(
+					receivers[i],
+					sender.Public().(ed25519.PublicKey),
+					receivers[i],
+				),
+			)
+			numCloseAccounts--
+		}
 	}
 
 	txn := solana.NewTransaction(
@@ -1422,6 +1683,14 @@ func generateTransaction(t *testing.T, subsidizer ed25519.PublicKey, numReceiver
 		instructions...,
 	)
 	assert.NoError(t, txn.Sign(sender))
+
+	for i := range txn.Message.Instructions {
+		if txn.Message.Instructions[i].Accounts == nil {
+			// Note: we do this to satisfy the mock comparators. They're functionally the same,
+			// but a nil slice and an empty slice aren't considered the same by mock.
+			txn.Message.Instructions[i].Accounts = make([]byte, 0)
+		}
+	}
 
 	return txn, accounts
 }

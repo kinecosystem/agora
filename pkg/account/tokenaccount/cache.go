@@ -50,27 +50,42 @@ func (t *cacheUpdater) OnTransaction(txn solana.BlockTransaction) {
 
 	accounts := make(map[string]struct{})
 	for i := range txn.Transaction.Message.Instructions {
-		init, err := token.DecompileInitializeAccount(txn.Transaction.Message, i)
-		if err == nil {
+		cmd, _ := token.GetCommand(txn.Transaction.Message, i)
+		switch cmd {
+		case token.CommandInitializeAccount:
+			init, err := token.DecompileInitializeAccount(txn.Transaction.Message, i)
+			if err != nil {
+				log.WithError(err).Warn("failed to decompile initialize account instruction")
+				continue
+			}
+
 			if bytes.Equal(init.Mint, t.mint) {
 				accounts[string(init.Owner)] = struct{}{}
 			}
-			continue
-		} else if err != solana.ErrIncorrectInstruction && err != solana.ErrIncorrectProgram {
-			log.WithError(err).Warn("failed to decompile initialize account instruction")
-			continue
-		}
+		case token.CommandSetAuthority:
+			setAuth, err := token.DecompileSetAuthority(txn.Transaction.Message, i)
+			if err != nil {
+				log.WithError(err).Warn("failed to decompile set authority instruction")
+				continue
+			}
 
-		setAuth, err := token.DecompileSetAuthority(txn.Transaction.Message, i)
-		if err == nil {
 			if setAuth.Type == token.AuthorityTypeAccountHolder {
 				accounts[string(setAuth.CurrentAuthority)] = struct{}{}
 				accounts[string(setAuth.NewAuthority)] = struct{}{}
 			}
-			continue
-		} else if err != solana.ErrIncorrectInstruction && err != solana.ErrIncorrectProgram {
-			log.WithError(err).Warn("failed to decompile set authority instruction")
-			continue
+		case token.CommandCloseAccount:
+			closeAccount, err := token.DecompileCloseAccount(txn.Transaction.Message, i)
+			if err != nil {
+				log.WithError(err).Warn("failed to decompile close authority instruction")
+				continue
+			}
+
+			accounts[string(closeAccount.Owner)] = struct{}{}
+		default:
+			assoc, err := token.DecompileCreateAssociatedAccount(txn.Transaction.Message, i)
+			if err == nil {
+				accounts[string(assoc.Owner)] = struct{}{}
+			}
 		}
 	}
 

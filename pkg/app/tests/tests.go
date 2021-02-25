@@ -23,6 +23,9 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 		require.Equal(t, app.ErrNotFound, err)
 		require.Nil(t, actualConfig)
 
+		createAccountURL, err := url.Parse("test.kin.org/createAccount")
+		require.NoError(t, err)
+
 		signTxURL, err := url.Parse("test.kin.org/signtx")
 		require.NoError(t, err)
 
@@ -31,6 +34,7 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 
 		config := &app.Config{
 			AppName:            "kin",
+			CreateAccountURL:   createAccountURL,
 			SignTransactionURL: signTxURL,
 			EventsURL:          eventsURL,
 		}

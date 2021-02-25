@@ -15,6 +15,7 @@ import (
 	"github.com/kinecosystem/agora-common/headers"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
+	"github.com/kinecosystem/agora-common/webhook/createaccount"
 	"github.com/kinecosystem/agora-common/webhook/signtransaction"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -36,6 +37,15 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type CreateAccountError struct {
+	Message    string
+	StatusCode int
+}
+
+func (e *CreateAccountError) Error() string {
+	return fmt.Sprintf("%s (status code %d)", e.Message, e.StatusCode)
+}
+
 type SignTransactionError struct {
 	Message         string
 	StatusCode      int
@@ -52,6 +62,68 @@ func NewClient(httpClient *http.Client) *Client {
 		log:        logrus.StandardLogger().WithField("type", "webhook/client"),
 		httpClient: httpClient,
 	}
+}
+
+func (c *Client) CreateAccount(ctx context.Context, createAccountURL url.URL, webhookSecret string, req *createaccount.Request) (result *createaccount.SuccessResponse, err error) {
+	createAccountJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal create account request body")
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, createAccountURL.String(), bytes.NewBuffer(createAccountJSON))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create create account http request")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := sign(httpReq, webhookSecret, createAccountJSON); err != nil {
+		return nil, err
+	}
+
+	userID, err := headers.GetASCIIHeaderByName(ctx, appUserIDCtxHeader)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get app user ID header")
+	}
+	userPasskey, err := headers.GetASCIIHeaderByName(ctx, appUserPasskeyCtxHeader)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get app user passkey header")
+	}
+
+	if (userID != "") != (userPasskey != "") {
+		return nil, errors.New("if app user auth headers are used, both must be present")
+	} else if userID != "" {
+		httpReq.Header.Set(appUserIDHeader, userID)
+		httpReq.Header.Set(appUserPasskeyHeader, userPasskey)
+	}
+
+	var resp *http.Response
+	_, err = retry.Retry(
+		func() error {
+			resp, err = c.httpClient.Do(httpReq)
+			return err
+		},
+		retry.Limit(3),
+		retry.BackoffWithJitter(backoff.BinaryExponential(100*time.Millisecond), 440*time.Millisecond, 0.1),
+		retry.NonRetriableErrors(app.ErrURLNotSet),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to call create account webhook")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		decodedResp := &createaccount.SuccessResponse{}
+		err = json.NewDecoder(resp.Body).Decode(decodedResp)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to decode 200 response")
+		}
+		return decodedResp, nil
+	}
+
+	if resp.StatusCode == 403 {
+		return nil, &CreateAccountError{Message: "", StatusCode: 403}
+	}
+
+	return nil, &CreateAccountError{Message: "failed to create account", StatusCode: resp.StatusCode}
 }
 
 // SignTransaction submits a sign transaction request to an app webhook

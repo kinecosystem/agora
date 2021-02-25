@@ -12,6 +12,7 @@ var (
 
 type Config struct {
 	AppName            string
+	CreateAccountURL   *url.URL
 	SignTransactionURL *url.URL
 	EventsURL          *url.URL
 	WebhookSecret      string

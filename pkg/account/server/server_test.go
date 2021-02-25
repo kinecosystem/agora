@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	xrate "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -29,22 +29,29 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
+	"github.com/kinecosystem/agora/pkg/account"
 	"github.com/kinecosystem/agora/pkg/account/info"
 	infodb "github.com/kinecosystem/agora/pkg/account/info/memory"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount/memory"
 	"github.com/kinecosystem/agora/pkg/migration"
 	migrationstore "github.com/kinecosystem/agora/pkg/migration/memory"
-	"github.com/kinecosystem/agora/pkg/rate"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
+
+type mockAuthorizer struct {
+	mock.Mock
+}
+
+func (m *mockAuthorizer) Authorize(ctx context.Context, tx solana.Transaction) (account.Authorization, error) {
+	args := m.Called(ctx, tx)
+	return args.Get(0).(account.Authorization), args.Error(1)
+}
 
 type testEnv struct {
 	token      ed25519.PublicKey
 	subsidizer ed25519.PrivateKey
 	client     accountpb.AccountClient
-
-	minLamports uint64
 
 	sc *solana.MockClient
 	tc *token.Client
@@ -54,6 +61,7 @@ type testEnv struct {
 	infoCache         info.Cache
 	migrationStore    migration.Store
 	migrator          migration.Migrator
+	auth              *mockAuthorizer
 
 	server *server
 }
@@ -72,6 +80,7 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 	env.sc = solana.NewMockClient()
 	env.tc = token.NewClient(env.sc, env.token)
 	env.notifier = NewAccountNotifier()
+	env.auth = &mockAuthorizer{}
 
 	env.tokenAccountCache, err = memory.New(time.Hour, 5)
 	require.NoError(t, err)
@@ -86,28 +95,24 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 		env.migrator = migration.NewNoopMigrator()
 	}
 
-	env.sc.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(uint64(50), nil)
-	env.minLamports = 50
-
-	s, err := New(
+	env.server = New(
 		conf,
 		env.sc,
-		NewLimiter(rate.NewLocalRateLimiter(xrate.Limit(5))),
 		env.notifier,
 		env.tokenAccountCache,
 		env.infoCache,
 		info.NewLoader(env.tc, env.infoCache, env.tokenAccountCache),
+		env.auth,
 		migration.NewNoopLoader(),
 		env.migrator,
 		env.token,
 		env.subsidizer,
 		"",
-	)
-	require.NoError(t, err)
-	env.server = s.(*server)
+		50,
+	).(*server)
 
 	serv.RegisterService(func(server *grpc.Server) {
-		accountpb.RegisterAccountServer(server, s)
+		accountpb.RegisterAccountServer(server, env.server)
 	})
 
 	cleanup, err = serv.Serve()
@@ -116,29 +121,45 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 	return env, cleanup
 }
 
+func TestMoveFront(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		accounts := testutil.GenerateSolanaKeys(t, 5)
+		sort.Sort(sortableAccounts(accounts))
+
+		target := accounts[i]
+		moveFront(accounts, target)
+		assert.Equal(t, target, accounts[0])
+
+		for i := 2; i < len(accounts); i++ {
+			// This comparison also ensures that we have a unique set of accounts.
+			assert.True(t, bytes.Compare(accounts[i-1], accounts[i]) < 0)
+		}
+	}
+}
+
 func TestCreateAccount(t *testing.T) {
 	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
-	account := testutil.GenerateSolanaKeypair(t)
+	wallet := testutil.GenerateSolanaKeypair(t)
 	owner := testutil.GenerateSolanaKeypair(t)
 
 	createTxn := solana.NewTransaction(
 		env.subsidizer.Public().(ed25519.PublicKey),
 		system.CreateAccount(
 			env.subsidizer.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			token.ProgramKey,
-			env.minLamports,
+			env.server.minAccountLamports,
 			token.AccountSize,
 		),
 		token.InitializeAccount(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.token,
 			owner.Public().(ed25519.PublicKey),
 		),
 		token.SetAuthority(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			owner.Public().(ed25519.PublicKey),
 			env.subsidizer.Public().(ed25519.PublicKey),
 			token.AuthorityTypeCloseAccount,
@@ -154,6 +175,13 @@ func TestCreateAccount(t *testing.T) {
 		submitted = args.Get(0).(solana.Transaction)
 	})
 
+	authResult := account.Authorization{
+		Address:   wallet.Public().(ed25519.PublicKey),
+		Owner:     owner.Public().(ed25519.PublicKey),
+		Signature: sig[:],
+	}
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
+
 	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
 		Transaction: &commonpb.Transaction{
 			Value: createTxn.Marshal(),
@@ -163,9 +191,94 @@ func TestCreateAccount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
 
-	cachedInfo, err := env.infoCache.Get(context.Background(), account.Public().(ed25519.PublicKey))
+	cachedInfo, err := env.infoCache.Get(context.Background(), wallet.Public().(ed25519.PublicKey))
 	assert.NoError(t, err)
-	assert.EqualValues(t, account.Public().(ed25519.PublicKey), cachedInfo.AccountId.Value)
+	assert.EqualValues(t, wallet.Public().(ed25519.PublicKey), cachedInfo.AccountId.Value)
+	assert.Zero(t, cachedInfo.Balance)
+
+	expected := createTxn
+	require.NoError(t, createTxn.Sign(env.subsidizer))
+	assert.Equal(t, expected, submitted)
+
+	txnErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
+		Index: 0,
+		Err:   solana.CustomError(0),
+	})
+	require.NoError(t, err)
+	status := &solana.SignatureStatus{
+		ErrorResult: txnErr,
+	}
+
+	env.sc.ExpectedCalls = nil
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, status, nil)
+
+	resp, err = env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
+		Transaction: &commonpb.Transaction{
+			Value: createTxn.Marshal(),
+		},
+		Commitment: commonpb.Commitment_MAX,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+}
+
+func TestCreateAccount_AssociatedAccount(t *testing.T) {
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	defer cleanup()
+
+	wallet := testutil.GenerateSolanaKeypair(t)
+	owner := testutil.GenerateSolanaKeypair(t)
+
+	createTxn := solana.NewTransaction(
+		env.subsidizer.Public().(ed25519.PublicKey),
+		system.CreateAccount(
+			env.subsidizer.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
+			token.ProgramKey,
+			env.server.minAccountLamports,
+			token.AccountSize,
+		),
+		token.InitializeAccount(
+			wallet.Public().(ed25519.PublicKey),
+			env.token,
+			owner.Public().(ed25519.PublicKey),
+		),
+		token.SetAuthority(
+			wallet.Public().(ed25519.PublicKey),
+			owner.Public().(ed25519.PublicKey),
+			env.subsidizer.Public().(ed25519.PublicKey),
+			token.AuthorityTypeCloseAccount,
+		),
+	)
+	require.NoError(t, createTxn.Sign(env.subsidizer))
+
+	var sig solana.Signature
+	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
+
+	var submitted solana.Transaction
+	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{}, nil).Run(func(args mock.Arguments) {
+		submitted = args.Get(0).(solana.Transaction)
+	})
+
+	authResult := account.Authorization{
+		Address:   wallet.Public().(ed25519.PublicKey),
+		Owner:     owner.Public().(ed25519.PublicKey),
+		Signature: sig[:],
+	}
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
+
+	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
+		Transaction: &commonpb.Transaction{
+			Value: createTxn.Marshal(),
+		},
+		Commitment: commonpb.Commitment_MAX,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+
+	cachedInfo, err := env.infoCache.Get(context.Background(), wallet.Public().(ed25519.PublicKey))
+	assert.NoError(t, err)
+	assert.EqualValues(t, wallet.Public().(ed25519.PublicKey), cachedInfo.AccountId.Value)
 	assert.Zero(t, cachedInfo.Balance)
 
 	expected := createTxn
@@ -198,25 +311,25 @@ func TestCreateAccount_Exists(t *testing.T) {
 	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
-	account := testutil.GenerateSolanaKeypair(t)
+	wallet := testutil.GenerateSolanaKeypair(t)
 	owner := testutil.GenerateSolanaKeypair(t)
 
 	createTxn := solana.NewTransaction(
 		env.subsidizer.Public().(ed25519.PublicKey),
 		system.CreateAccount(
 			env.subsidizer.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			token.ProgramKey,
-			env.minLamports,
+			env.server.minAccountLamports,
 			token.AccountSize,
 		),
 		token.InitializeAccount(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.token,
 			owner.Public().(ed25519.PublicKey),
 		),
 		token.SetAuthority(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			owner.Public().(ed25519.PublicKey),
 			env.subsidizer.Public().(ed25519.PublicKey),
 			token.AuthorityTypeCloseAccount,
@@ -226,7 +339,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 
 	err := env.server.loader.Update(context.Background(), owner.Public().(ed25519.PublicKey), &accountpb.AccountInfo{
 		AccountId: &commonpb.SolanaAccountId{
-			Value: account.Public().(ed25519.PublicKey),
+			Value: wallet.Public().(ed25519.PublicKey),
 		},
 		Balance: 20,
 	})
@@ -234,6 +347,13 @@ func TestCreateAccount_Exists(t *testing.T) {
 
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
+
+	authResult := account.Authorization{
+		Address:   wallet.Public().(ed25519.PublicKey),
+		Owner:     owner.Public().(ed25519.PublicKey),
+		Signature: sig[:],
+	}
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 
 	txErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
 		Index: 0,
@@ -253,7 +373,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
-	assert.EqualValues(t, account.Public().(ed25519.PublicKey), resp.AccountInfo.AccountId.Value)
+	assert.EqualValues(t, wallet.Public().(ed25519.PublicKey), resp.AccountInfo.AccountId.Value)
 	assert.EqualValues(t, 20, resp.AccountInfo.Balance)
 }
 
@@ -261,7 +381,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
-	account := testutil.GenerateSolanaKeypair(t)
+	wallet := testutil.GenerateSolanaKeypair(t)
 	owner := testutil.GenerateSolanaKeypair(t)
 	env.server.subsidizer = nil
 
@@ -269,13 +389,13 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 		env.subsidizer.Public().(ed25519.PublicKey),
 		system.CreateAccount(
 			env.subsidizer.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			token.ProgramKey,
-			env.minLamports,
+			env.server.minAccountLamports,
 			token.AccountSize,
 		),
 		token.InitializeAccount(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.token,
 			owner.Public().(ed25519.PublicKey),
 		),
@@ -285,10 +405,12 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
 
-	var submitted solana.Transaction
-	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{}, nil).Run(func(args mock.Arguments) {
-		submitted = args.Get(0).(solana.Transaction)
-	})
+	authResult := account.Authorization{
+		Result:  account.AuthorizationResultPayerRequired,
+		Address: wallet.Public().(ed25519.PublicKey),
+		Owner:   owner.Public().(ed25519.PublicKey),
+	}
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 
 	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
 		Transaction: &commonpb.Transaction{
@@ -297,39 +419,14 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 		Commitment: commonpb.Commitment_MAX,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
-
-	expected := createTxn
-	require.NoError(t, createTxn.Sign(env.subsidizer))
-	assert.Equal(t, expected, submitted)
-
-	txnErr, err := solana.TransactionErrorFromInstructionError(&solana.InstructionError{
-		Index: 0,
-		Err:   solana.CustomError(0),
-	})
-	require.NoError(t, err)
-	status := &solana.SignatureStatus{
-		ErrorResult: txnErr,
-	}
-
-	env.sc.ExpectedCalls = nil
-	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, status, nil)
-
-	resp, err = env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
-		Transaction: &commonpb.Transaction{
-			Value: createTxn.Marshal(),
-		},
-		Commitment: commonpb.Commitment_MAX,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+	assert.Equal(t, accountpb.CreateAccountResponse_PAYER_REQUIRED, resp.Result)
 }
 
 func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
-	account := testutil.GenerateSolanaKeypair(t)
+	wallet := testutil.GenerateSolanaKeypair(t)
 	owner := testutil.GenerateSolanaKeypair(t)
 	env.server.subsidizer = nil
 
@@ -337,13 +434,13 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 		env.subsidizer.Public().(ed25519.PublicKey),
 		system.CreateAccount(
 			env.subsidizer.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			token.ProgramKey,
-			env.minLamports,
+			env.server.minAccountLamports,
 			token.AccountSize,
 		),
 		token.InitializeAccount(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.token,
 			owner.Public().(ed25519.PublicKey),
 		),
@@ -357,6 +454,12 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 		ErrorResult: solana.NewTransactionError(solana.TransactionErrorBlockhashNotFound),
 	}
 	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, sigStatus, nil)
+	authResult := account.Authorization{
+		Address:   wallet.Public().(ed25519.PublicKey),
+		Owner:     owner.Public().(ed25519.PublicKey),
+		Signature: sig[:],
+	}
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 
 	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
 		Transaction: &commonpb.Transaction{
@@ -368,231 +471,30 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 	assert.Equal(t, accountpb.CreateAccountResponse_BAD_NONCE, resp.Result)
 }
 
-func TestCreateAccount_Invalid(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
-	defer cleanup()
-
-	var txns []solana.Transaction
-
-	accounts := testutil.GenerateSolanaKeys(t, 3)
-
-	// Not a create
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		token.Transfer(
-			accounts[0],
-			accounts[1],
-			accounts[2],
-			10,
-		),
-		token.Transfer(
-			accounts[0],
-			accounts[1],
-			accounts[2],
-			10,
-		),
-	))
-
-	// Partial create
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize,
-		),
-	))
-
-	// Create/Initialize mismatch
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[1],
-			env.token,
-			accounts[2],
-		),
-	))
-
-	// Create for other token
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			accounts[1],
-			env.minLamports,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[2],
-		),
-	))
-
-	// Create without authority (and required)
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[2],
-		),
-	))
-
-	// Create with invalid authority
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[2],
-		),
-		token.SetAuthority(
-			accounts[0],
-			accounts[0],
-			accounts[0],
-			token.AuthorityTypeCloseAccount,
-		),
-	))
-
-	// Create with invalid set authority type
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[2],
-		),
-		token.SetAuthority(
-			accounts[0],
-			accounts[0],
-			env.subsidizer.Public().(ed25519.PublicKey),
-			token.AuthorityTypeAccountHolder,
-		),
-	))
-
-	// Create + others
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[1],
-		),
-		token.Transfer(
-			accounts[0],
-			accounts[1],
-			accounts[2],
-			10,
-		),
-	))
-
-	// Attempt to steal lamports
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports*10,
-			token.AccountSize,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[1],
-		),
-	))
-
-	// Invalid size
-	txns = append(txns, solana.NewTransaction(
-		env.subsidizer.Public().(ed25519.PublicKey),
-		system.CreateAccount(
-			env.subsidizer.Public().(ed25519.PublicKey),
-			accounts[0],
-			token.ProgramKey,
-			env.minLamports,
-			token.AccountSize/2,
-		),
-		token.InitializeAccount(
-			accounts[0],
-			env.token,
-			accounts[1],
-		),
-	))
-
-	for _, txn := range txns {
-		_, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
-			Transaction: &commonpb.Transaction{
-				Value: txn.Marshal(),
-			},
-		})
-		assert.Equal(t, codes.InvalidArgument, status.Code(err))
-	}
-}
-
 func TestCreateAccount_Limited(t *testing.T) {
 	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
-	account := testutil.GenerateSolanaKeypair(t)
+	wallet := testutil.GenerateSolanaKeypair(t)
 	owner := testutil.GenerateSolanaKeypair(t)
 
 	createTxn := solana.NewTransaction(
 		env.subsidizer.Public().(ed25519.PublicKey),
 		system.CreateAccount(
 			env.subsidizer.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			token.ProgramKey,
-			env.minLamports,
+			env.server.minAccountLamports,
 			token.AccountSize,
 		),
 		token.InitializeAccount(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.token,
 			owner.Public().(ed25519.PublicKey),
 		),
 		token.SetAuthority(
-			account.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.subsidizer.Public().(ed25519.PublicKey),
 			token.AuthorityTypeCloseAccount,
 		),
@@ -602,17 +504,8 @@ func TestCreateAccount_Limited(t *testing.T) {
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
 
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(account.Authorization{}, status.Error(codes.ResourceExhausted, ""))
 	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{}, nil)
-
-	for i := 0; i < 5; i++ {
-		_, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
-			Transaction: &commonpb.Transaction{
-				Value: createTxn.Marshal(),
-			},
-			Commitment: commonpb.Commitment_MAX,
-		})
-		require.NoError(t, err)
-	}
 
 	_, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
 		Transaction: &commonpb.Transaction{
@@ -629,25 +522,25 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 
 	env.server.createWhitelistSecret = "somesecret"
 
-	account := testutil.GenerateSolanaKeypair(t)
+	wallet := testutil.GenerateSolanaKeypair(t)
 	owner := testutil.GenerateSolanaKeypair(t)
 
 	createTxn := solana.NewTransaction(
 		env.subsidizer.Public().(ed25519.PublicKey),
 		system.CreateAccount(
 			env.subsidizer.Public().(ed25519.PublicKey),
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			token.ProgramKey,
-			env.minLamports,
+			env.server.minAccountLamports,
 			token.AccountSize,
 		),
 		token.InitializeAccount(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			env.token,
 			owner.Public().(ed25519.PublicKey),
 		),
 		token.SetAuthority(
-			account.Public().(ed25519.PublicKey),
+			wallet.Public().(ed25519.PublicKey),
 			owner.Public().(ed25519.PublicKey),
 			env.subsidizer.Public().(ed25519.PublicKey),
 			token.AuthorityTypeCloseAccount,
@@ -658,6 +551,12 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 	var sig solana.Signature
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
 
+	authResult := account.Authorization{
+		Address:   wallet.Public().(ed25519.PublicKey),
+		Owner:     owner.Public().(ed25519.PublicKey),
+		Signature: sig[:],
+	}
+	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{}, nil)
 
 	resp, err := env.client.CreateAccount(context.Background(), &accountpb.CreateAccountRequest{
@@ -789,6 +688,17 @@ func TestResolveTokenAccounts(t *testing.T) {
 	// note: we create a reverse() function to ensure that the impl
 	//       does proper sorting on the results from the underlying client.
 	accounts := testutil.GenerateSolanaKeys(t, 5)
+	accountsWithAssoc := testutil.GenerateSolanaKeys(t, 5)
+	accountsWithAssocAndIdentity := testutil.GenerateSolanaKeys(t, 5)
+
+	assocAddr, err := token.GetAssociatedAccount(accountsWithAssoc[0], env.token)
+	require.NoError(t, err)
+	accountsWithAssoc[4] = assocAddr
+
+	assocAddrWithIdentity, err := token.GetAssociatedAccount(accountsWithAssocAndIdentity[0], env.token)
+	require.NoError(t, err)
+	accountsWithAssocAndIdentity[4] = assocAddrWithIdentity
+
 	reverse := func(keys []ed25519.PublicKey) []ed25519.PublicKey {
 		r := make([]ed25519.PublicKey, len(keys))
 		for i := range keys {
@@ -797,16 +707,16 @@ func TestResolveTokenAccounts(t *testing.T) {
 		return r
 	}
 
-	// Accounts[0] -> set of accounts, non-identity
+	// Accounts[0] -> set of accounts, non-identity, no assoc
 	env.sc.On("GetTokenAccountsByOwner", accounts[0], env.token).Return(reverse(accounts[1:]), nil)
 	// Accounts[1] -> set of accounts, _with_ identity
 	env.sc.On("GetTokenAccountsByOwner", accounts[1], env.token).Return(reverse(accounts[1:]), nil)
+	// Accounts[2] -> set of accounts, _with_ associated account
+	env.sc.On("GetTokenAccountsByOwner", accountsWithAssoc[0], env.token).Return(reverse(accountsWithAssoc[1:]), nil)
+	// Accounts[3] -> set of accounts, _with_ identity _and_ associated account
+	env.sc.On("GetTokenAccountsByOwner", accountsWithAssocAndIdentity[0], env.token).Return(reverse(accountsWithAssocAndIdentity[0:]), nil)
 	// Fallback
 	env.sc.On("GetTokenAccountsByOwner", mock.Anything, env.token).Return([]ed25519.PublicKey{}, nil)
-	// Existence check to see if the account requested exists
-	for i := 0; i < 3; i++ {
-		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
-	}
 
 	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
 		AccountId: &commonpb.SolanaAccountId{
@@ -823,6 +733,9 @@ func TestResolveTokenAccounts(t *testing.T) {
 			}
 		}
 		assert.True(t, found)
+	}
+	for i := 1; i < len(resp.TokenAccounts); i++ {
+		assert.True(t, bytes.Compare(resp.TokenAccounts[i-1].Value, resp.TokenAccounts[i].Value) < 0)
 	}
 
 	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
@@ -842,6 +755,16 @@ func TestResolveTokenAccounts(t *testing.T) {
 		}
 		assert.True(t, found)
 	}
+	assert.EqualValues(t, accounts[1], resp.TokenAccounts[0].Value)
+	for i := 2; i < len(resp.TokenAccounts); i++ {
+		assert.True(t, bytes.Compare(resp.TokenAccounts[i-1].Value, resp.TokenAccounts[i].Value) < 0)
+	}
+	for i := 0; i < len(resp.TokenAccountInfos); i++ {
+		assert.Equal(t, resp.TokenAccounts[i].Value, resp.TokenAccountInfos[i].AccountId.Value)
+		assert.EqualValues(t, 0, resp.TokenAccountInfos[i].Balance)
+		assert.Empty(t, resp.TokenAccountInfos[i].Owner)
+		assert.Empty(t, resp.TokenAccountInfos[i].CloseAuthority)
+	}
 
 	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
 		AccountId: &commonpb.SolanaAccountId{
@@ -850,6 +773,143 @@ func TestResolveTokenAccounts(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Empty(t, resp.TokenAccounts)
+
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accountsWithAssoc[0],
+		},
+	})
+	assert.NoError(t, err)
+	for _, account := range resp.TokenAccounts {
+		var found bool
+		for _, existing := range accountsWithAssoc[1:] {
+			if bytes.Equal(account.Value, existing) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
+	}
+	assert.EqualValues(t, assocAddr, resp.TokenAccounts[0].Value)
+	for i := 2; i < len(resp.TokenAccounts); i++ {
+		assert.True(t, bytes.Compare(resp.TokenAccounts[i-1].Value, resp.TokenAccounts[i].Value) < 0)
+	}
+	for i := 0; i < len(resp.TokenAccountInfos); i++ {
+		assert.Equal(t, resp.TokenAccounts[i].Value, resp.TokenAccountInfos[i].AccountId.Value)
+		assert.EqualValues(t, 0, resp.TokenAccountInfos[i].Balance)
+		assert.Empty(t, resp.TokenAccountInfos[i].Owner)
+		assert.Empty(t, resp.TokenAccountInfos[i].CloseAuthority)
+	}
+
+	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		AccountId: &commonpb.SolanaAccountId{
+			Value: accountsWithAssocAndIdentity[0],
+		},
+	})
+	assert.NoError(t, err)
+	for _, account := range resp.TokenAccounts {
+		var found bool
+		for _, existing := range accountsWithAssocAndIdentity[0:] {
+			if bytes.Equal(account.Value, existing) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
+	}
+	assert.EqualValues(t, assocAddrWithIdentity, resp.TokenAccounts[0].Value)
+	assert.EqualValues(t, accountsWithAssocAndIdentity[0], resp.TokenAccounts[1].Value)
+	for i := 3; i < len(resp.TokenAccounts); i++ {
+		assert.True(t, bytes.Compare(resp.TokenAccounts[i-1].Value, resp.TokenAccounts[i].Value) < 0)
+	}
+	for i := 0; i < len(resp.TokenAccountInfos); i++ {
+		assert.Equal(t, resp.TokenAccounts[i].Value, resp.TokenAccountInfos[i].AccountId.Value)
+		assert.EqualValues(t, 0, resp.TokenAccountInfos[i].Balance)
+		assert.Empty(t, resp.TokenAccountInfos[i].Owner)
+		assert.Empty(t, resp.TokenAccountInfos[i].CloseAuthority)
+	}
+}
+
+func TestResolveTokenAccounts_WithInfo(t *testing.T) {
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	defer cleanup()
+
+	// note: we create a reverse() function to ensure that the impl
+	//       does proper sorting on the results from the underlying client.
+	owner := testutil.GenerateSolanaKeys(t, 1)[0]
+	closeAuthority := testutil.GenerateSolanaKeys(t, 1)[0]
+	accounts := testutil.GenerateSolanaKeys(t, 4)
+	testutil.SortKeys(accounts)
+
+	// Accounts[0] -> set of accounts
+	env.sc.On("GetTokenAccountsByOwner", owner, env.token).Return(accounts, nil)
+	for i := 0; i < len(accounts); i++ {
+		tokenAccount := token.Account{
+			State:          token.AccountStateInitialized,
+			Mint:           env.token,
+			Owner:          owner,
+			CloseAuthority: closeAuthority,
+			Amount:         1 + uint64(i),
+		}
+		accountInfo := solana.AccountInfo{
+			Data:  tokenAccount.Marshal(),
+			Owner: token.ProgramKey,
+		}
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(accountInfo, nil).Once()
+	}
+
+	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		IncludeAccountInfo: true,
+		AccountId: &commonpb.SolanaAccountId{
+			Value: owner,
+		},
+	})
+	assert.NoError(t, err)
+	for _, account := range resp.TokenAccounts {
+		var found bool
+		for _, existing := range accounts {
+			if bytes.Equal(account.Value, existing) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
+	}
+	for i := 1; i < len(resp.TokenAccounts); i++ {
+		assert.True(t, bytes.Compare(resp.TokenAccounts[i-1].Value, resp.TokenAccounts[i].Value) < 0)
+	}
+
+	for i := 0; i < len(resp.TokenAccountInfos); i++ {
+		assert.Equal(t, resp.TokenAccounts[i].Value, resp.TokenAccountInfos[i].AccountId.Value)
+		assert.EqualValues(t, i+1, resp.TokenAccountInfos[i].Balance)
+		assert.EqualValues(t, owner, resp.TokenAccountInfos[i].Owner.Value)
+		assert.EqualValues(t, closeAuthority, resp.TokenAccountInfos[i].CloseAuthority.Value)
+	}
+}
+
+func TestResolveTokenAccounts_WithInfo_NotFound(t *testing.T) {
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	defer cleanup()
+
+	// note: we create a reverse() function to ensure that the impl
+	//       does proper sorting on the results from the underlying client.
+	owner := testutil.GenerateSolanaKeys(t, 1)[0]
+	accounts := testutil.GenerateSolanaKeys(t, 4)
+	testutil.SortKeys(accounts)
+
+	// Accounts[0] -> set of accounts
+	env.sc.On("GetTokenAccountsByOwner", owner, env.token).Return(accounts, nil)
+	for i := 0; i < len(accounts); i++ {
+		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo).Once()
+	}
+
+	_, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
+		IncludeAccountInfo: true,
+		AccountId: &commonpb.SolanaAccountId{
+			Value: owner,
+		},
+	})
+	assert.Equal(t, codes.Internal, status.Code(err))
 }
 
 func TestResolveTokenAccounts_Cached(t *testing.T) {
@@ -883,6 +943,12 @@ func TestResolveTokenAccounts_Cached(t *testing.T) {
 			}
 		}
 		assert.True(t, found)
+	}
+	for i := 0; i < len(resp.TokenAccountInfos); i++ {
+		assert.Equal(t, resp.TokenAccounts[i].Value, resp.TokenAccountInfos[i].AccountId.Value)
+		assert.EqualValues(t, 0, resp.TokenAccountInfos[i].Balance)
+		assert.Empty(t, resp.TokenAccountInfos[i].Owner)
+		assert.Empty(t, resp.TokenAccountInfos[i].CloseAuthority)
 	}
 
 	secondResp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
@@ -948,6 +1014,12 @@ func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
 		}
 		assert.True(t, found)
 	}
+	for i := 0; i < len(resp.TokenAccountInfos); i++ {
+		assert.Equal(t, resp.TokenAccounts[i].Value, resp.TokenAccountInfos[i].AccountId.Value)
+		assert.EqualValues(t, 0, resp.TokenAccountInfos[i].Balance)
+		assert.Empty(t, resp.TokenAccountInfos[i].Owner)
+		assert.Empty(t, resp.TokenAccountInfos[i].CloseAuthority)
+	}
 
 	cached, err := env.tokenAccountCache.Get(context.Background(), accounts[0])
 	require.NoError(t, err)
@@ -964,163 +1036,41 @@ func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
 	env.sc.AssertExpectations(t)
 }
 
-func TestResolveTokenAccounts_MigrationSkip(t *testing.T) {
-	mig := &mockMigrator{}
-	env, cleanup := setup(t, mig, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
-	defer cleanup()
-
-	// Horizon client will be...called?
-	migrated := testutil.GenerateSolanaKeys(t, 3)
-	notMigrated := testutil.GenerateSolanaKeys(t, 3)
-
-	mig.On("InitiateMigration", mock.Anything, migrated[0], false, solana.CommitmentRecent).Return(nil)
-	mig.On("InitiateMigration", mock.Anything, notMigrated[0], false, solana.CommitmentRecent).Return(nil)
-
-	mig.On("GetMigrationAccounts", mock.Anything, migrated[0]).Return(migrated[1:2], nil)
-	mig.On("GetMigrationAccounts", mock.Anything, notMigrated[0]).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
-	env.sc.On("GetAccountInfo", notMigrated[0], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", notMigrated[0], env.token).Return(notMigrated[1:], nil).Times(1)
-
-	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: migrated[0],
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 1)
-	assert.EqualValues(t, migrated[1], resp.TokenAccounts[0].Value)
-
-	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: notMigrated[0],
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 2)
-	assert.Contains(t, notMigrated[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
-	assert.Contains(t, notMigrated[1:], ed25519.PublicKey(resp.TokenAccounts[1].Value))
-}
-
-func TestResolveTokenAccounts_ReverseMap(t *testing.T) {
-	mig := &mockMigrator{}
-	env, cleanup := setup(t, mig, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
-	defer cleanup()
-
-	kin3 := testutil.GenerateSolanaKeys(t, 1)[0]
-	kin4 := testutil.GenerateSolanaKeys(t, 1)[0]
-	misc := testutil.GenerateSolanaKeys(t, 1)[0]
-	miscToken := testutil.GenerateSolanaKeys(t, 1)
-
-	kin4Account := token.Account{
-		Mint:   env.token,
-		Owner:  kin3,
-		Amount: 100,
-		State:  token.AccountStateInitialized,
-	}
-	miscAccount := token.Account{
-		Mint:   env.token,
-		Owner:  misc,
-		Amount: 100,
-		State:  token.AccountStateInitialized,
-	}
-	accountInfos := []solana.AccountInfo{
-		{
-			Owner: token.ProgramKey,
-			Data:  kin4Account.Marshal(),
-		},
-		{
-			Owner: token.ProgramKey,
-			Data:  miscAccount.Marshal(),
-		},
-	}
-
-	// Kin3 migration hooks.
-	mig.On("InitiateMigration", mock.Anything, kin3, false, solana.CommitmentRecent).Return(nil)
-	mig.On("InitiateMigration", mock.Anything, misc, false, solana.CommitmentRecent).Return(migration.ErrNotFound)
-	mig.On("GetMigrationAccounts", mock.Anything, kin3).Return([]ed25519.PublicKey{kin4}, nil)
-	mig.On("GetMigrationAccounts", mock.Anything, kin4).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
-	mig.On("GetMigrationAccounts", mock.Anything, misc).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
-	mig.On("GetMigrationAccounts", mock.Anything, miscToken[0]).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
-	env.sc.On("GetAccountInfo", kin4Account, mock.Anything).Return(accountInfos[0], nil).Times(1)
-	env.sc.On("GetAccountInfo", misc, mock.Anything).Return(accountInfos[1], nil).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", misc, env.token).Return(miscToken, nil).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", miscToken[0], env.token).Return([]ed25519.PublicKey{}, nil).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", kin4, env.token).Return([]ed25519.PublicKey{kin4}, nil).Times(1)
-
-	// Resolving kin3 should work from here, no other calls
-	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: kin3,
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 1)
-	assert.EqualValues(t, kin4, resp.TokenAccounts[0].Value)
-
-	// Resolving kin4 should return itself.
-	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: kin4,
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 1)
-	assert.EqualValues(t, kin4, resp.TokenAccounts[0].Value)
-
-	// Resolving misc, and miscs token, by itself should be fine
-	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: misc,
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 1)
-	assert.EqualValues(t, miscToken[0], resp.TokenAccounts[0].Value)
-
-	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: miscToken[0],
-		},
-	})
-	assert.NoError(t, err)
-	assert.Empty(t, resp.TokenAccounts)
-}
-
 func TestResolveTokenAccounts_NoShortcuts(t *testing.T) {
 	mig := &mockMigrator{}
 	env, cleanup := setup(t, mig, WithOverrides(memconfig.NewConfig(false), memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// Horizon client will be...called?
-	migrated := testutil.GenerateSolanaKeys(t, 3)
-	notMigrated := testutil.GenerateSolanaKeys(t, 3)
+	migratable := testutil.GenerateSolanaKeys(t, 3)
+	nonMigratable := testutil.GenerateSolanaKeys(t, 3)
 
-	mig.On("InitiateMigration", mock.Anything, migrated[0], false, solana.CommitmentRecent).Return(nil)
-	mig.On("InitiateMigration", mock.Anything, notMigrated[0], false, solana.CommitmentRecent).Return(nil)
+	mig.On("InitiateMigration", mock.Anything, migratable[0], false, solana.CommitmentRecent).Return(nil)
 
-	env.sc.On("GetAccountInfo", notMigrated[0], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", migrated[0], env.token).Return(migrated[1:], nil).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", notMigrated[0], env.token).Return(notMigrated[1:], nil).Times(1)
+	mig.On("GetMigrationAccounts", mock.Anything, migratable[0]).Return(migratable[1:2], nil)
+	mig.On("GetMigrationAccounts", mock.Anything, nonMigratable[0]).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
+	env.sc.On("GetTokenAccountsByOwner", migratable[0], env.token).Return(migratable[1:], nil).Times(1)
+	env.sc.On("GetTokenAccountsByOwner", nonMigratable[0], env.token).Return(nonMigratable[1:], nil).Times(1)
 
 	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
 		AccountId: &commonpb.SolanaAccountId{
-			Value: migrated[0],
+			Value: migratable[0],
 		},
 	})
 	assert.NoError(t, err)
 	assert.Len(t, resp.TokenAccounts, 2)
-	assert.Contains(t, migrated[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
-	assert.Contains(t, migrated[1:], ed25519.PublicKey(resp.TokenAccounts[1].Value))
+	assert.Contains(t, migratable[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
+	assert.Contains(t, migratable[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
 
 	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
 		AccountId: &commonpb.SolanaAccountId{
-			Value: notMigrated[0],
+			Value: nonMigratable[0],
 		},
 	})
 	assert.NoError(t, err)
 	assert.Len(t, resp.TokenAccounts, 2)
-	assert.Contains(t, notMigrated[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
-	assert.Contains(t, notMigrated[1:], ed25519.PublicKey(resp.TokenAccounts[1].Value))
+	assert.Contains(t, nonMigratable[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
+	assert.Contains(t, nonMigratable[1:], ed25519.PublicKey(resp.TokenAccounts[1].Value))
 }
 
 func TestGetEvents(t *testing.T) {

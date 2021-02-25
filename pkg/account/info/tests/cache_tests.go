@@ -34,15 +34,19 @@ func testRoundTrip(t *testing.T, cache info.Cache, teardown func()) {
 	t.Run("testRoundTrip", func(t *testing.T) {
 		defer teardown()
 
-		keys := testutil.GenerateSolanaKeys(t, 2)
+		keys := testutil.GenerateSolanaKeys(t, 3)
 		infos := []*accountpb.AccountInfo{
 			{
-				AccountId: &commonpb.SolanaAccountId{Value: keys[0]},
-				Balance:   10,
+				AccountId:      &commonpb.SolanaAccountId{Value: keys[0]},
+				Owner:          &commonpb.SolanaAccountId{Value: keys[1]},
+				CloseAuthority: &commonpb.SolanaAccountId{Value: keys[2]},
+				Balance:        10,
 			},
 			{
-				AccountId: &commonpb.SolanaAccountId{Value: keys[1]},
-				Balance:   10,
+				AccountId:      &commonpb.SolanaAccountId{Value: keys[1]},
+				Owner:          &commonpb.SolanaAccountId{Value: keys[2]},
+				CloseAuthority: &commonpb.SolanaAccountId{Value: keys[0]},
+				Balance:        10,
 			},
 		}
 
@@ -55,7 +59,7 @@ func testRoundTrip(t *testing.T, cache info.Cache, teardown func()) {
 		require.NoError(t, cache.Put(context.Background(), infos[1]))
 
 		// Assert all added
-		for i, k := range keys {
+		for i, k := range keys[:2] {
 			info, err := cache.Get(context.Background(), k)
 			require.NoError(t, err)
 			assert.True(t, proto.Equal(infos[i], info))

@@ -3,11 +3,11 @@ package kre
 import (
 	"context"
 
+	"github.com/kinecosystem/agora-common/kin"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/kinecosystem/agora/pkg/app"
-	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 )
 
@@ -53,7 +53,7 @@ func (l *Loader) LoadData(sc history.StateChange) error {
 			return errors.Errorf("invalid date for %d", c.Block)
 		}
 
-		if appID, ok := transaction.AppIDFromTextMemo(*c.MemoText); ok {
+		if appID, ok := kin.AppIDFromTextMemo(*c.MemoText); ok {
 			appIndex, err := l.mapper.GetAppIndex(context.Background(), appID)
 			if err != nil && err != app.ErrMappingNotFound {
 				return errors.Wrap(err, "failed to map app index")
@@ -72,7 +72,7 @@ func (l *Loader) LoadData(sc history.StateChange) error {
 			return errors.Errorf("invalid date for %d", p.Block)
 		}
 
-		if appID, ok := transaction.AppIDFromTextMemo(*p.MemoText); ok {
+		if appID, ok := kin.AppIDFromTextMemo(*p.MemoText); ok {
 			appIndex, err := l.mapper.GetAppIndex(context.Background(), appID)
 			if err != nil && err != app.ErrMappingNotFound {
 				return errors.Wrap(err, "failed to map app index")
