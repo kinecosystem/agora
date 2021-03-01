@@ -125,8 +125,7 @@ const (
 	channelSaltEnv = "CHANNEL_SALT"
 
 	// Token Account Cache Configs
-	tokenAccountTTLEnv      = "TOKEN_ACCOUNT_TTL"
-	consistencyCheckProbEnv = "TOKEN_ACCOUNT_CONSISTENCY_CHECK_PROBABILITY"
+	tokenAccountTTLEnv = "TOKEN_ACCOUNT_TTL"
 
 	accountInfoTTL         = 30 * time.Second
 	negativeAccountInfoTTL = 15 * time.Second
@@ -449,12 +448,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	if err != nil {
 		return errors.Wrap(err, "failed to parse token account TTL")
 	}
-	consistencyCheckFreq, err := strconv.ParseFloat(os.Getenv(consistencyCheckProbEnv), 32)
-	if err != nil {
-		return errors.Wrap(err, "failed to parse token account consistency check frequency (should be in range [0.0, 1.0])")
-	} else if consistencyCheckFreq > 1.0 {
-		return errors.Errorf("invalid token account consistency check frequency (should be in range [0.0, 1.0]): %f", consistencyCheckFreq)
-	}
 
 	var subsidizer []byte
 	if os.Getenv(subsidizerKeypairIDEnv) != "" {
@@ -609,7 +602,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		mapper,
 		kinToken,
 		subsidizer,
-		float32(consistencyCheckFreq),
 		createWhitelistSecret,
 	)
 	if err != nil {

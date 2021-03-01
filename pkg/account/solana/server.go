@@ -124,8 +124,6 @@ type server struct {
 	subsidizer         ed25519.PrivateKey
 	minAccountLamports uint64
 
-	cacheCheckProbability float32
-
 	// If no secret is set, all requests will be whitelisted
 	createWhitelistSecret string
 }
@@ -149,7 +147,6 @@ func New(
 	mapper account.Mapper,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
-	cacheCheckFreq float32,
 	createWhitelistSecret string,
 ) (accountpb.AccountServer, error) {
 	s := &server{
@@ -166,7 +163,6 @@ func New(
 		limiter:               limiter,
 		token:                 mint,
 		subsidizer:            subsidizer,
-		cacheCheckProbability: cacheCheckFreq,
 		createWhitelistSecret: createWhitelistSecret,
 	}
 
@@ -493,7 +489,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 		}
 	}
 
-	if len(accounts) == 0 || rand.Float32() < s.cacheCheckProbability {
+	if len(accounts) == 0 || rand.Float64() < s.conf.resolveConsistencyCheckRate.Get(ctx) {
 		putRequired = true
 		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
 		if err != nil {

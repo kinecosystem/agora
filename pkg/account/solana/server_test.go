@@ -106,7 +106,6 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 		env.mapper,
 		env.token,
 		env.subsidizer,
-		0.0,
 		"",
 	)
 	require.NoError(t, err)
@@ -123,7 +122,7 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 }
 
 func TestCreateAccount(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -205,7 +204,7 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestCreateAccount_Exists(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -268,7 +267,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 }
 
 func TestCreateAccount_NoSubsidizer(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -336,7 +335,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 }
 
 func TestCreateAccount_InvalidBlockhash(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -379,7 +378,7 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 }
 
 func TestCreateAccount_Invalid(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	var txns []solana.Transaction
@@ -580,7 +579,7 @@ func TestCreateAccount_Invalid(t *testing.T) {
 }
 
 func TestCreateAccount_Limited(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeypair(t)
@@ -634,7 +633,7 @@ func TestCreateAccount_Limited(t *testing.T) {
 }
 
 func TestCreateAccount_Whitelisting(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	env.server.createWhitelistSecret = "somesecret"
@@ -722,7 +721,7 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 }
 
 func TestGetAccountInfo(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
@@ -793,7 +792,7 @@ func TestGetAccountInfo(t *testing.T) {
 }
 
 func TestResolveTokenAccounts(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// note: we create a reverse() function to ensure that the impl
@@ -863,7 +862,7 @@ func TestResolveTokenAccounts(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_Cached(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 5)
@@ -926,11 +925,9 @@ func TestResolveTokenAccounts_Cached(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
-	defer cleanup()
-
 	// Always check
-	env.server.cacheCheckProbability = 1.0
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(1.0)))
+	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 5)
 	reverse := func(keys []ed25519.PublicKey) []ed25519.PublicKey {
@@ -978,7 +975,7 @@ func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
 
 func TestResolveTokenAccounts_MigrationSkip(t *testing.T) {
 	mig := &mockMigrator{}
-	env, cleanup := setup(t, mig, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, mig, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// Horizon client will be...called?
@@ -1015,7 +1012,7 @@ func TestResolveTokenAccounts_MigrationSkip(t *testing.T) {
 
 func TestResolveTokenAccounts_ReverseMap(t *testing.T) {
 	mig := &mockMigrator{}
-	env, cleanup := setup(t, mig, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, mig, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	kin3 := testutil.GenerateSolanaKeys(t, 1)[0]
@@ -1102,7 +1099,7 @@ func TestResolveTokenAccounts_ReverseMap(t *testing.T) {
 
 func TestResolveTokenAccounts_NoShortcuts(t *testing.T) {
 	mig := &mockMigrator{}
-	env, cleanup := setup(t, mig, WithOverrides(memconfig.NewConfig(false)))
+	env, cleanup := setup(t, mig, WithOverrides(memconfig.NewConfig(false), memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// Horizon client will be...called?
@@ -1138,7 +1135,7 @@ func TestResolveTokenAccounts_NoShortcuts(t *testing.T) {
 }
 
 func TestGetEvents(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
@@ -1212,7 +1209,7 @@ func TestGetEvents(t *testing.T) {
 }
 
 func TestGetEvents_NotFound(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
@@ -1232,7 +1229,7 @@ func TestGetEvents_NotFound(t *testing.T) {
 }
 
 func TestGetEvents_WithResolution(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 3)
@@ -1284,7 +1281,7 @@ func TestGetEvents_WithResolution(t *testing.T) {
 }
 
 func TestGetEvents_WithCacheResolution(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 3)
@@ -1335,7 +1332,7 @@ func TestGetEvents_WithCacheResolution(t *testing.T) {
 }
 
 func TestGetEvents_WithResolutionTooManyAccounts(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig))
+	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 3)
