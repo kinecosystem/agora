@@ -32,7 +32,14 @@ type server struct {
 	specStateLoader *specstate.Loader
 }
 
-func New(sc solana.Client, mint, source ed25519.PublicKey, subsidizer, sourceOwner ed25519.PrivateKey, specStateLoader *specstate.Loader) airdroppb.AirdropServer {
+func New(
+	sc solana.Client,
+	mint ed25519.PublicKey,
+	source ed25519.PublicKey,
+	subsidizer ed25519.PrivateKey,
+	sourceOwner ed25519.PrivateKey,
+	specStateLoader *specstate.Loader,
+) airdroppb.AirdropServer {
 	tc := token.NewClient(sc, mint)
 	return &server{
 		log:             logrus.StandardLogger().WithField("type", "airdrop/server"),
