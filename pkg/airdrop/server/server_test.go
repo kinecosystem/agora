@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -17,8 +18,13 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	airdroppb "github.com/kinecosystem/agora-api/genproto/airdrop/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
+
+	"github.com/kinecosystem/agora/pkg/account/info"
+	infomemory "github.com/kinecosystem/agora/pkg/account/info/memory"
+	"github.com/kinecosystem/agora/pkg/account/specstate"
 )
 
 const (
@@ -31,26 +37,36 @@ type testEnv struct {
 	subsidizerKey ed25519.PrivateKey
 	sClient       *solana.MockClient
 	client        airdroppb.AirdropClient
+	infoCache     info.Cache
 }
 
 func setup(t *testing.T) (*testEnv, func()) {
-	token, _, err := ed25519.GenerateKey(nil)
+	tokenAccount, _, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
 
 	subsidizer, subsidizerKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
 
 	env := &testEnv{
-		token:         token,
+		token:         tokenAccount,
 		subsidizer:    subsidizer,
 		subsidizerKey: subsidizerKey,
 		sClient:       solana.NewMockClient(),
 	}
+	env.infoCache, err = infomemory.NewCache(5*time.Second, 5*time.Second, 1000)
+	require.NoError(t, err)
 
 	env.sClient.On("GetMinimumBalanceForRentExemption", mock.Anything).Return(accountLamports, nil).Once()
 
 	l := bufconn.Listen(1)
-	service := New(env.sClient, token, subsidizer, subsidizerKey, subsidizerKey)
+	service := New(
+		env.sClient,
+		tokenAccount,
+		subsidizer,
+		subsidizerKey,
+		subsidizerKey,
+		specstate.NewSpeculativeLoader(token.NewClient(env.sClient, env.token), env.infoCache),
+	)
 
 	s := grpc.NewServer()
 	airdroppb.RegisterAirdropServer(s, service)
@@ -107,6 +123,12 @@ func TestAirdrop(t *testing.T) {
 		Once()
 	env.sClient.On("GetRecentBlockhash").Return(blockHash, nil).Once()
 
+	// Cache balance info
+	require.NoError(t, env.infoCache.Put(context.Background(), &accountpb.AccountInfo{
+		AccountId: &commonpb.SolanaAccountId{Value: account},
+		Balance:   10,
+	}))
+
 	var submitted solana.Transaction
 	var commitment solana.Commitment
 
@@ -133,6 +155,11 @@ func TestAirdrop(t *testing.T) {
 
 	assert.Equal(t, expected, submitted)
 	assert.Equal(t, resp.Signature.Value, expected.Signature())
+
+	// Check that cached balance info was updated
+	ai, err := env.infoCache.Get(context.Background(), account)
+	require.NoError(t, err)
+	assert.EqualValues(t, 30, ai.Balance)
 }
 
 func TestAirdrop_NoFunds(t *testing.T) {
@@ -249,8 +276,11 @@ func TestAirdrop_NotFound(t *testing.T) {
 	expected.SetBlockhash(blockHash)
 	assert.NoError(t, expected.Sign(env.subsidizerKey))
 
-	env.sClient.On("GetAccountInfo", mock.AnythingOfType("PublicKey"), mock.AnythingOfType("Commitment")).
+	env.sClient.On("GetAccountInfo", env.subsidizer, mock.AnythingOfType("Commitment")).
 		Return(accountInfo, nil).
+		Once()
+	env.sClient.On("GetAccountInfo", account, mock.AnythingOfType("Commitment")).
+		Return(solana.AccountInfo{}, token.ErrAccountNotFound).
 		Once()
 	env.sClient.On("GetRecentBlockhash").Return(blockHash, nil).Once()
 
@@ -273,4 +303,9 @@ func TestAirdrop_NotFound(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, airdroppb.RequestAirdropResponse_NOT_FOUND, resp.Result)
+
+	// Verify nothing was added to cache
+	cached, err := env.infoCache.Get(context.Background(), account)
+	assert.Equal(t, info.ErrAccountInfoNotFound, err)
+	assert.Nil(t, cached)
 }

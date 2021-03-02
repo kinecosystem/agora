@@ -34,6 +34,7 @@ import (
 
 	"github.com/kinecosystem/agora/pkg/account/info"
 	infomemory "github.com/kinecosystem/agora/pkg/account/info/memory"
+	"github.com/kinecosystem/agora/pkg/account/specstate"
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
 	eventsmemory "github.com/kinecosystem/agora/pkg/events/memory"
@@ -92,40 +93,6 @@ func (m *mockSubmitter) Submit(ctx context.Context, e *model.Entry) error {
 	return args.Error(0)
 }
 
-type mockInfoCache struct {
-	mu sync.Mutex
-	mock.Mock
-}
-
-// Put puts a list of account info associated with the given owner.
-func (m *mockInfoCache) Put(ctx context.Context, info *accountpb.AccountInfo) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	args := m.Called(ctx, info)
-	return args.Error(0)
-}
-
-// Get gets an account's info, if it exists in the cache.
-//
-// ErrAccountInfoNotFound is returned if no account info was found for the provided key.
-func (m *mockInfoCache) Get(ctx context.Context, key ed25519.PublicKey) (*accountpb.AccountInfo, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	args := m.Called(ctx, key)
-	return args.Get(0).(*accountpb.AccountInfo), args.Error(1)
-}
-
-// Delete a cached entry.
-func (m *mockInfoCache) Del(ctx context.Context, key ed25519.PublicKey) (ok bool, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	args := m.Called(ctx, key)
-	return args.Bool(0), args.Error(0)
-}
-
 func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 	conn, serv, err := agoratestutil.NewServer(
 		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
@@ -154,8 +121,7 @@ func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 	env.deduper = dedupememory.New()
 
 	env.subsidizer = testutil.GenerateSolanaKeypair(t)
-	token := testutil.GenerateSolanaKeypair(t)
-	env.token = token.Public().(ed25519.PublicKey)
+	env.token = testutil.GenerateSolanaKeypair(t).Public().(ed25519.PublicKey)
 
 	env.hClient = &horizon.MockClient{}
 	// Required for migrating transfer account pairs
@@ -169,10 +135,10 @@ func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 		env.authorizer,
 		migration.NewNoopLoader(),
 		migration.NewNoopMigrator(),
-		env.infoCache,
 		env.webhookSubmitter,
 		env.streamSubmitter,
 		env.deduper,
+		specstate.NewSpeculativeLoader(token.NewClient(env.sc, env.token), env.infoCache),
 		env.token,
 		env.subsidizer,
 	)
@@ -1016,115 +982,6 @@ func TestSubmitTransaction_ChainedSpeculativeSubmissions(t *testing.T) {
 
 // All uses of SubmitTransaction use speculative execution, with the expectations
 // of complete successes. This will test partial and complete failures.
-func TestSpeculativeLoad_Failures(t *testing.T) {
-	env, cleanup := setupServerEnv(t)
-	defer cleanup()
-
-	accounts := testutil.GenerateSolanaKeys(t, 8)
-
-	// Existing valid accounts: 0 -> 2
-	for i := 0; i < 2; i++ {
-		tokenInfo := token.Account{
-			Mint:   env.token,
-			Owner:  accounts[i],
-			Amount: 10 + uint64(i),
-		}
-		accountInfo := solana.AccountInfo{
-			Data:  tokenInfo.Marshal(),
-			Owner: token.ProgramKey,
-		}
-
-		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(accountInfo, nil)
-	}
-
-	// Existing, but wrong token, accounts, 2-> 4
-	for i := 2; i < 4; i++ {
-		tokenInfo := token.Account{
-			Mint:   accounts[i],
-			Owner:  accounts[i],
-			Amount: 10 + uint64(i),
-		}
-		accountInfo := solana.AccountInfo{
-			Data:  tokenInfo.Marshal(),
-			Owner: token.ProgramKey,
-		}
-
-		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(accountInfo, nil)
-	}
-
-	// No data at all for 4 -> 6
-	for i := 4; i < 6; i++ {
-		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
-	}
-
-	// No chain data at all for 6 -> 8, but cache data
-	for i := 6; i < len(accounts); i++ {
-		env.sc.On("GetAccountInfo", accounts[i], mock.Anything).Return(solana.AccountInfo{}, solana.ErrNoAccountInfo)
-		assert.NoError(t, env.infoCache.Put(context.Background(), &accountpb.AccountInfo{
-			AccountId: &commonpb.SolanaAccountId{
-				Value: accounts[i],
-			},
-			Balance: int64(10 + i),
-		}))
-	}
-
-	transferStates := make(map[string]int64)
-	for i := 0; i < len(accounts); i++ {
-		// We do this assignment formula such that
-		// account 0 is negative (-1), and account 1 is positive,
-		// ensuring we handle math correctly.
-		transferStates[string(accounts[i])] = -1 + 2*int64(i)
-	}
-
-	newStates := env.server.speculativeLoad(context.Background(), transferStates, solana.CommitmentRecent)
-	assert.Equal(t, 4, len(newStates))
-
-	newState, ok := newStates[string(accounts[0])]
-	assert.True(t, ok)
-	assert.EqualValues(t, 10-1, newState)
-
-	newState, ok = newStates[string(accounts[1])]
-	assert.True(t, ok)
-	assert.EqualValues(t, 11+1, newState)
-
-	newState, ok = newStates[string(accounts[6])]
-	assert.True(t, ok)
-	assert.EqualValues(t, (10+6)+(-1)+2*6, newState)
-
-	newState, ok = newStates[string(accounts[7])]
-	assert.True(t, ok)
-	assert.EqualValues(t, (10+7)+(-1)+2*7, newState)
-}
-
-func TestSpeculativeWrite_Failures(t *testing.T) {
-	env, cleanup := setupServerEnv(t)
-	defer cleanup()
-
-	// super hack
-	infoCache := &mockInfoCache{}
-	env.server.infoCache = infoCache
-
-	accounts := testutil.GenerateSolanaKeys(t, 3)
-	for i := 0; i < len(accounts); i++ {
-		infoCache.On("Put", mock.Anything, mock.Anything).Return(errors.New("err")).Times(3)
-	}
-
-	writes := map[string]int64{
-		string(accounts[0]): 1,
-		string(accounts[1]): 2,
-		string(accounts[2]): 3,
-	}
-
-	// note: we can't actually test partial failures because proto messages
-	// intentionally have features that break equality operators. Therefore, we
-	// can only ensure that a failure doesn't prevent the others from trying
-	// (using Times(3)), and nothing crashes
-	env.server.speculativeWrite(context.Background(), writes)
-
-	// AssertExpectations doesn't actually...work.
-	assert.Equal(t, 3, len(infoCache.Calls))
-}
-
 func TestSubmitTransaction_Invoice(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()

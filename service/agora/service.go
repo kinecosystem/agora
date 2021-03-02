@@ -40,6 +40,7 @@ import (
 	"github.com/kinecosystem/agora/pkg/account/info"
 	infodb "github.com/kinecosystem/agora/pkg/account/info/dynamodb"
 	accountserver "github.com/kinecosystem/agora/pkg/account/server"
+	"github.com/kinecosystem/agora/pkg/account/specstate"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount"
 	accountcache "github.com/kinecosystem/agora/pkg/account/tokenaccount/dynamodb"
 	airdropserver "github.com/kinecosystem/agora/pkg/airdrop/server"
@@ -273,17 +274,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 			ed25519.PrivateKey(subsidizer).Public().(ed25519.PublicKey),
 		)
 	}
-	var airdropSource []byte
-	if os.Getenv(airdropSourceEnv) != "" {
-		airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if len(subsidizer) > 0 && len(airdropSource) > 0 {
-		a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer)
-	}
 
 	issuer, err := kin.GetKin2Issuer()
 	if err != nil {
@@ -360,6 +350,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	tokenClient := token.NewClient(solanaClient, kinToken)
 	infoCache := infodb.NewCache(dynamoClient, accountInfoTTL, negativeAccountInfoTTL)
 	deduper := deduper.New(dynamoClient, dedupeTTL)
+	specStateLoader := specstate.NewSpeculativeLoader(tokenClient, infoCache)
 
 	if os.Getenv(eventsRedisConnStringEnv) == "" {
 		return errors.New("missing events redis connection string")
@@ -418,13 +409,25 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		authorizer,
 		compositeLoader,
 		migrator,
-		infoCache,
 		eventsProcessor,
 		redisEvents,
 		deduper,
+		specStateLoader,
 		kinToken,
 		subsidizer,
 	)
+
+	var airdropSource []byte
+	if os.Getenv(airdropSourceEnv) != "" {
+		airdropSource, err = base58.Decode(os.Getenv(airdropSourceEnv))
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if len(subsidizer) > 0 && len(airdropSource) > 0 {
+		a.airdropServer = airdropserver.New(solanaClient, kinToken, airdropSource, subsidizer, subsidizer, specStateLoader)
+	}
 
 	//
 	// Kin4 Streams
