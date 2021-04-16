@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/retry"
@@ -251,10 +250,7 @@ func (p *Processor) ProcessRange(ctx context.Context, startKey, endKey []byte, l
 		}
 
 		memos := p.getMemos(txn)
-		blockTime, err := ptypes.Timestamp(se.BlockTime)
-		if err != nil {
-			return sc, errors.Wrap(err, "failed to create timestamppb")
-		}
+		blockTime := se.BlockTime.AsTime()
 		if blockTime.IsZero() || blockTime.Unix() == 0 {
 			return sc, errors.Errorf("missing block time at block: %d", se.Slot)
 		}
@@ -354,7 +350,7 @@ func (p *Processor) getCreations(txn solana.Transaction, successful bool) (creat
 
 func (p *Processor) getPayments(txn solana.Transaction, successful bool) (payments []*history.Payment, err error) {
 	for i := range txn.Message.Instructions {
-		decompiled, err := token.DecompileTransferAccount(txn.Message, i)
+		decompiled, err := token.DecompileTransfer(txn.Message, i)
 		if err != nil {
 			continue
 		}

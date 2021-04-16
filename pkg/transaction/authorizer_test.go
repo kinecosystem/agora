@@ -567,8 +567,8 @@ func generateTransaction(t *testing.T, appIndex uint16, invoiceList *commonpb.In
 		ID:          make([]byte, 32),
 		InvoiceList: invoiceList,
 		SignRequest: &signtransaction.Request{
-			KinVersion:  3,
-			EnvelopeXDR: []byte("test"),
+			KinVersion:        3,
+			SolanaTransaction: []byte("test"),
 		},
 	}
 	if invoiceList != nil {

@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
@@ -68,10 +66,8 @@ func testRoundTrip(t *testing.T, ctor SubmitterCtor) {
 			assert.Equal(t, 5, len(events))
 			for i := 0; i < 5; i++ {
 				if i > 0 {
-					i0, err := ptypes.Timestamp(events[i-1].SubmissionTime)
-					require.NoError(t, err)
-					i1, err := ptypes.Timestamp(events[i].SubmissionTime)
-					require.NoError(t, err)
+					i0 := events[i-1].SubmissionTime.AsTime()
+					i1 := events[i].SubmissionTime.AsTime()
 
 					assert.True(t, i1.Sub(i0) >= 10*time.Millisecond)
 				}

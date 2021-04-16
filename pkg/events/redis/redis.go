@@ -7,11 +7,11 @@ import (
 
 	"github.com/go-redis/redis/v7"
 	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
@@ -77,7 +77,7 @@ func (p *PubSub) Submit(ctx context.Context, event *eventspb.Event) error {
 	default:
 	}
 
-	event.SubmissionTime = ptypes.TimestampNow()
+	event.SubmissionTime = timestamppb.Now()
 	if err := event.Validate(); err != nil {
 		return err
 	}
@@ -115,15 +115,10 @@ func (p *PubSub) watch() {
 			continue
 		}
 
-		submissionTime, err := ptypes.Timestamp(m.SubmissionTime)
-		if err != nil {
-			log.WithError(err).Warn("failed to get submission time, ignoring")
-		} else {
-			// todo: If nodes are struggling to keep up, we can drop events that are too old.
-			//       However, the redis pubsub client itself already has buffering semantics,
-			//       so it's unlikely we'd ever hit that case.
-			visibilityHistogram.WithLabelValues(p.channel).Observe(time.Since(submissionTime).Seconds())
-		}
+		// todo: If nodes are struggling to keep up, we can drop events that are too old.
+		//       However, the redis pubsub client itself already has buffering semantics,
+		//       so it's unlikely we'd ever hit that case.
+		visibilityHistogram.WithLabelValues(p.channel).Observe(time.Since(m.SubmissionTime.AsTime()).Seconds())
 
 		for _, h := range p.hooks {
 			h(m)

@@ -166,7 +166,7 @@ func TestMigrateAccount(t *testing.T) {
 	assert.Equal(t, info.owner, setAuthority.NewAuthority)
 	assert.Equal(t, token.AuthorityTypeAccountHolder, setAuthority.Type)
 
-	transfer, err := token.DecompileTransferAccount(submitted.Message, 4)
+	transfer, err := token.DecompileTransfer(submitted.Message, 4)
 	require.NoError(t, err)
 	assert.Equal(t, env.mint, transfer.Source)
 	assert.Equal(t, env.mintKey.Public().(ed25519.PublicKey), transfer.Owner)
@@ -392,7 +392,7 @@ func TestInitiateMigration_HorizonStates(t *testing.T) {
 	assert.Equal(t, migration.StatusComplete, state.Status)
 	assert.True(t, exists)
 
-	transfer, err := token.DecompileTransferAccount(submitted.Message, 4)
+	transfer, err := token.DecompileTransfer(submitted.Message, 4)
 	require.NoError(t, err)
 	assert.Equal(t, env.mint, transfer.Source)
 	assert.Equal(t, env.mintKey.Public().(ed25519.PublicKey), transfer.Owner)

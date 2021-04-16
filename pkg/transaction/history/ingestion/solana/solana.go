@@ -7,7 +7,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/retry"
 	"github.com/kinecosystem/agora-common/retry/backoff"
 	"github.com/kinecosystem/agora-common/solana"
@@ -15,6 +14,7 @@ import (
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/ingestion"
@@ -156,11 +156,6 @@ func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 		return errors.Errorf("failed to get block time for block %d", slot)
 	}
 
-	ts, err := ptypes.TimestampProto(blockTime)
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal block time")
-	}
-
 	type shouldProcessFunc func(solana.BlockTransaction, int) (bool, error)
 	checks := []shouldProcessFunc{
 		i.containsInitialize,
@@ -200,7 +195,7 @@ func (i *ingestor) processSlot(slot uint64, w history.Writer) error {
 					Solana: &model.SolanaEntry{
 						Slot:             slot,
 						Confirmed:        true,
-						BlockTime:        ts,
+						BlockTime:        timestamppb.New(blockTime),
 						Transaction:      txn.Transaction.Marshal(),
 						TransactionError: txnErr,
 					},
@@ -267,7 +262,7 @@ func (i *ingestor) containsSetAuthority(txn solana.BlockTransaction, index int) 
 }
 
 func (i *ingestor) containsTransfer(txn solana.BlockTransaction, index int) (bool, error) {
-	decompiled, err := token.DecompileTransferAccount(txn.Transaction.Message, index)
+	decompiled, err := token.DecompileTransfer(txn.Transaction.Message, index)
 	if err != nil {
 		return false, nil
 	}

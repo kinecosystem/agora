@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/mr-tron/base58/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
@@ -85,13 +85,8 @@ func (r *timeRepairer) Repair(start, end uint64) error {
 				return errors.Wrap(err, "failed to get block time")
 			}
 
-			newTs, err := ptypes.TimestampProto(blockTime)
-			if err != nil {
-				return errors.Wrap(err, "failed to marshal block time")
-			}
-
 			txID, _ := e.GetTxID()
-			se.BlockTime = newTs
+			se.BlockTime = timestamppb.New(blockTime)
 			if !dryRun {
 				log.WithFields(logrus.Fields{
 					"tx":   base58.Encode(txID),

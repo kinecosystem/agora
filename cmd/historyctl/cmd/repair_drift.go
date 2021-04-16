@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/mr-tron/base58/base58"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/transaction/history"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
@@ -91,13 +91,9 @@ func (r *driftRepairer) Repair(start, end uint64) error {
 			}
 
 			blockTime := getApproximateBlockTime(driftStartBlock, driftEndBlock, se.Slot, driftStartTime, driftEndTime)
-			newTs, err := ptypes.TimestampProto(blockTime)
-			if err != nil {
-				return errors.Wrap(err, "failed to marshal block time")
-			}
 
 			txID, _ := e.GetTxID()
-			se.BlockTime = newTs
+			se.BlockTime = timestamppb.New(blockTime)
 			if !dryRun {
 				log.WithFields(logrus.Fields{
 					"tx":   base58.Encode(txID),

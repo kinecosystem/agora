@@ -8,7 +8,7 @@ import (
 	"github.com/kinecosystem/agora-common/config/env"
 	"github.com/kinecosystem/agora-common/config/etcd"
 	"github.com/kinecosystem/agora-common/config/wrapper"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (

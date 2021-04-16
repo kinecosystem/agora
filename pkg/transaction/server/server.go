@@ -219,7 +219,7 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 
 	var err error
 	var txMemo *memo.DecompiledMemo
-	var transfers []*token.DecompiledTransferAccount
+	var transfers []*token.DecompiledTransfer
 	var transferAccountPairs [][]ed25519.PublicKey
 
 	transferStates := make(map[string]int64)
@@ -231,8 +231,8 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	case 0:
 		return nil, status.Error(codes.InvalidArgument, "no instructions specified")
 	case 1:
-		transfers = make([]*token.DecompiledTransferAccount, 1)
-		transfers[0], err = token.DecompileTransferAccount(txn.Message, 0)
+		transfers = make([]*token.DecompiledTransfer, 1)
+		transfers[0], err = token.DecompileTransfer(txn.Message, 0)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
@@ -253,9 +253,9 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			offset = 1
 		}
 
-		transfers = make([]*token.DecompiledTransferAccount, len(txn.Message.Instructions)-offset)
+		transfers = make([]*token.DecompiledTransfer, len(txn.Message.Instructions)-offset)
 		for i := 0; i < len(txn.Message.Instructions)-offset; i++ {
-			transfers[i], err = token.DecompileTransferAccount(txn.Message, i+offset)
+			transfers[i], err = token.DecompileTransfer(txn.Message, i+offset)
 			if err != nil {
 				return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 			}

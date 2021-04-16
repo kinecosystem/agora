@@ -250,7 +250,7 @@ func GetAccountsFromTransaction(txn solana.Transaction) (map[string]struct{}, er
 	idSet := make(map[string]struct{})
 
 	for i := range txn.Message.Instructions {
-		transfer, err := token.DecompileTransferAccount(txn.Message, i)
+		transfer, err := token.DecompileTransfer(txn.Message, i)
 		if err == solana.ErrIncorrectProgram || err == solana.ErrIncorrectInstruction {
 			continue
 		} else if err != nil {

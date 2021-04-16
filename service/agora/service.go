@@ -30,7 +30,7 @@ import (
 	"github.com/mr-tron/base58"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 
 	accountpbv4 "github.com/kinecosystem/agora-api/genproto/account/v4"
@@ -146,6 +146,18 @@ type app struct {
 // Init implements agorapp.App.Init.
 func (a *app) Init(_ agoraapp.Config) (err error) {
 	a.shutdownCh = make(chan struct{})
+
+	if os.Getenv(etcdEndpointsEnv) != "" {
+		a.etcdClient, err = clientv3.New(clientv3.Config{
+			Endpoints:            strings.Split(os.Getenv(etcdEndpointsEnv), ","),
+			DialTimeout:          5 * time.Second,
+			DialKeepAliveTime:    10 * time.Second,
+			DialKeepAliveTimeout: 10 * time.Second,
+		})
+		if err != nil {
+			log.WithError(err).Fatal("error running service")
+		}
+	}
 
 	keystoreType := os.Getenv(keystoreTypeEnv)
 	keystore, err := keypairdb.CreateStore(keystoreType)
@@ -598,30 +610,12 @@ func parseRateLimit(env string) (int, error) {
 }
 
 func main() {
-	versionConf := version.WithEnvConfig()
-
-	var err error
-	var etcdClient *clientv3.Client
-	if os.Getenv(etcdEndpointsEnv) != "" {
-		etcdClient, err = clientv3.New(clientv3.Config{
-			Endpoints:            strings.Split(os.Getenv(etcdEndpointsEnv), ","),
-			DialTimeout:          5 * time.Second,
-			DialKeepAliveTime:    10 * time.Second,
-			DialKeepAliveTimeout: 10 * time.Second,
-		})
-		if err != nil {
-			log.WithError(err).Fatal("error running service")
-		}
-
-		versionConf = version.WithETCDConfig(etcdClient)
-	}
-
 	if err := agoraapp.Run(
-		&app{etcdClient: etcdClient},
+		&app{},
 		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
-		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor(versionConf)),
+		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor()),
 		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
-		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor(versionConf)),
+		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor()),
 		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
 	); err != nil {
 		log.WithError(err).Fatal("error running service")

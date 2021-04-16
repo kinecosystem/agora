@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
 	"github.com/kinecosystem/agora/pkg/solanautil"
@@ -69,7 +69,7 @@ func TestMapTransactionEvent(t *testing.T) {
 	block := generateBlocks(t, 1, 10)[0]
 	for i := 0; i < len(block.Transactions); i++ {
 		e := &eventspb.Event{
-			SubmissionTime: ptypes.TimestampNow(),
+			SubmissionTime: timestamppb.Now(),
 			Kind: &eventspb.Event_TransactionEvent{
 				TransactionEvent: &eventspb.TransactionEvent{
 					Transaction: block.Transactions[i].Transaction.Marshal(),
@@ -109,7 +109,7 @@ func TestMapTransactionEvent_Invalid(t *testing.T) {
 	block := generateBlocks(t, 1, 2)[0]
 	for i := 0; i < 2; i++ {
 		e := &eventspb.Event{
-			SubmissionTime: ptypes.TimestampNow(),
+			SubmissionTime: timestamppb.Now(),
 			Kind: &eventspb.Event_TransactionEvent{
 				TransactionEvent: &eventspb.TransactionEvent{
 					Transaction: block.Transactions[i].Transaction.Marshal(),

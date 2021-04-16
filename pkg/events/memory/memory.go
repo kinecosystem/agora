@@ -3,7 +3,7 @@ package memory
 import (
 	"context"
 
-	"github.com/golang/protobuf/ptypes"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
@@ -26,7 +26,7 @@ func (p *PubSub) Submit(ctx context.Context, event *eventspb.Event) error {
 	default:
 	}
 
-	event.SubmissionTime = ptypes.TimestampNow()
+	event.SubmissionTime = timestamppb.Now()
 	if err := event.Validate(); err != nil {
 		return err
 	}

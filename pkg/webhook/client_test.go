@@ -44,8 +44,8 @@ var (
 		},
 	}
 	basicReq = &signtransaction.Request{
-		EnvelopeXDR: []byte{1},
-		InvoiceList: []byte{2},
+		SolanaTransaction: []byte{1},
+		InvoiceList:       []byte{2},
 	}
 	basicReqBody   []byte
 	appUserID      = "someuserid"

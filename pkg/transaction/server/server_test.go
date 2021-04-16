@@ -50,7 +50,6 @@ import (
 	historymemory "github.com/kinecosystem/agora/pkg/transaction/history/memory"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
 	historytestutil "github.com/kinecosystem/agora/pkg/transaction/history/model/testutil"
-	"github.com/kinecosystem/agora/pkg/version"
 )
 
 type serverEnv struct {
@@ -96,9 +95,7 @@ func (m *mockSubmitter) Submit(ctx context.Context, e *model.Entry) error {
 func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 	conn, serv, err := agoratestutil.NewServer(
 		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
-		agoratestutil.WithUnaryServerInterceptor(version.MinVersionUnaryServerInterceptor()),
 		agoratestutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
-		agoratestutil.WithStreamServerInterceptor(version.MinVersionStreamServerInterceptor()),
 	)
 	require.NoError(t, err)
 

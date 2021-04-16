@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
@@ -20,6 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/xdr"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonpbv3 "github.com/kinecosystem/agora-api/genproto/common/v3"
 	commonpbv4 "github.com/kinecosystem/agora-api/genproto/common/v4"
@@ -119,18 +119,13 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 			return nil, errors.Wrap(err, "failed to get transaction time")
 		}
 
-		ts, err := ptypes.TimestampProto(blockTime)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to marshal transaction time")
-		}
-
 		entry = &model.Entry{
 			Version: 4,
 			Kind: &model.Entry_Solana{
 				Solana: &model.SolanaEntry{
 					Slot:             txn.Slot,
 					Confirmed:        true,
-					BlockTime:        ts,
+					BlockTime:        timestamppb.New(blockTime),
 					Transaction:      txn.Transaction.Marshal(),
 					TransactionError: rawTxError,
 				},
@@ -167,13 +162,9 @@ func (l *loader) loadTransaction(ctx context.Context, id []byte) (*transactionpb
 				if err != nil {
 					return nil, errors.Wrap(err, "failed to get transaction time")
 				}
-				ts, err := ptypes.TimestampProto(blockTime)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to marshal transaction time")
-				}
 
 				writeback = true
-				entry.GetSolana().BlockTime = ts
+				entry.GetSolana().BlockTime = timestamppb.New(blockTime)
 				entry.GetSolana().Confirmed = true
 			} else if stat.Confirmations != nil {
 				confirmations = *stat.Confirmations
@@ -507,7 +498,7 @@ func historyItemFromEntry(entry *model.Entry) (*transactionpb.HistoryItem, error
 func paymentsFromTransaction(txn solana.Transaction) []*transactionpb.HistoryItem_Payment {
 	payments := make([]*transactionpb.HistoryItem_Payment, 0, len(txn.Message.Instructions))
 	for i := range txn.Message.Instructions {
-		transfer, err := token.DecompileTransferAccount(txn.Message, i)
+		transfer, err := token.DecompileTransfer(txn.Message, i)
 		if err != nil {
 			continue
 		}

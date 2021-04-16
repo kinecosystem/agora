@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
 	solanamemo "github.com/kinecosystem/agora-common/solana/memo"
@@ -14,6 +13,7 @@ import (
 	"github.com/stellar/go/xdr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction/history/model"
@@ -46,7 +46,7 @@ func GenerateSolanaEntry(t *testing.T, slot uint64, confirmed bool, sender ed255
 			Solana: &model.SolanaEntry{
 				Slot:        slot,
 				Confirmed:   confirmed,
-				BlockTime:   ptypes.TimestampNow(),
+				BlockTime:   timestamppb.Now(),
 				Transaction: txn.Marshal(),
 			},
 		},
@@ -108,7 +108,7 @@ func GenerateStellarEntry(t *testing.T, ledger uint64, txOrder int, sender xdr.A
 			Stellar: &model.StellarEntry{
 				Ledger:            ledger,
 				PagingToken:       pagingToken,
-				LedgerCloseTime:   ptypes.TimestampNow(),
+				LedgerCloseTime:   timestamppb.Now(),
 				NetworkPassphrase: "network passphrase",
 				EnvelopeXdr:       envelopeBytes,
 				ResultXdr:         resultBytes,

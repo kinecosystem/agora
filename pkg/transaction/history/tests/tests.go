@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/kinecosystem/go/strkey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction/history"
@@ -194,7 +194,7 @@ func testDoubleInsert_Solana(t *testing.T, rw history.ReaderWriter) {
 
 		// Modifying time after the fact should be ok (for repair purposes)
 		mutated[2] = proto.Clone(mutated[1]).(*model.Entry)
-		mutated[2].Kind.(*model.Entry_Solana).Solana.BlockTime = ptypes.TimestampNow()
+		mutated[2].Kind.(*model.Entry_Solana).Solana.BlockTime = timestamppb.Now()
 
 		for i, m := range mutated {
 			assert.False(t, proto.Equal(entry, m))
