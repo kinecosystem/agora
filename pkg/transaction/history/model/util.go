@@ -19,6 +19,7 @@ import (
 
 var (
 	ErrInvalidOrderingKeyVersion = errors.New("invalid ordering key version")
+	MaxOrderingKeyExclusive      = []byte{byte(KinVersion_KIN4) + 1}
 )
 
 type SortableEntries []*Entry

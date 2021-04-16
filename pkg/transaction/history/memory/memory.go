@@ -239,6 +239,9 @@ func (rw *RW) GetAccountTransactions(_ context.Context, account string, opts *hi
 
 		return bytes.Compare(orderingKey, opts.GetStart()) >= 0
 	})
+	if i >= len(accountHistory) {
+		i = len(accountHistory) - 1
+	}
 
 	limit := opts.GetLimit()
 	if limit <= 0 {

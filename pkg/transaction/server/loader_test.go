@@ -467,6 +467,64 @@ func TestGetItems_Invoices(t *testing.T) {
 	}
 }
 
+func TestGetItems_Desc(t *testing.T) {
+	env := setup(t)
+
+	sender := testutil.GenerateSolanaKeypair(t)
+	senderB := testutil.GenerateSolanaKeypair(t)
+	var senderPubKey xdr.Uint256
+	copy(senderPubKey[:], sender.Public().(ed25519.PublicKey))
+	senderAccount := xdr.AccountId{
+		Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+		Ed25519: &senderPubKey,
+	}
+	accounts := testutil.GenerateAccountIDs(t, 10)
+
+	// We return identity, as well as one of the overlapping transaction
+	// accounts to ensure we filter duplicate resolved addresses, as well
+	// as duplicate entries correctly.
+	resolvedAddresses := []ed25519.PublicKey{
+		sender.Public().(ed25519.PublicKey),
+		senderB.Public().(ed25519.PublicKey),
+	}
+
+	env.client.On("GetTokenAccountsByOwner", mock.Anything, env.loader.token).Return(resolvedAddresses, nil)
+
+	// Generate:
+	//   1. Stellar history
+	//   2. Solana sender history, interleaved with;
+	//   3. Solana sender B history, as well as;
+	//   4. Solana sender A to sender B transactions
+	generated := make([]*model.Entry, 80)
+	for i := 0; i < 20; i++ {
+		generated[i], _ = historytestutil.GenerateStellarEntry(t, uint64(i-i%2), i, senderAccount, accounts[1:], nil, nil)
+	}
+	for i := 20; i < 40; i++ {
+		receivers := testutil.GenerateSolanaKeys(t, 10)
+		generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i), true, sender, receivers, nil, nil)
+		generated[i+20], _ = historytestutil.GenerateSolanaEntry(t, uint64(i+20), true, senderB, receivers, nil, nil)
+	}
+	for i := 60; i < 80; i++ {
+		generated[i], _ = historytestutil.GenerateSolanaEntry(t, uint64(i), true, sender, []ed25519.PublicKey{senderB.Public().(ed25519.PublicKey)}, nil, nil)
+	}
+
+	for _, g := range generated {
+		require.NoError(t, env.rw.Write(context.Background(), g))
+	}
+
+	require.NoError(t, env.committer.Commit(context.Background(), ingestion.GetHistoryIngestorName(model.KinVersion_KIN4), nil, historytestutil.GetOrderingKey(t, generated[69])))
+
+	items, err := env.loader.getItems(context.Background(), sender, nil, transactionpb.GetHistoryRequest_DESC)
+	assert.NoError(t, err)
+	assert.Equal(t, 70, len(items))
+	for i := 0; i < 70; i++ {
+		expectedID, err := generated[69-i].GetTxID()
+		require.NoError(t, err)
+
+		assert.EqualValues(t, expectedID, items[i].TransactionId.Value)
+	}
+}
+
 func TestGetEntriesForAccount(t *testing.T) {
 	env := setup(t)
 

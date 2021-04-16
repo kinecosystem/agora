@@ -233,18 +233,7 @@ func (l *loader) getItems(ctx context.Context, accountID []byte, cursor *transac
 			opts.Start = start
 		}
 	} else if opts.Descending {
-		var latestEntry *model.Entry
-		latestEntry, err := l.rw.GetLatestForAccount(ctx, account)
-		if err == history.ErrNotFound {
-			return nil, nil
-		} else if err != nil {
-			return nil, errors.Wrap(err, "failed to get last entry for account")
-		}
-
-		opts.Start, err = latestEntry.GetOrderingKey()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get ordering key from latest entry")
-		}
+		opts.Start = model.MaxOrderingKeyExclusive
 	}
 
 	entries, err := l.getEntriesForAccount(ctx, accountID, opts)
