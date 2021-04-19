@@ -33,8 +33,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 
+	accountpbv3 "github.com/kinecosystem/agora-api/genproto/account/v3"
 	accountpbv4 "github.com/kinecosystem/agora-api/genproto/account/v4"
 	airdroppb "github.com/kinecosystem/agora-api/genproto/airdrop/v4"
+	transactionpbv3 "github.com/kinecosystem/agora-api/genproto/transaction/v3"
 	transactionpbv4 "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/account/info"
@@ -453,6 +455,9 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 
 // RegisterWithGRPC implements agorapp.App.RegisterWithGRPC.
 func (a *app) RegisterWithGRPC(server *grpc.Server) {
+	accountpbv3.RegisterAccountServer(server, &accountpbv3.UnimplementedAccountServer{})
+	transactionpbv3.RegisterTransactionServer(server, &transactionpbv3.UnimplementedTransactionServer{})
+
 	accountpbv4.RegisterAccountServer(server, a.accountSolana)
 	transactionpbv4.RegisterTransactionServer(server, a.txnSolana)
 
