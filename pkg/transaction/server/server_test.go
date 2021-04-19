@@ -184,7 +184,7 @@ func TestGetMinimumKinVersion(t *testing.T) {
 	ctx = metadata.NewOutgoingContext(context.Background(), metadata.New(md))
 	resp, err = env.client.GetMinimumKinVersion(ctx, &transactionpb.GetMinimumKinVersionRequest{})
 	assert.NoError(t, err)
-	assert.EqualValues(t, 2, resp.Version)
+	assert.EqualValues(t, 4, resp.Version)
 }
 
 func TestGetRecentBlockhash(t *testing.T) {

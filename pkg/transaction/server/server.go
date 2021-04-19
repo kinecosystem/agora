@@ -138,16 +138,7 @@ func (s *server) GetMinimumKinVersion(ctx context.Context, _ *transactionpb.GetM
 		}, nil
 	}
 
-	v, err := version.GetCtxKinVersion(ctx)
-	if err != nil {
-		v = version.KinVersion3
-	}
-
-	if v == version.KinVersion2 {
-		return &transactionpb.GetMinimumKinVersionResponse{Version: uint32(2)}, nil
-	} else {
-		return &transactionpb.GetMinimumKinVersionResponse{Version: uint32(4)}, nil
-	}
+	return &transactionpb.GetMinimumKinVersionResponse{Version: uint32(4)}, nil
 }
 
 // GetRecentBlockhash returns a recent block hash from the underlying network,
