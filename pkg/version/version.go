@@ -4,15 +4,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-const defaultVersion = version.KinVersion4
 
 var (
 	preconditionFailedCounter = prometheus.NewCounter(prometheus.CounterOpts{
