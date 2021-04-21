@@ -118,39 +118,48 @@ func TestInnerProcess(t *testing.T) {
 }
 
 func TestParsing(t *testing.T) {
-	env := setup(t)
+	for _, successful := range []bool{false, true} {
+		env := setup(t)
 
-	accounts := testutil.GenerateSolanaKeys(t, 4)
+		accounts := testutil.GenerateSolanaKeys(t, 4)
 
-	// creation of [2] with owner as [3]
-	// payment from [0] to [2]
-	// payment from [2] to [0]
-	instructions := []solana.Instruction{
-		generateInstruction(t, env.mint, []ed25519.PublicKey{accounts[2], accounts[3]}, instructionTypeCreation, 0),
-		generateInstruction(t, env.mint, []ed25519.PublicKey{accounts[0], accounts[2], accounts[1]}, instructionTypePayment, 10),
-		generateInstruction(t, env.mint, []ed25519.PublicKey{accounts[2], accounts[0], accounts[3]}, instructionTypePayment, 3),
+		// creation of [2] with owner as [3]
+		// payment from [0] to [2]
+		// payment from [2] to [0]
+		instructions := []solana.Instruction{
+			generateInstruction(t, env.mint, []ed25519.PublicKey{accounts[2], accounts[3]}, instructionTypeCreation, 0),
+			generateInstruction(t, env.mint, []ed25519.PublicKey{accounts[0], accounts[2], accounts[1]}, instructionTypePayment, 10),
+			generateInstruction(t, env.mint, []ed25519.PublicKey{accounts[2], accounts[0], accounts[3]}, instructionTypePayment, 3),
+		}
+
+		entry := generateSolanaEntry(t, 3, true, instructions)
+		if !successful {
+			entry.Kind.(*model.Entry_Solana).Solana.TransactionError = []byte("err")
+		}
+
+		require.NoError(t, env.rw.Write(context.Background(), entry))
+
+		// We expect get account info to get called for the destinations (amount ignored)
+		env.sc.On("GetAccountInfo", accounts[0], solana.CommitmentSingle).Return(generateAccountInfo(10, env.mint, accounts[1], token.ProgramKey), nil).Once()
+		env.sc.On("GetAccountInfo", accounts[2], solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, accounts[3], token.ProgramKey), nil).Once()
+
+		sc, err := env.processor.ProcessRange(context.Background(), model.OrderingKeyFromBlock(0), model.OrderingKeyFromBlock(10), 1024)
+		require.NoError(t, err)
+
+		orderingKey, err := entry.GetOrderingKey()
+		require.NoError(t, err)
+		assert.Equal(t, orderingKey, sc.LastKey)
+
+		assert.Equal(t, 1, len(sc.Creations))
+		assertCreation(t, sc.Creations[0], 0, accounts[2], accounts[3])
+		assert.Equal(t, sc.Creations[0].Successful, successful)
+
+		assert.Equal(t, 2, len(sc.Payments))
+		assertPayment(t, sc.Payments[0], 1, 10, accounts[0], accounts[1], accounts[2], accounts[3])
+		assertPayment(t, sc.Payments[1], 2, 3, accounts[2], accounts[3], accounts[0], accounts[1])
+		assert.Equal(t, sc.Payments[0].Successful, successful)
+		assert.Equal(t, sc.Payments[1].Successful, successful)
 	}
-
-	entry := generateSolanaEntry(t, 3, true, instructions)
-	require.NoError(t, env.rw.Write(context.Background(), entry))
-
-	// We expect get account info to get called for the destinations (amount ignored)
-	env.sc.On("GetAccountInfo", accounts[0], solana.CommitmentSingle).Return(generateAccountInfo(10, env.mint, accounts[1], token.ProgramKey), nil).Once()
-	env.sc.On("GetAccountInfo", accounts[2], solana.CommitmentSingle).Return(generateAccountInfo(0, env.mint, accounts[3], token.ProgramKey), nil).Once()
-
-	sc, err := env.processor.ProcessRange(context.Background(), model.OrderingKeyFromBlock(0), model.OrderingKeyFromBlock(10), 1024)
-	require.NoError(t, err)
-
-	orderingKey, err := entry.GetOrderingKey()
-	require.NoError(t, err)
-	assert.Equal(t, orderingKey, sc.LastKey)
-
-	assert.Equal(t, 1, len(sc.Creations))
-	assertCreation(t, sc.Creations[0], 0, accounts[2], accounts[3])
-
-	assert.Equal(t, 2, len(sc.Payments))
-	assertPayment(t, sc.Payments[0], 1, 10, accounts[0], accounts[1], accounts[2], accounts[3])
-	assertPayment(t, sc.Payments[1], 2, 3, accounts[2], accounts[3], accounts[0], accounts[1])
 }
 
 func TestMigrationTransaction(t *testing.T) {

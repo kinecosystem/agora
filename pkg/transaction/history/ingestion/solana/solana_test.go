@@ -224,6 +224,14 @@ func TestTransactionFilter(t *testing.T) {
 						senders[0].Public().(ed25519.PublicKey),
 						10,
 					),
+					token.Transfer2(
+						senders[0].Public().(ed25519.PublicKey),
+						env.token,
+						receivers[0],
+						senders[0].Public().(ed25519.PublicKey),
+						10,
+						5,
+					),
 				),
 			},
 			// Another mint
@@ -235,6 +243,14 @@ func TestTransactionFilter(t *testing.T) {
 						receivers[0],
 						senders[1].Public().(ed25519.PublicKey),
 						10,
+					),
+					token.Transfer2(
+						senders[1].Public().(ed25519.PublicKey),
+						otherToken,
+						receivers[0],
+						senders[1].Public().(ed25519.PublicKey),
+						10,
+						5,
 					),
 				),
 			},
@@ -248,11 +264,27 @@ func TestTransactionFilter(t *testing.T) {
 						senders[0].Public().(ed25519.PublicKey),
 						10,
 					),
+					token.Transfer2(
+						senders[0].Public().(ed25519.PublicKey),
+						env.token,
+						receivers[0],
+						senders[0].Public().(ed25519.PublicKey),
+						10,
+						5,
+					),
 					token.Transfer(
 						senders[1].Public().(ed25519.PublicKey),
 						receivers[1],
 						senders[1].Public().(ed25519.PublicKey),
 						10,
+					),
+					token.Transfer2(
+						senders[1].Public().(ed25519.PublicKey),
+						otherToken,
+						receivers[1],
+						senders[1].Public().(ed25519.PublicKey),
+						10,
+						5,
 					),
 				),
 			},
@@ -294,7 +326,7 @@ func TestTransactionFilter(t *testing.T) {
 	}
 	actualTransactions := make(map[string]struct{})
 
-	assert.Len(t, env.writer.Writes, 2)
+	assert.Len(t, env.writer.Writes, 4)
 	for _, entry := range env.writer.Writes {
 		e := entry.GetSolana()
 

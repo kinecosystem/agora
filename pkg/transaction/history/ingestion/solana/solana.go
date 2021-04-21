@@ -262,50 +262,68 @@ func (i *ingestor) containsSetAuthority(txn solana.BlockTransaction, index int) 
 }
 
 func (i *ingestor) containsTransfer(txn solana.BlockTransaction, index int) (bool, error) {
-	decompiled, err := token.DecompileTransfer(txn.Transaction.Message, index)
+	cmd, err := token.GetCommand(txn.Transaction.Message, index)
 	if err != nil {
 		return false, nil
 	}
 
-	sourceInfo, err := i.tokenClient.GetAccount(decompiled.Source, solana.CommitmentSingle)
-	if err == nil {
-		if !bytes.Equal(sourceInfo.Mint, i.tokenClient.Token()) {
+	switch cmd {
+	case token.CommandTransfer:
+		decompiled, err := token.DecompileTransfer(txn.Transaction.Message, index)
+		if err != nil {
 			return false, nil
 		}
 
-		return true, nil
-	}
+		sourceInfo, err := i.tokenClient.GetAccount(decompiled.Source, solana.CommitmentSingle)
+		if err == nil {
+			if !bytes.Equal(sourceInfo.Mint, i.tokenClient.Token()) {
+				return false, nil
+			}
 
-	// The source is clearly not a Kin token, we so ignore it.
-	if err == token.ErrInvalidTokenAccount {
-		return false, nil
-	}
+			return true, nil
+		}
 
-	// If the transaction failed, we don't really care enough to recover this information.
-	if txn.Err != nil {
-		return false, nil
-	}
-
-	destInfo, err := i.tokenClient.GetAccount(decompiled.Destination, solana.CommitmentSingle)
-	if err == nil {
-		if !bytes.Equal(destInfo.Mint, i.tokenClient.Token()) {
+		// The source is clearly not a Kin token, we so ignore it.
+		if err == token.ErrInvalidTokenAccount {
 			return false, nil
 		}
 
-		return true, nil
-	}
+		// If the transaction failed, we don't really care enough to recover this information.
+		if txn.Err != nil {
+			return false, nil
+		}
 
-	// The dest is clearly not a Kin token, we so ignore it.
-	if err == token.ErrInvalidTokenAccount {
+		destInfo, err := i.tokenClient.GetAccount(decompiled.Destination, solana.CommitmentSingle)
+		if err == nil {
+			if !bytes.Equal(destInfo.Mint, i.tokenClient.Token()) {
+				return false, nil
+			}
+
+			return true, nil
+		}
+
+		// The dest is clearly not a Kin token, we so ignore it.
+		if err == token.ErrInvalidTokenAccount {
+			return false, nil
+		}
+
+		// We don't have any information about either account. This is likely the case
+		// if both accounts were deleted before we were able to process the transaction.
+		//
+		// This can occur if the history system is lagging significantly behind. To avoid
+		// loss, we process it anyway. This can create garbage, but won't polute the server
+		// responses. On KRE ingestion, we can look for the InitializeAccount() instruction
+		// to verify.
+		return true, nil
+	case token.CommandTransfer2:
+		decompiled, err := token.DecompileTransfer2(txn.Transaction.Message, index)
+		if err != nil {
+			return false, nil
+		}
+
+		return bytes.Equal(decompiled.Mint, i.tokenClient.Token()), nil
+	default:
 		return false, nil
 	}
 
-	// We don't have any information about either account. This is likely the case
-	// if both accounts were deleted before we were able to process the transaction.
-	//
-	// This can occur if the history system is lagging significantly behind. To avoid
-	// loss, we process it anyway. This can create garbage, but won't polute the server
-	// responses. On KRE ingestion, we can look for the InitializeAccount() instruction
-	// to verify.
-	return true, nil
 }
