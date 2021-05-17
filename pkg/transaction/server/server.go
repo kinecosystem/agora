@@ -243,6 +243,10 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		return nil, status.Error(codes.InvalidArgument, "bad transaction encoding")
 	}
 
+	if len(tx.Signatures) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "transaction has no signatures allocated")
+	}
+
 	sig := &commonpb.TransactionSignature{}
 	if tx.Signatures[0] != (solana.Signature{}) {
 		sig.Value = tx.Signature()

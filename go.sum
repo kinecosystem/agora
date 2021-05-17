@@ -386,8 +386,8 @@ github.com/k0kubun/colorstring v0.0.0-20150214042306-9440f1994b88/go.mod h1:3w7q
 github.com/kinecosystem/agora-api v0.25.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
 github.com/kinecosystem/agora-api v0.26.0 h1:QbBlabWVLBz84IjkWaC27+TJvWpgNbXLf2KDx3oxvLY=
 github.com/kinecosystem/agora-api v0.26.0/go.mod h1:VOzHMauG9MCVXzJwKZJ3gNIrmUAV35YdeVcUpT1RQVc=
-github.com/kinecosystem/agora-common v0.79.0 h1:38lhvqSnv7nbh5+bCqPDsVaqDf1toKLAlhrn7qqQXtI=
-github.com/kinecosystem/agora-common v0.79.0/go.mod h1:bs3dcB3MPN8cD1hwAploBloUp2Xw9ODX3Id1Q0gg5pg=
+github.com/kinecosystem/agora-common v0.80.0 h1:P9lQ+Pc0MrEMBKsCbbJcLMz64hXaG2qM6k593abyUsM=
+github.com/kinecosystem/agora-common v0.80.0/go.mod h1:bs3dcB3MPN8cD1hwAploBloUp2Xw9ODX3Id1Q0gg5pg=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e h1:YP9l6K2VUnIc9SmT9irPeCrJ9JCWMQjOj0Pq2xSpEfs=
 github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e/go.mod h1:25m9BWmQ2cj1bVnl4Axoxq8XNpODLSe01IA9HrhG4sA=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
