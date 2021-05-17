@@ -75,6 +75,9 @@ func StreamTransactions(ctx context.Context, client solana.Client, notifiers ...
 					log.WithError(err).Warnf("failed to get block: %v", b)
 					return err
 				}
+				if block == nil {
+					continue
+				}
 
 				for _, txn := range block.Transactions {
 					for _, n := range notifiers {
