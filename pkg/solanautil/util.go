@@ -78,6 +78,16 @@ func IsAccountAlreadyExistsError(err *solana.TransactionError) bool {
 	return ie.Index == 0 && ie.CustomError() != nil && *ie.CustomError() == 0
 }
 
+func IsInvalidAccountDataError(err *solana.TransactionError) bool {
+	if err.InstructionError() == nil {
+		return false
+	}
+
+	ie := err.InstructionError()
+
+	return ie.Index == 0 && ie.ErrorKey() == solana.InstructionErrorInvalidAccountData
+}
+
 func IsDuplicateSignature(err error) bool {
 	if err == nil {
 		return false

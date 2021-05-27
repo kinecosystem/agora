@@ -32,7 +32,8 @@ const (
 )
 
 var (
-	zeroAccount    ed25519.PublicKey
+	zeroAccount ed25519.PublicKey = make([]byte, ed25519.PublicKeySize)
+
 	successCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "offline_migrate_account_success",

@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package kin.agora.gc;
+
+option go_package = "gcpb";
+
+import "validate/validate.proto";
+
+service Admin{
+    rpc SetState(SetStateRequest) returns (VoidResponse);
+    rpc SetRateLimit(SetRateLimitRequest) returns (VoidResponse);
+    rpc SetHistoryCheck(SetHistoryCheckRequest) returns (VoidResponse);
+    rpc Queue(QueueRequest) returns (VoidResponse);
+}
+
+message VoidResponse {
+}
+
+message SetStateRequest {
+    State state = 1;
+    enum State {
+        RUNNING = 0;
+        STOPPED = 1;
+    }
+}
+
+message SetRateLimitRequest {
+    uint32 rate = 1;
+}
+
+message SetHistoryCheckRequest {
+    bool enabled = 1;
+}
+
+message QueueRequest {
+    repeated QueueItem items = 1;
+    message QueueItem {
+        bytes key                = 1;
+        bool ignore_zero_balance = 2;
+    }
+}
