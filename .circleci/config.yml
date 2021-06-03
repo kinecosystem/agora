@@ -7,6 +7,8 @@ jobs:
 
     environment:
       TEST_RESULTS: /tmp/test-results
+      GONOPROXY: github.com/kinecosystem
+      GONOSUMDB: github.com/kinecosystem
 
     steps:
       - checkout
