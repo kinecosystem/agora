@@ -225,6 +225,8 @@ func (i *ingestor) containsInitialize(txn solana.BlockTransaction, index int) (b
 }
 
 func (i *ingestor) containsSetAuthority(txn solana.BlockTransaction, index int) (bool, error) {
+	log := i.log.WithField("method", "containsSetAuthority")
+
 	decompiled, err := token.DecompileSetAuthority(txn.Transaction.Message, index)
 	if err != nil {
 		return false, nil
@@ -235,6 +237,11 @@ func (i *ingestor) containsSetAuthority(txn solana.BlockTransaction, index int) 
 		// The source account is either not a token account, or it's not for
 		// our configured mint
 		return false, nil
+	} else if err == token.ErrAccountNotFound {
+		// The account in question no longer exists, so we can't determine if it's for
+		// our token our not. To be safe, we accept this instruction as a change authority.
+		log.WithField("account", base58.Encode(decompiled.Account)).Warn("account not found while checking SetAuthority instruction, accepting")
+		return true, nil
 	} else if err != nil {
 		// If we cannot retrieve the source account, _and_ there's a transaction failure,
 		// then it is likely (but not guaranteed) that the transaction failed because the

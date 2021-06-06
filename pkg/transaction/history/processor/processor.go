@@ -409,6 +409,12 @@ func (p *Processor) getOwnershipChanges(txn solana.Transaction, successful bool)
 		_, err = p.tc.GetAccount(decompiled.Account, solana.CommitmentSingle)
 		if err == token.ErrInvalidTokenAccount {
 			continue
+		} else if err == token.ErrAccountNotFound {
+			// The account in question no longer exists. However, we don't persist
+			// ownership changes alone, only in the context of other instructions within
+			// the same transaction. Therefore, if we optimistically allow it, then the worst
+			// case is we have extra ownership information that gets dropped before ingestion.
+			log.WithField("account", base58.Encode(decompiled.Account)).Warn("account not found while processing ownership change, accepting")
 		} else if err != nil {
 			if successful {
 				return nil, errors.Wrap(err, "failed to get account for non-failed transaction")
