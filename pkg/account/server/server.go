@@ -197,6 +197,12 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 		AccountId: &commonpb.SolanaAccountId{
 			Value: auth.Address,
 		},
+		Owner: &commonpb.SolanaAccountId{
+			Value: auth.Owner,
+		},
+		CloseAuthority: &commonpb.SolanaAccountId{
+			Value: auth.CloseAuthority,
+		},
 	}
 
 	_, stat, err := s.sc.SubmitTransaction(txn, solanautil.CommitmentFromProto(req.Commitment))

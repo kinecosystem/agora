@@ -28,10 +28,11 @@ const (
 )
 
 type Authorization struct {
-	Result    AuthorizationResult
-	Signature []byte
-	Address   ed25519.PublicKey
-	Owner     ed25519.PublicKey
+	Result         AuthorizationResult
+	Signature      []byte
+	Address        ed25519.PublicKey
+	Owner          ed25519.PublicKey
+	CloseAuthority ed25519.PublicKey
 }
 
 type Authorizer interface {
@@ -124,6 +125,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 		offset++
 		result.Address = create.Address
 		result.Owner = create.Owner
+		result.CloseAuthority = create.Owner
 		subsidizer = create.Subsidizer
 	} else {
 		create, err := system.DecompileCreateAccount(tx.Message, offset)
@@ -155,6 +157,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 		offset++
 		result.Address = create.Address
 		result.Owner = initialize.Owner
+		result.CloseAuthority = initialize.Owner
 		subsidizer = create.Funder
 	}
 
@@ -183,6 +186,8 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 		if !bytes.Equal(setAuth.NewAuthority, subsidizer) {
 			return result, status.Error(codes.InvalidArgument, "invalid SplToken::SetAuthority subsidizer")
 		}
+
+		result.CloseAuthority = setAuth.NewAuthority
 	} else if offset != len(tx.Message.Instructions) {
 		return result, status.Error(codes.InvalidArgument, "invalid number of instructions")
 	}

@@ -237,6 +237,7 @@ func TestAuthorizer_SetAuthority(t *testing.T) {
 		assert.Equal(t, AuthorizationResultOK, result.Result)
 		assert.Equal(t, assocCreate.Accounts[1].PublicKey, result.Address)
 		assert.Equal(t, owner, result.Owner)
+		assert.Equal(t, env.subsidizer, result.CloseAuthority)
 
 		missing := solana.NewTransaction(
 			env.subsidizer,
@@ -418,6 +419,7 @@ func TestAuthorizer_Webhook_200(t *testing.T) {
 	assert.Equal(t, AuthorizationResultOK, result.Result)
 	assert.Equal(t, addr, result.Address)
 	assert.Equal(t, owner, result.Owner)
+	assert.Equal(t, env.subsidizer, result.CloseAuthority)
 	assert.Equal(t, ed25519.Sign(env.subsidizerKey, tx.Message.Marshal()), result.Signature)
 	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
 }
@@ -446,6 +448,7 @@ func TestAuthorizer_Webhook_403(t *testing.T) {
 	assert.Equal(t, AuthorizationResultPayerRequired, result.Result)
 	assert.Equal(t, addr, result.Address)
 	assert.Equal(t, owner, result.Owner)
+	assert.Equal(t, env.subsidizer, result.CloseAuthority)
 	assert.Equal(t, ed25519.Sign(env.subsidizerKey, tx.Message.Marshal()), result.Signature)
 	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
 }
@@ -476,6 +479,7 @@ func TestAuthorizer_Webhook_NoSignature(t *testing.T) {
 	assert.Equal(t, AuthorizationResultPayerRequired, result.Result)
 	assert.Equal(t, addr, result.Address)
 	assert.Equal(t, owner, result.Owner)
+	assert.Equal(t, subsidizer, result.CloseAuthority)
 	assert.Empty(t, result.Signature)
 	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
 }
@@ -508,6 +512,7 @@ func TestAuthorizer_Webhook_Subsidized(t *testing.T) {
 	assert.Equal(t, AuthorizationResultOK, result.Result)
 	assert.Equal(t, addr, result.Address)
 	assert.Equal(t, owner, result.Owner)
+	assert.Equal(t, subsidizer.Public(), result.CloseAuthority)
 	assert.Equal(t, ed25519.Sign(subsidizer, tx.Marshal()), result.Signature)
 	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
 }

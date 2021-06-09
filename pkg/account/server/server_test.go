@@ -176,9 +176,10 @@ func TestCreateAccount(t *testing.T) {
 	})
 
 	authResult := account.Authorization{
-		Address:   wallet.Public().(ed25519.PublicKey),
-		Owner:     owner.Public().(ed25519.PublicKey),
-		Signature: sig[:],
+		Address:        wallet.Public().(ed25519.PublicKey),
+		Owner:          owner.Public().(ed25519.PublicKey),
+		CloseAuthority: env.subsidizer.Public().(ed25519.PublicKey),
+		Signature:      sig[:],
 	}
 	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 
@@ -190,6 +191,8 @@ func TestCreateAccount(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, accountpb.CreateAccountResponse_OK, resp.Result)
+	assert.EqualValues(t, owner.Public().(ed25519.PublicKey), resp.AccountInfo.Owner.Value)
+	assert.EqualValues(t, env.subsidizer.Public().(ed25519.PublicKey), resp.AccountInfo.CloseAuthority.Value)
 
 	cachedInfo, err := env.infoCache.Get(context.Background(), wallet.Public().(ed25519.PublicKey))
 	assert.NoError(t, err)
@@ -261,9 +264,10 @@ func TestCreateAccount_AssociatedAccount(t *testing.T) {
 	})
 
 	authResult := account.Authorization{
-		Address:   wallet.Public().(ed25519.PublicKey),
-		Owner:     owner.Public().(ed25519.PublicKey),
-		Signature: sig[:],
+		Address:        wallet.Public().(ed25519.PublicKey),
+		Owner:          owner.Public().(ed25519.PublicKey),
+		CloseAuthority: env.subsidizer.Public().(ed25519.PublicKey),
+		Signature:      sig[:],
 	}
 	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 
@@ -349,9 +353,10 @@ func TestCreateAccount_Exists(t *testing.T) {
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
 
 	authResult := account.Authorization{
-		Address:   wallet.Public().(ed25519.PublicKey),
-		Owner:     owner.Public().(ed25519.PublicKey),
-		Signature: sig[:],
+		Address:        wallet.Public().(ed25519.PublicKey),
+		Owner:          owner.Public().(ed25519.PublicKey),
+		CloseAuthority: env.subsidizer.Public().(ed25519.PublicKey),
+		Signature:      sig[:],
 	}
 	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 
@@ -552,9 +557,10 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 	copy(sig[:], ed25519.Sign(env.subsidizer, createTxn.Marshal()))
 
 	authResult := account.Authorization{
-		Address:   wallet.Public().(ed25519.PublicKey),
-		Owner:     owner.Public().(ed25519.PublicKey),
-		Signature: sig[:],
+		Address:        wallet.Public().(ed25519.PublicKey),
+		Owner:          owner.Public().(ed25519.PublicKey),
+		CloseAuthority: env.subsidizer.Public().(ed25519.PublicKey),
+		Signature:      sig[:],
 	}
 	env.auth.On("Authorize", mock.Anything, createTxn).Return(authResult, nil)
 	env.sc.On("SubmitTransaction", mock.Anything, solana.CommitmentMax).Return(sig, &solana.SignatureStatus{}, nil)
