@@ -159,7 +159,9 @@ func (p *Processor) queueHandler(ctx context.Context, msg *task.Message) error {
 		func() error {
 			err := p.m.InitiateMigration(ctx, account, item.IgnoreZeroBalance, solana.CommitmentMax)
 			switch err {
-			case nil, ErrMultisig, ErrBurned, ErrNotFound, context.Canceled:
+			case nil, ErrNotFound:
+				return nil
+			case ErrMultisig, ErrBurned, context.Canceled:
 			default:
 				log.WithError(err).Warn("error running migration, retrying")
 			}
