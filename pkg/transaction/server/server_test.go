@@ -39,7 +39,6 @@ import (
 	eventsmemory "github.com/kinecosystem/agora/pkg/events/memory"
 	"github.com/kinecosystem/agora/pkg/invoice"
 	invoicedb "github.com/kinecosystem/agora/pkg/invoice/memory"
-	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/testutil"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/dedupe"
@@ -129,8 +128,6 @@ func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 		env.rw,
 		env.committer,
 		env.authorizer,
-		migration.NewNoopLoader(),
-		migration.NewNoopMigrator(),
 		env.webhookSubmitter,
 		env.streamSubmitter,
 		env.deduper,

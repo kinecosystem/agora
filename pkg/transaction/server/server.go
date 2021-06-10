@@ -26,7 +26,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
 	"github.com/kinecosystem/agora/pkg/invoice"
-	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 	"github.com/kinecosystem/agora/pkg/transaction"
 	"github.com/kinecosystem/agora/pkg/transaction/dedupe"
@@ -55,8 +54,6 @@ type server struct {
 	invoiceStore    invoice.Store
 	history         history.ReaderWriter
 	authorizer      transaction.Authorizer
-	migrationLoader migration.Loader
-	migrator        migration.Migrator
 	webEvents       webevents.Submitter
 	streamEvents    events.Submitter
 	deduper         dedupe.Deduper
@@ -76,8 +73,6 @@ func New(
 	history history.ReaderWriter,
 	committer ingestion.Committer,
 	authorizer transaction.Authorizer,
-	migrationLoader migration.Loader,
-	migrator migration.Migrator,
 	webEvents webevents.Submitter,
 	streamEvents events.Submitter,
 	deduper dedupe.Deduper,
@@ -99,8 +94,6 @@ func New(
 		history:         history,
 		invoiceStore:    invoiceStore,
 		authorizer:      authorizer,
-		migrationLoader: migrationLoader,
-		migrator:        migrator,
 		webEvents:       webEvents,
 		streamEvents:    streamEvents,
 		deduper:         deduper,
@@ -292,7 +285,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		}
 	}
 
-	var transferAccountPairs [][]ed25519.PublicKey
 	transferStates := make(map[string]int64)
 
 	//
@@ -309,7 +301,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 			return nil, status.Error(codes.InvalidArgument, "invalid transfer instruction")
 		}
 
-		transferAccountPairs = append(transferAccountPairs, []ed25519.PublicKey{transfer.Source, transfer.Destination})
 		transferStates[string(transfer.Source)] -= int64(transfer.Amount)
 		transferStates[string(transfer.Destination)] += int64(transfer.Amount)
 
@@ -318,11 +309,6 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 		if _, ok := destWhitelist[destKey]; ok {
 			transferByDest.WithLabelValues(destKey).Inc()
 		}
-	}
-
-	// todo: migration timings, maybe could be global by scope
-	if err := migration.MigrateTransferAccounts(ctx, s.migrationLoader, s.migrator, transferAccountPairs...); err != nil && err != migration.ErrNotFound {
-		return nil, status.Errorf(codes.Internal, "failed to migrate transfer accounts: %v", err)
 	}
 
 	log = log.WithField("sig", base64.StdEncoding.EncodeToString(tx.Signature()))
@@ -545,13 +531,6 @@ func (s *server) GetHistory(ctx context.Context, req *transactionpb.GetHistoryRe
 		"method":  "GetHistory",
 		"account": base64.StdEncoding.EncodeToString(req.AccountId.Value),
 	})
-
-	err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentSingle)
-	switch err {
-	case nil, migration.ErrNotFound, migration.ErrBurned:
-	default:
-		return nil, status.Errorf(codes.Internal, "failed to migrate account: %v", err)
-	}
 
 	items, err := s.loader.getItems(ctx, req.AccountId.Value, req.Cursor, req.Direction)
 	if err != nil {

@@ -12,10 +12,10 @@ require (
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.5.1
 	github.com/hashicorp/golang-lru v0.5.1
-	github.com/jackc/pgx/v4 v4.9.2
 	github.com/kinecosystem/agora-api v0.26.0
 	github.com/kinecosystem/agora-common v0.81.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
+	github.com/mattn/go-colorable v0.1.6 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mr-tron/base58 v1.2.0
 	github.com/ory/dockertest v3.3.5+incompatible
@@ -24,10 +24,10 @@ require (
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.1.1
 	github.com/stellar/go v0.0.0-20191211203732-552e507ffa37
+	github.com/stretchr/objx v0.2.0 // indirect
 	github.com/stretchr/testify v1.6.1
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 	github.com/ybbus/jsonrpc v2.1.2+incompatible
-	go.etcd.io/etcd/client/v3 v3.5.0-alpha.0
 	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0

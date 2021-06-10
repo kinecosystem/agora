@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/kinecosystem/agora-common/headers"
+	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/solana"
 	"github.com/kinecosystem/agora-common/solana/token"
 	"github.com/mr-tron/base58"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 	"github.com/stellar/go/strkey"
@@ -26,7 +26,6 @@ import (
 	"github.com/kinecosystem/agora/pkg/account"
 	"github.com/kinecosystem/agora/pkg/account/info"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount"
-	"github.com/kinecosystem/agora/pkg/migration"
 	"github.com/kinecosystem/agora/pkg/solanautil"
 )
 
@@ -54,16 +53,6 @@ var (
 		Name:      "resolve_token_account_misses",
 		Help:      "Number of token account cache misses",
 	})
-	nonMigratableResolveCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "non_migratable_resolves",
-		Help:      "Number of times a resolve has been called for an account that cannot be migrated",
-	})
-	resolveShortCuts = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "resolve_short_cuts",
-		Help:      "Number short cuts taken for resolve token account",
-	}, []string{"type"})
 
 	createAccountFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "agora",
@@ -115,8 +104,6 @@ type server struct {
 	infoCache         info.Cache
 	loader            *info.Loader
 	auth              account.Authorizer
-	migrationLoader   migration.Loader
-	migrator          migration.Migrator
 
 	token              ed25519.PublicKey
 	subsidizer         ed25519.PrivateKey
@@ -127,9 +114,15 @@ type server struct {
 }
 
 func init() {
-	if err := registerMetrics(); err != nil {
-		logrus.WithError(err).Error("failed to register account server metrics")
-	}
+	consistencyCheckFailedCounter = metrics.Register(consistencyCheckFailedCounter).(prometheus.Counter)
+
+	resolveAccountHitCounter = metrics.Register(resolveAccountHitCounter).(prometheus.Counter)
+	resolveAccountMissCounter = metrics.Register(resolveAccountMissCounter).(prometheus.Counter)
+
+	createAccountFailures = metrics.Register(createAccountFailures).(*prometheus.CounterVec)
+	createAccountByPlatform = metrics.Register(createAccountByPlatform).(*prometheus.CounterVec)
+	createAccountBlockCounterVec = metrics.Register(createAccountBlockCounterVec).(*prometheus.CounterVec)
+	createAccountResultCounterVec = metrics.Register(createAccountResultCounterVec).(*prometheus.CounterVec)
 }
 
 func New(
@@ -140,8 +133,6 @@ func New(
 	infoCache info.Cache,
 	loader *info.Loader,
 	authorizer account.Authorizer,
-	migrationLoader migration.Loader,
-	migrator migration.Migrator,
 	mint ed25519.PublicKey,
 	subsidizer ed25519.PrivateKey,
 	createWhitelistSecret string,
@@ -156,8 +147,6 @@ func New(
 		infoCache:             infoCache,
 		loader:                loader,
 		auth:                  authorizer,
-		migrationLoader:       migrationLoader,
-		migrator:              migrator,
 		token:                 mint,
 		subsidizer:            subsidizer,
 		createWhitelistSecret: createWhitelistSecret,
@@ -260,40 +249,8 @@ func (s *server) CreateAccount(ctx context.Context, req *accountpb.CreateAccount
 }
 
 func (s *server) GetAccountInfo(ctx context.Context, req *accountpb.GetAccountInfoRequest) (*accountpb.GetAccountInfoResponse, error) {
-	log := s.log.WithField("method", "GetAccountInfo")
-
-	commitment := solanautil.CommitmentFromProto(req.Commitment)
-
-	var stellarFallback bool
-	err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, commitment)
-	switch err {
-	case nil, migration.ErrNotFound, migration.ErrBurned:
-	default:
-		log.WithError(err).Warn("failed to initiate migration")
-		stellarFallback = true
-	}
-
 	ai, err := s.loader.Load(ctx, req.AccountId.Value, solanautil.CommitmentFromProto(req.Commitment))
 	if err == info.ErrAccountInfoNotFound {
-		if stellarFallback {
-			log.Debug("Looking up horizon balance")
-			_, balance, err := s.migrationLoader.LoadAccount(req.AccountId.Value)
-			if err == migration.ErrNotFound {
-				return &accountpb.GetAccountInfoResponse{
-					Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
-				}, nil
-			} else if err != nil {
-				return nil, status.Error(codes.Internal, "failed to get account balance")
-			}
-
-			return &accountpb.GetAccountInfoResponse{
-				AccountInfo: &accountpb.AccountInfo{
-					AccountId: &commonpb.SolanaAccountId{Value: req.AccountId.Value},
-					Balance:   int64(balance),
-				},
-			}, nil
-		}
-
 		return &accountpb.GetAccountInfoResponse{
 			Result: accountpb.GetAccountInfoResponse_NOT_FOUND,
 		}, nil
@@ -337,18 +294,6 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	} else {
 		resolveAccountHitCounter.Inc()
 		accounts = cached
-	}
-
-	// We check to see if the requested account has any accounts that should be
-	// migrated.
-	migrationAccounts, err := s.migrator.GetMigrationAccounts(ctx, req.AccountId.Value)
-	if err == nil && len(migrationAccounts) > 0 {
-		// We only use recent here to ensure ResolveAccounts() is still fairly quick.
-		//
-		// Note: it's important we use the non-mapped value here.
-		if err := s.migrator.InitiateMigration(ctx, req.AccountId.Value, false, solana.CommitmentRecent); err != nil && err != migration.ErrNotFound {
-			return nil, status.Errorf(codes.Internal, "failed to initiate migration: %v", err)
-		}
 	}
 
 	resp := &accountpb.ResolveTokenAccountsResponse{
@@ -621,76 +566,6 @@ func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicK
 	}
 
 	return true
-}
-
-func registerMetrics() (err error) {
-	if err := prometheus.Register(consistencyCheckFailedCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			consistencyCheckFailedCounter = e.ExistingCollector.(prometheus.Counter)
-			return nil
-		}
-		return errors.Wrap(err, "failed to register token account cache consistency check failure counter")
-	}
-
-	if err := prometheus.Register(resolveAccountHitCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			resolveAccountHitCounter = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			return errors.Wrap(err, "failed to register resolve token account hit counter")
-		}
-	}
-	if err := prometheus.Register(resolveAccountMissCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			resolveAccountMissCounter = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			return errors.Wrap(err, "failed to register resolve token account miss counter")
-		}
-	}
-	if err := prometheus.Register(nonMigratableResolveCounter); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			nonMigratableResolveCounter = e.ExistingCollector.(prometheus.Counter)
-		} else {
-			return errors.Wrap(err, "failed to register resolve non migratable resolve counter")
-		}
-	}
-	if err := prometheus.Register(resolveShortCuts); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			resolveShortCuts = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return errors.Wrap(err, "failed to register resolve token short cuts counter")
-		}
-	}
-
-	if err := prometheus.Register(createAccountFailures); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			createAccountFailures = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return errors.Wrap(err, "failed to register create account failures")
-		}
-	}
-	if err := prometheus.Register(createAccountByPlatform); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			createAccountByPlatform = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return errors.Wrap(err, "failed to register create account by platform")
-		}
-	}
-	if err := prometheus.Register(createAccountBlockCounterVec); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			createAccountBlockCounterVec = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return errors.Wrap(err, "failed to register create account block counter vec")
-		}
-	}
-	if err := prometheus.Register(createAccountResultCounterVec); err != nil {
-		if e, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			createAccountResultCounterVec = e.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return errors.Wrap(err, "failed to register create account result counter vec")
-		}
-	}
-
-	return nil
 }
 
 func moveFront(accounts []ed25519.PublicKey, target ed25519.PublicKey) {

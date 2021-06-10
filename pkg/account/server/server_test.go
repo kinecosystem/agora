@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"sort"
-	"sync"
 	"testing"
 	"time"
 
@@ -34,8 +33,6 @@ import (
 	infodb "github.com/kinecosystem/agora/pkg/account/info/memory"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount"
 	"github.com/kinecosystem/agora/pkg/account/tokenaccount/memory"
-	"github.com/kinecosystem/agora/pkg/migration"
-	migrationstore "github.com/kinecosystem/agora/pkg/migration/memory"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
@@ -59,14 +56,12 @@ type testEnv struct {
 	notifier          *AccountNotifier
 	tokenAccountCache tokenaccount.Cache
 	infoCache         info.Cache
-	migrationStore    migration.Store
-	migrator          migration.Migrator
 	auth              *mockAuthorizer
 
 	server *server
 }
 
-func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env testEnv, cleanup func()) {
+func setup(t *testing.T, conf ConfigProvider) (env testEnv, cleanup func()) {
 	conn, serv, err := agoratestutil.NewServer(
 		agoratestutil.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
 		agoratestutil.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
@@ -88,13 +83,6 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 	env.infoCache, err = infodb.NewCache(time.Second, 2*time.Second, 5)
 	require.NoError(t, err)
 
-	env.migrationStore = migrationstore.New()
-	if migrator != nil {
-		env.migrator = migrator
-	} else {
-		env.migrator = migration.NewNoopMigrator()
-	}
-
 	env.server = New(
 		conf,
 		env.sc,
@@ -103,8 +91,6 @@ func setup(t *testing.T, migrator migration.Migrator, conf ConfigProvider) (env 
 		env.infoCache,
 		info.NewLoader(env.tc, env.infoCache, env.tokenAccountCache),
 		env.auth,
-		migration.NewNoopLoader(),
-		env.migrator,
 		env.token,
 		env.subsidizer,
 		"",
@@ -138,7 +124,7 @@ func TestMoveFront(t *testing.T) {
 }
 
 func TestCreateAccount(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	wallet := testutil.GenerateSolanaKeypair(t)
@@ -226,7 +212,7 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestCreateAccount_AssociatedAccount(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	wallet := testutil.GenerateSolanaKeypair(t)
@@ -312,7 +298,7 @@ func TestCreateAccount_AssociatedAccount(t *testing.T) {
 }
 
 func TestCreateAccount_Exists(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	wallet := testutil.GenerateSolanaKeypair(t)
@@ -383,7 +369,7 @@ func TestCreateAccount_Exists(t *testing.T) {
 }
 
 func TestCreateAccount_NoSubsidizer(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	wallet := testutil.GenerateSolanaKeypair(t)
@@ -428,7 +414,7 @@ func TestCreateAccount_NoSubsidizer(t *testing.T) {
 }
 
 func TestCreateAccount_InvalidBlockhash(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	wallet := testutil.GenerateSolanaKeypair(t)
@@ -477,7 +463,7 @@ func TestCreateAccount_InvalidBlockhash(t *testing.T) {
 }
 
 func TestCreateAccount_Limited(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	wallet := testutil.GenerateSolanaKeypair(t)
@@ -522,7 +508,7 @@ func TestCreateAccount_Limited(t *testing.T) {
 }
 
 func TestCreateAccount_Whitelisting(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	env.server.createWhitelistSecret = "somesecret"
@@ -617,7 +603,7 @@ func TestCreateAccount_Whitelisting(t *testing.T) {
 }
 
 func TestGetAccountInfo(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
@@ -688,7 +674,7 @@ func TestGetAccountInfo(t *testing.T) {
 }
 
 func TestResolveTokenAccounts(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// note: we create a reverse() function to ensure that the impl
@@ -837,7 +823,7 @@ func TestResolveTokenAccounts(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_WithInfo(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// note: we create a reverse() function to ensure that the impl
@@ -894,7 +880,7 @@ func TestResolveTokenAccounts_WithInfo(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_WithInfo_NotFound(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	// note: we create a reverse() function to ensure that the impl
@@ -919,7 +905,7 @@ func TestResolveTokenAccounts_WithInfo_NotFound(t *testing.T) {
 }
 
 func TestResolveTokenAccounts_Cached(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 5)
@@ -989,7 +975,7 @@ func TestResolveTokenAccounts_Cached(t *testing.T) {
 
 func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
 	// Always check
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(1.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(1.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 5)
@@ -1042,45 +1028,8 @@ func TestResolveTokenAccounts_CacheCheck(t *testing.T) {
 	env.sc.AssertExpectations(t)
 }
 
-func TestResolveTokenAccounts_NoShortcuts(t *testing.T) {
-	mig := &mockMigrator{}
-	env, cleanup := setup(t, mig, WithOverrides(memconfig.NewConfig(false), memconfig.NewConfig(0.0)))
-	defer cleanup()
-
-	// Horizon client will be...called?
-	migratable := testutil.GenerateSolanaKeys(t, 3)
-	nonMigratable := testutil.GenerateSolanaKeys(t, 3)
-
-	mig.On("InitiateMigration", mock.Anything, migratable[0], false, solana.CommitmentRecent).Return(nil)
-
-	mig.On("GetMigrationAccounts", mock.Anything, migratable[0]).Return(migratable[1:2], nil)
-	mig.On("GetMigrationAccounts", mock.Anything, nonMigratable[0]).Return([]ed25519.PublicKey{}, migration.ErrNotFound)
-	env.sc.On("GetTokenAccountsByOwner", migratable[0], env.token).Return(migratable[1:], nil).Times(1)
-	env.sc.On("GetTokenAccountsByOwner", nonMigratable[0], env.token).Return(nonMigratable[1:], nil).Times(1)
-
-	resp, err := env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: migratable[0],
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 2)
-	assert.Contains(t, migratable[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
-	assert.Contains(t, migratable[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
-
-	resp, err = env.client.ResolveTokenAccounts(context.Background(), &accountpb.ResolveTokenAccountsRequest{
-		AccountId: &commonpb.SolanaAccountId{
-			Value: nonMigratable[0],
-		},
-	})
-	assert.NoError(t, err)
-	assert.Len(t, resp.TokenAccounts, 2)
-	assert.Contains(t, nonMigratable[1:], ed25519.PublicKey(resp.TokenAccounts[0].Value))
-	assert.Contains(t, nonMigratable[1:], ed25519.PublicKey(resp.TokenAccounts[1].Value))
-}
-
 func TestGetEvents(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 4)
@@ -1154,7 +1103,7 @@ func TestGetEvents(t *testing.T) {
 }
 
 func TestGetEvents_NotFound(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	account := testutil.GenerateSolanaKeys(t, 1)[0]
@@ -1174,7 +1123,7 @@ func TestGetEvents_NotFound(t *testing.T) {
 }
 
 func TestGetEvents_WithResolution(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 3)
@@ -1226,7 +1175,7 @@ func TestGetEvents_WithResolution(t *testing.T) {
 }
 
 func TestGetEvents_WithCacheResolution(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 3)
@@ -1277,7 +1226,7 @@ func TestGetEvents_WithCacheResolution(t *testing.T) {
 }
 
 func TestGetEvents_WithResolutionTooManyAccounts(t *testing.T) {
-	env, cleanup := setup(t, nil, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
+	env, cleanup := setup(t, WithOverrides(config.NoopConfig, memconfig.NewConfig(0.0)))
 	defer cleanup()
 
 	accounts := testutil.GenerateSolanaKeys(t, 3)
@@ -1295,25 +1244,4 @@ func TestGetEvents_WithResolutionTooManyAccounts(t *testing.T) {
 	resp, err := stream.Recv()
 	assert.NoError(t, err)
 	assert.Equal(t, accountpb.Events_NOT_FOUND, resp.Result)
-}
-
-type mockMigrator struct {
-	sync.Mutex
-	mock.Mock
-}
-
-func (m *mockMigrator) InitiateMigration(ctx context.Context, account ed25519.PublicKey, ignoreBalance bool, commitment solana.Commitment) error {
-	m.Lock()
-	defer m.Unlock()
-
-	args := m.Called(ctx, account, ignoreBalance, commitment)
-	return args.Error(0)
-}
-
-func (m *mockMigrator) GetMigrationAccounts(ctx context.Context, account ed25519.PublicKey) ([]ed25519.PublicKey, error) {
-	m.Lock()
-	defer m.Unlock()
-
-	args := m.Called(ctx, account)
-	return args.Get(0).([]ed25519.PublicKey), args.Error(1)
 }

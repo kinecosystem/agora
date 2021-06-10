@@ -2,17 +2,13 @@ package server
 
 import (
 	"fmt"
-	"path"
 
 	"github.com/kinecosystem/agora-common/config"
 	"github.com/kinecosystem/agora-common/config/env"
-	"github.com/kinecosystem/agora-common/config/etcd"
 	"github.com/kinecosystem/agora-common/config/wrapper"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (
-	configPrefix    = "/config/agora/v1"
 	configNamespace = "account/server"
 
 	resolveConsistencyCheckRate        = "resolve_consistency_check_rate"
@@ -28,12 +24,6 @@ type conf struct {
 func WithEnvConfig() ConfigProvider {
 	return func(c *conf) {
 		c.resolveConsistencyCheckRate = wrapper.NewFloat64Config(env.NewConfig(fmt.Sprintf("%s_%s", configNamespace, resolveConsistencyCheckRate)), resolveConsistencyCheckRateDefault)
-	}
-}
-
-func WithETCDConfigs(client *clientv3.Client) ConfigProvider {
-	return func(c *conf) {
-		c.resolveConsistencyCheckRate = etcd.NewFloat64Config(client, path.Join(configPrefix, configNamespace, resolveConsistencyCheckRate), resolveConsistencyCheckRateDefault)
 	}
 }
 
