@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"math/rand"
 	"sort"
 	"strings"
 	"time"
@@ -38,11 +37,6 @@ const (
 )
 
 var (
-	consistencyCheckFailedCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "agora",
-		Name:      "token_account_cache_consistency_check_failures",
-		Help:      "Number of token account cache consistency check failures",
-	})
 	resolveAccountHitCounter = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "agora",
 		Name:      "resolve_token_account_hits",
@@ -96,7 +90,6 @@ func (s sortableAccounts) Swap(i int, j int) {
 
 type server struct {
 	log               *logrus.Entry
-	conf              conf
 	sc                solana.Client
 	tc                *token.Client
 	accountNotifier   *AccountNotifier
@@ -114,8 +107,6 @@ type server struct {
 }
 
 func init() {
-	consistencyCheckFailedCounter = metrics.Register(consistencyCheckFailedCounter).(prometheus.Counter)
-
 	resolveAccountHitCounter = metrics.Register(resolveAccountHitCounter).(prometheus.Counter)
 	resolveAccountMissCounter = metrics.Register(resolveAccountMissCounter).(prometheus.Counter)
 
@@ -126,7 +117,6 @@ func init() {
 }
 
 func New(
-	conf ConfigProvider,
 	sc solana.Client,
 	accountNotifier *AccountNotifier,
 	tokenAccountCache tokenaccount.Cache,
@@ -152,8 +142,6 @@ func New(
 		createWhitelistSecret: createWhitelistSecret,
 		minAccountLamports:    minAccountLamports,
 	}
-
-	conf(&s.conf)
 
 	return s
 }
@@ -275,7 +263,7 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 	if err != nil && err != tokenaccount.ErrTokenAccountsNotFound {
 		log.WithError(err).Warn("failed to get token accounts from cache")
 	}
-	if len(cached) == 0 || rand.Float64() < s.conf.resolveConsistencyCheckRate.Get(ctx) {
+	if len(cached) == 0 {
 		accounts, err = s.sc.GetTokenAccountsByOwner(req.AccountId.Value, s.token)
 		if err != nil {
 			log.WithError(err).Warn("failed to get token accounts")
@@ -283,8 +271,6 @@ func (s *server) ResolveTokenAccounts(ctx context.Context, req *accountpb.Resolv
 		}
 
 		if len(cached) != 0 {
-			// Only need to writeback if the consistency check has failed
-			cacheWriteback = !checkCacheConsistency(cached, accounts)
 			resolveAccountHitCounter.Inc()
 		} else {
 			// Fresh load, always needs a writeback
@@ -540,32 +526,6 @@ func (s *server) isWhitelisted(ctx context.Context) (userAgent string, whitelist
 	}
 
 	return val, true
-}
-
-// checkCacheConsistency returns whether or not the cached set is equivalent to the
-// actual set.
-func checkCacheConsistency(cached []ed25519.PublicKey, fetched []ed25519.PublicKey) bool {
-	if len(cached) != len(fetched) {
-		consistencyCheckFailedCounter.Inc()
-		return false
-	}
-
-	cachedKeys := make(map[string]struct{})
-	for _, a := range cached {
-		cachedKeys[string(a)] = struct{}{}
-	}
-
-	// Note: we don't have to compute the reverse set as we assume that both
-	// cached and fetched are distinct. If this is _not_ true, then it is possible
-	// for this method to return a false positive.
-	for _, a := range fetched {
-		if _, ok := cachedKeys[string(a)]; !ok {
-			consistencyCheckFailedCounter.Inc()
-			return false
-		}
-	}
-
-	return true
 }
 
 func moveFront(accounts []ed25519.PublicKey, target ed25519.PublicKey) {

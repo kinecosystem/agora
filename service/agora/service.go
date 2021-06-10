@@ -262,7 +262,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrap(err, "failed to load minimum balance for rent exception")
 	}
 
-	accountConfig := accountserver.WithEnvConfig()
 	accountAuthorizer := account.NewAuthorizer(
 		appMapper,
 		appConfigStore,
@@ -273,7 +272,6 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		kinToken,
 	)
 	a.accountSolana = accountserver.New(
-		accountConfig,
 		solanaClient,
 		kin4AccountNotifier,
 		tokenAccountCache,
