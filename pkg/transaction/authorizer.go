@@ -116,6 +116,9 @@ func (s *authorizer) Authorize(ctx context.Context, raw solana.Transaction, il *
 			return a, status.Error(codes.Internal, "failed to get app id mapping")
 		}
 	}
+	if appIndex == 0 {
+		appIndex, _ = app.GetAppIndex(ctx)
+	}
 
 	//
 	// Validate transaction operations themselves

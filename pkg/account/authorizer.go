@@ -109,6 +109,10 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 		}
 	}
 
+	if appIndex == 0 {
+		appIndex, _ = app.GetAppIndex(ctx)
+	}
+
 	//
 	// Parse out create instruction(s).
 	//
@@ -263,6 +267,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 			return result, status.Error(codes.Internal, "webhook returned invalid signature")
 		}
 
+		copy(tx.Signatures[0][:], createResponse.Signature)
 		result.Signature = createResponse.Signature
 	} else if len(result.Signature) == 0 {
 		// If there is no signature at this point, it's likely an issue with the webhook.

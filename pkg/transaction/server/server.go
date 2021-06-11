@@ -215,6 +215,8 @@ func (s *server) SignTransaction(ctx context.Context, req *transactionpb.SignTra
 		return nil, err
 	}
 
+	log.WithField("result", authResult.Result).Debug("authorization result")
+
 	switch authResult.Result {
 	case transaction.AuthorizationResultOK:
 		return &transactionpb.SignTransactionResponse{

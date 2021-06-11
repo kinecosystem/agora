@@ -487,6 +487,42 @@ func TestAuthorizer_Webhook_Signature(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, AuthorizationResultOK, result.Result)
 	assert.Equal(t, sig, result.SignResponse.Signature)
+	assert.Equal(t, sig, tx.Signatures[0][:])
+	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
+}
+
+func TestAuthorizer_Webhook_Signature_ImplicitAppIndex(t *testing.T) {
+	env := setup(t)
+
+	signer := testutil.GenerateSolanaKeypair(t)
+	tx, il, sig := generateTxData(t, signer, 0)
+
+	// Setup webhook with a successful (empty) response
+	var callCount int64
+	webhookResp := &signtransaction.SuccessResponse{
+		Signature: sig,
+	}
+	b, err := json.Marshal(webhookResp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, http.StatusOK, b, &callCount)
+
+	// Setup webhook mapping
+	signURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	require.NoError(t, env.config.Add(env.ctx, 1, &app.Config{
+		AppName:            "myapp",
+		SignTransactionURL: signURL,
+		WebhookSecret:      generateWebhookSecret(t),
+	}))
+
+	ctx := env.ctx
+	require.NoError(t, headers.SetASCIIHeader(ctx, "app-index", "1"))
+
+	result, err := env.auth.Authorize(ctx, tx, il, false)
+	require.NoError(t, err)
+	assert.Equal(t, AuthorizationResultOK, result.Result)
+	assert.Equal(t, sig, result.SignResponse.Signature)
+	assert.Equal(t, sig, tx.Signatures[0][:])
 	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
 }
 
@@ -828,7 +864,8 @@ func generateTxData(t *testing.T, signer ed25519.PrivateKey, appIndex uint16) (t
 
 	tx = solana.NewTransaction(signer.Public().(ed25519.PublicKey), instructions...)
 	require.NoError(t, tx.Sign(signer))
-	sig = tx.Signature()
+	sig = make([]byte, ed25519.SignatureSize)
+	copy(sig, tx.Signature())
 	tx.Signatures[0] = solana.Signature{}
 
 	return tx, il, sig

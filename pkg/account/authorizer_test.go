@@ -492,7 +492,7 @@ func TestAuthorizer_Webhook_Subsidized(t *testing.T) {
 
 	var callCount int64
 	resp := &createaccount.SuccessResponse{
-		Signature: ed25519.Sign(subsidizer, tx.Marshal()),
+		Signature: ed25519.Sign(subsidizer, tx.Message.Marshal()),
 	}
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
@@ -513,7 +513,45 @@ func TestAuthorizer_Webhook_Subsidized(t *testing.T) {
 	assert.Equal(t, addr, result.Address)
 	assert.Equal(t, owner, result.Owner)
 	assert.Equal(t, subsidizer.Public(), result.CloseAuthority)
-	assert.Equal(t, ed25519.Sign(subsidizer, tx.Marshal()), result.Signature)
+	assert.Equal(t, ed25519.Sign(subsidizer, tx.Message.Marshal()), result.Signature)
+	assert.Equal(t, ed25519.Sign(subsidizer, tx.Message.Marshal()), tx.Signatures[0][:])
+	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
+}
+
+func TestAuthorizer_Webhook_Subsidized_ImplicitAppIndex(t *testing.T) {
+	env := setup(t)
+
+	subsidizer := testutil.GenerateSolanaKeypair(t)
+	addr, owner, tx := generateCreate(t, subsidizer.Public().(ed25519.PublicKey), env.mint, 0)
+
+	var callCount int64
+	resp := &createaccount.SuccessResponse{
+		Signature: ed25519.Sign(subsidizer, tx.Message.Marshal()),
+	}
+	b, err := json.Marshal(resp)
+	require.NoError(t, err)
+	testServer := newTestServerWithJSONResponse(t, http.StatusOK, b, &callCount)
+
+	// setup webhook mapping
+	createAccountURL, err := url.Parse(testServer.URL)
+	require.NoError(t, err)
+	require.NoError(t, env.config.Add(env.ctx, 1, &app.Config{
+		AppName:          "myapp",
+		CreateAccountURL: createAccountURL,
+		WebhookSecret:    generateWebhookSecret(t),
+	}))
+
+	ctx := env.ctx
+	require.NoError(t, headers.SetASCIIHeader(ctx, "app-index", "1"))
+
+	result, err := env.auth.Authorize(ctx, tx)
+	assert.NoError(t, err)
+	assert.Equal(t, AuthorizationResultOK, result.Result)
+	assert.Equal(t, addr, result.Address)
+	assert.Equal(t, owner, result.Owner)
+	assert.Equal(t, subsidizer.Public(), result.CloseAuthority)
+	assert.Equal(t, ed25519.Sign(subsidizer, tx.Message.Marshal()), result.Signature)
+	assert.Equal(t, ed25519.Sign(subsidizer, tx.Message.Marshal()), tx.Signatures[0][:])
 	assert.EqualValues(t, 1, atomic.LoadInt64(&callCount))
 }
 
@@ -544,18 +582,24 @@ func generateCreate(t *testing.T, subsidizer, mint ed25519.PublicKey, appIndex i
 	)
 	require.NoError(t, err)
 
-	m, err := kin.NewMemo(1, kin.TransactionTypeNone, uint16(appIndex), make([]byte, 29))
-	require.NoError(t, err)
+	var instructions []solana.Instruction
+	if appIndex > 0 {
+		m, err := kin.NewMemo(1, kin.TransactionTypeNone, uint16(appIndex), make([]byte, 29))
+		require.NoError(t, err)
+
+		instructions = append(instructions, memo.Instruction(base64.StdEncoding.EncodeToString(m[:])))
+	}
+
+	instructions = append(instructions, create)
+	instructions = append(instructions, token.SetAuthority(
+		account,
+		keys[0],
+		subsidizer,
+		token.AuthorityTypeCloseAccount,
+	))
 
 	return create.Accounts[1].PublicKey, keys[0], solana.NewTransaction(
 		subsidizer,
-		memo.Instruction(base64.StdEncoding.EncodeToString(m[:])),
-		create,
-		token.SetAuthority(
-			account,
-			keys[0],
-			subsidizer,
-			token.AuthorityTypeCloseAccount,
-		),
+		instructions...,
 	)
 }

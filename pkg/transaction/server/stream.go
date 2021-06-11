@@ -55,7 +55,7 @@ func StreamTransactions(ctx context.Context, client solana.Client, notifiers ...
 				seed = blocks[len(blocks)-1]
 			}
 
-			log.WithField("seed", seed).Debug("starting event loop")
+			log.WithField("seed", seed).Trace("starting event loop")
 
 			select {
 			case <-ctx.Done():
@@ -94,7 +94,7 @@ func StreamTransactions(ctx context.Context, client solana.Client, notifiers ...
 			log.WithFields(logrus.Fields{
 				"old_seed": seed,
 				"new_seed": newSeed,
-			}).Debug("finished block process")
+			}).Trace("finished block process")
 			seed = newSeed
 
 			time.Sleep(solana.PollRate)
