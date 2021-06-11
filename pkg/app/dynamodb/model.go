@@ -1,11 +1,13 @@
 package dynamodb
 
 import (
+	"crypto/ed25519"
 	"net/url"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/dynamodbattribute"
+	"github.com/mr-tron/base58/base58"
 	"github.com/pkg/errors"
 
 	"github.com/kinecosystem/agora/pkg/app"
@@ -30,6 +32,7 @@ type configItem struct {
 	SignTransactionURL string `dynamodbav:"sign_transaction_url,omitempty"`
 	EventsURL          string `dynamodbav:"events_url,omitempty"`
 	WebhookSecret      string `dynamodbav:"webhook_secret,omitempty"`
+	Subsidizer         string `dynamodbav:"subsidizer,omitempty"`
 }
 
 func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeValue, error) {
@@ -59,6 +62,9 @@ func toItem(appIndex uint16, config *app.Config) (map[string]dynamodb.AttributeV
 	}
 	if config.EventsURL != nil {
 		configItem.EventsURL = config.EventsURL.String()
+	}
+	if len(config.Subsidizer) == ed25519.PublicKeySize {
+		configItem.Subsidizer = base58.Encode(config.Subsidizer)
 	}
 
 	return dynamodbattribute.MarshalMap(configItem)
@@ -95,6 +101,17 @@ func fromItem(item map[string]dynamodb.AttributeValue) (*app.Config, error) {
 			return nil, errors.Wrapf(err, "error parsing sign transaction url")
 		}
 		config.EventsURL = eventsURL
+	}
+	if len(configItem.Subsidizer) != 0 {
+		raw, err := base58.Decode(configItem.Subsidizer)
+		if err != nil {
+			return nil, errors.Wrap(err, "error parsing subsidizer")
+		}
+		if len(raw) != ed25519.PublicKeySize {
+			return nil, errors.Errorf("invalid subsidizer key size: %d", len(raw))
+		}
+
+		config.Subsidizer = raw
 	}
 
 	return config, nil

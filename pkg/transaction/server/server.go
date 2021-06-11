@@ -23,6 +23,7 @@ import (
 	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 
 	"github.com/kinecosystem/agora/pkg/account/specstate"
+	"github.com/kinecosystem/agora/pkg/app"
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
 	"github.com/kinecosystem/agora/pkg/invoice"
@@ -53,6 +54,7 @@ type server struct {
 	loader          *loader
 	invoiceStore    invoice.Store
 	history         history.ReaderWriter
+	appConfig       app.ConfigStore
 	authorizer      transaction.Authorizer
 	webEvents       webevents.Submitter
 	streamEvents    events.Submitter
@@ -71,6 +73,7 @@ func New(
 	sc solana.Client,
 	invoiceStore invoice.Store,
 	history history.ReaderWriter,
+	appConfig app.ConfigStore,
 	committer ingestion.Committer,
 	authorizer transaction.Authorizer,
 	webEvents webevents.Submitter,
@@ -91,6 +94,7 @@ func New(
 			invoiceStore,
 			tokenAccount,
 		),
+		appConfig:       appConfig,
 		history:         history,
 		invoiceStore:    invoiceStore,
 		authorizer:      authorizer,
@@ -105,7 +109,19 @@ func New(
 }
 
 // GetServiceConfig returns the service and token parameters for the token.
-func (s *server) GetServiceConfig(_ context.Context, _ *transactionpb.GetServiceConfigRequest) (*transactionpb.GetServiceConfigResponse, error) {
+func (s *server) GetServiceConfig(ctx context.Context, _ *transactionpb.GetServiceConfigRequest) (*transactionpb.GetServiceConfigResponse, error) {
+	subsidizer := s.subsidizer.Public().(ed25519.PublicKey)
+
+	appIndex, _ := app.GetAppIndex(ctx)
+	if appIndex > 0 {
+		cfg, err := s.appConfig.Get(ctx, appIndex)
+		if err != nil && err != app.ErrNotFound {
+			return nil, status.Error(codes.Internal, "failed to get app config")
+		} else if err == nil && cfg.Subsidizer != nil {
+			subsidizer = cfg.Subsidizer
+		}
+	}
+
 	return &transactionpb.GetServiceConfigResponse{
 		Token: &commonpb.SolanaAccountId{
 			Value: s.token,
@@ -114,7 +130,7 @@ func (s *server) GetServiceConfig(_ context.Context, _ *transactionpb.GetService
 			Value: token.ProgramKey,
 		},
 		SubsidizerAccount: &commonpb.SolanaAccountId{
-			Value: s.subsidizer.Public().(ed25519.PublicKey),
+			Value: subsidizer,
 		},
 	}, nil
 }

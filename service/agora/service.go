@@ -300,6 +300,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		solanaClient,
 		invoiceStore,
 		historyRW,
+		appConfigStore,
 		committer,
 		authorizer,
 		eventsProcessor,

@@ -34,6 +34,8 @@ import (
 	"github.com/kinecosystem/agora/pkg/account/info"
 	infomemory "github.com/kinecosystem/agora/pkg/account/info/memory"
 	"github.com/kinecosystem/agora/pkg/account/specstate"
+	"github.com/kinecosystem/agora/pkg/app"
+	appconfigmemory "github.com/kinecosystem/agora/pkg/app/memory"
 	"github.com/kinecosystem/agora/pkg/events"
 	"github.com/kinecosystem/agora/pkg/events/eventspb"
 	eventsmemory "github.com/kinecosystem/agora/pkg/events/memory"
@@ -58,6 +60,7 @@ type serverEnv struct {
 
 	sc               *solana.MockClient
 	invoiceStore     invoice.Store
+	appConfig        app.ConfigStore
 	rw               *historymemory.RW
 	committer        ingestion.Committer
 	authorizer       *mockAuthorizer
@@ -103,6 +106,7 @@ func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 	env.sc = solana.NewMockClient()
 	env.invoiceStore = invoicedb.New()
 	env.rw = historymemory.New()
+	env.appConfig = appconfigmemory.New()
 	env.committer = ingestionmemory.New()
 	env.authorizer = &mockAuthorizer{}
 	env.infoCache, err = infomemory.NewCache(5*time.Second, 5*time.Second, 1000)
@@ -126,6 +130,7 @@ func setupServerEnv(t *testing.T) (env *serverEnv, cleanup func()) {
 		env.sc,
 		env.invoiceStore,
 		env.rw,
+		env.appConfig,
 		env.committer,
 		env.authorizer,
 		env.webhookSubmitter,
@@ -151,11 +156,36 @@ func TestGetServiceConfig(t *testing.T) {
 	env, cleanup := setupServerEnv(t)
 	defer cleanup()
 
+	// No headers
 	resp, err := env.client.GetServiceConfig(context.Background(), &transactionpb.GetServiceConfigRequest{})
 	assert.NoError(t, err)
 	assert.EqualValues(t, token.ProgramKey, resp.TokenProgram.Value)
 	assert.EqualValues(t, env.token, resp.Token.Value)
 	assert.EqualValues(t, env.subsidizer.Public().(ed25519.PublicKey), resp.SubsidizerAccount.Value)
+
+	// Headers, no mapped config
+	md := map[string]string{
+		"app-index": "1",
+	}
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.New(md))
+	resp, err = env.client.GetServiceConfig(ctx, &transactionpb.GetServiceConfigRequest{})
+	assert.NoError(t, err)
+	assert.EqualValues(t, token.ProgramKey, resp.TokenProgram.Value)
+	assert.EqualValues(t, env.token, resp.Token.Value)
+	assert.EqualValues(t, env.subsidizer.Public().(ed25519.PublicKey), resp.SubsidizerAccount.Value)
+
+	// Headers, with a mapped config
+	customSub, _, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	require.NoError(t, env.appConfig.Add(context.Background(), 1, &app.Config{
+		AppName:    "test",
+		Subsidizer: customSub,
+	}))
+	resp, err = env.client.GetServiceConfig(ctx, &transactionpb.GetServiceConfigRequest{})
+	assert.NoError(t, err)
+	assert.EqualValues(t, token.ProgramKey, resp.TokenProgram.Value)
+	assert.EqualValues(t, env.token, resp.Token.Value)
+	assert.EqualValues(t, customSub, resp.SubsidizerAccount.Value)
 }
 
 func TestGetMinimumKinVersion(t *testing.T) {

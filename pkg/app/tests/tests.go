@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"crypto/ed25519"
 	"net/url"
 	"testing"
 
@@ -32,11 +33,15 @@ func testRoundTrip(t *testing.T, store app.ConfigStore) {
 		eventsURL, err := url.Parse("test.kin.org/events")
 		require.NoError(t, err)
 
+		subsidizer, _, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+
 		config := &app.Config{
 			AppName:            "kin",
 			CreateAccountURL:   createAccountURL,
 			SignTransactionURL: signTxURL,
 			EventsURL:          eventsURL,
+			Subsidizer:         subsidizer,
 		}
 
 		err = store.Add(context.Background(), 1, config)

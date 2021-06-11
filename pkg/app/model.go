@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/ed25519"
 	"net/url"
 
 	"github.com/pkg/errors"
@@ -16,4 +17,5 @@ type Config struct {
 	SignTransactionURL *url.URL
 	EventsURL          *url.URL
 	WebhookSecret      string
+	Subsidizer         ed25519.PublicKey
 }
