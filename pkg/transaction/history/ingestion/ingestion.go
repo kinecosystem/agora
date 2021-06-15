@@ -213,6 +213,7 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 							return errors.Wrapf(err, "failed to commit block (%x, %x)", r.Parent, r.Block)
 						}
 						lastCommitted.WithLabelValues(i.Name()).Set(float64(i.PointerMetric(r.Block)))
+						commits.WithLabelValues(i.Name()).Inc()
 					}
 				}
 			},
@@ -221,6 +222,7 @@ func Run(ctx context.Context, l DistributedLock, c Committer, w history.Writer, 
 			retry.Backoff(backoff.BinaryExponential(500*time.Millisecond), 10*time.Second),
 		)
 		if err != nil && err != context.Canceled {
+			restarts.WithLabelValues(i.Name()).Inc()
 			log.WithError(err).Warn("Failure while ingesting, will retry")
 		}
 
