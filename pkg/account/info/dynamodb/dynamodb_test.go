@@ -20,7 +20,6 @@ import (
 
 var (
 	testCache    info.Cache
-	testStore    info.StateStore
 	teardown     func()
 	dynamoClient dynamodbiface.ClientAPI
 )
@@ -48,7 +47,6 @@ func TestMain(m *testing.M) {
 	}
 
 	testCache = NewCache(dynamoClient, tests.TestTTL, tests.TestNegativeTTL)
-	testStore = NewStore(dynamoClient)
 	teardown = func() {
 		if pc := recover(); pc != nil {
 			cleanUpFunc()
@@ -69,10 +67,6 @@ func TestMain(m *testing.M) {
 
 func TestCache(t *testing.T) {
 	tests.RunCacheTests(t, testCache, teardown)
-}
-
-func TestStore(t *testing.T) {
-	tests.RunStateStoreTests(t, testStore, teardown)
 }
 
 func setupTestTables(client dynamodbiface.ClientAPI) error {
@@ -111,66 +105,12 @@ func setupTestTables(client dynamodbiface.ClientAPI) error {
 		return err
 	}
 
-	storeKeySchema := []dynamodb.KeySchemaElement{
-		{
-			AttributeName: aws.String(storeTableHashKey),
-			KeyType:       dynamodb.KeyTypeHash,
-		},
-	}
-
-	storeAttrDefinitions := []dynamodb.AttributeDefinition{
-		{
-			AttributeName: aws.String(storeTableHashKey),
-			AttributeType: dynamodb.ScalarAttributeTypeB,
-		},
-		{
-			AttributeName: aws.String(storeIndexHashKey),
-			AttributeType: dynamodb.ScalarAttributeTypeB,
-		},
-	}
-
-	gsiKeySchema := []dynamodb.KeySchemaElement{
-		{
-			AttributeName: aws.String(storeIndexHashKey),
-			KeyType:       dynamodb.KeyTypeHash,
-		},
-	}
-
-	_, err = client.CreateTableRequest(&dynamodb.CreateTableInput{
-		KeySchema:            storeKeySchema,
-		AttributeDefinitions: storeAttrDefinitions,
-		BillingMode:          dynamodb.BillingModePayPerRequest,
-		TableName:            storeTableNameStr,
-		GlobalSecondaryIndexes: []dynamodb.GlobalSecondaryIndex{
-			{
-				IndexName: storeGSINameStr,
-				KeySchema: gsiKeySchema,
-				Projection: &dynamodb.Projection{
-					ProjectionType: dynamodb.ProjectionTypeKeysOnly,
-				},
-			},
-		},
-	}).Send(context.Background())
-
 	return err
 }
 
 func resetTestTables(client dynamodbiface.ClientAPI) error {
 	_, err := client.DeleteTableRequest(&dynamodb.DeleteTableInput{
 		TableName: tableNameStr,
-	}).Send(context.Background())
-	if err != nil {
-		if awsErr, ok := err.(awserr.Error); ok {
-			if awsErr.Code() != dynamodb.ErrCodeResourceNotFoundException {
-				return errors.Wrap(err, "failed to delete table")
-			}
-		} else {
-			return errors.Wrap(err, "failed to delete table")
-		}
-	}
-
-	_, err = client.DeleteTableRequest(&dynamodb.DeleteTableInput{
-		TableName: storeTableNameStr,
 	}).Send(context.Background())
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {

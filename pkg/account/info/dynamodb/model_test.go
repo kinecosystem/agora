@@ -13,7 +13,6 @@ import (
 	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
 
-	"github.com/kinecosystem/agora/pkg/account/info"
 	"github.com/kinecosystem/agora/pkg/testutil"
 )
 
@@ -41,27 +40,4 @@ func TestCacheModelConversion(t *testing.T) {
 	assert.EqualValues(t, expiry.Unix(), convertedExpiry.Unix())
 
 	assert.True(t, proto.Equal(info, converted))
-}
-
-func TestStoreModelConversion(t *testing.T) {
-	state := &info.State{
-		Account: testutil.GenerateSolanaKeys(t, 1)[0],
-		Owner:   testutil.GenerateSolanaKeys(t, 1)[0],
-		Balance: 10,
-		Slot:    20,
-	}
-	item, err := toStoreItem(state)
-	require.NoError(t, err)
-	require.NotNil(t, item)
-
-	assert.EqualValues(t, state.Account, item["account"].B)
-	assert.EqualValues(t, state.Owner, item["owner"].B)
-	assert.Equal(t, "10", *item["balance"].N)
-	assert.Equal(t, "20", *item["slot"].N)
-
-	stored, err := fromStoreItem(item)
-	require.NoError(t, err)
-	require.NotNil(t, stored)
-
-	assert.EqualValues(t, *state, *stored)
 }
