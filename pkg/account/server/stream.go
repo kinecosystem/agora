@@ -4,8 +4,10 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/kinecosystem/agora-common/solana"
+	"github.com/golang/protobuf/proto"
 	"github.com/sirupsen/logrus"
+
+	accountpb "github.com/kinecosystem/agora-api/genproto/account/v4"
 )
 
 type eventStream struct {
@@ -14,17 +16,19 @@ type eventStream struct {
 	log *logrus.Entry
 
 	closed   bool
-	streamCh chan solana.BlockTransaction
+	streamCh chan *accountpb.Event
 }
 
 func newEventStream(bufferSize int) *eventStream {
 	return &eventStream{
 		log:      logrus.StandardLogger().WithField("type", "account/stream"),
-		streamCh: make(chan solana.BlockTransaction, bufferSize),
+		streamCh: make(chan *accountpb.Event, bufferSize),
 	}
 }
 
-func (s *eventStream) notify(txn solana.BlockTransaction) error {
+func (s *eventStream) notify(event *accountpb.Event) error {
+	event = proto.Clone(event).(*accountpb.Event)
+
 	s.Lock()
 
 	if s.closed {
@@ -33,7 +37,7 @@ func (s *eventStream) notify(txn solana.BlockTransaction) error {
 	}
 
 	select {
-	case s.streamCh <- txn:
+	case s.streamCh <- event:
 	default:
 		s.Unlock()
 		s.close()

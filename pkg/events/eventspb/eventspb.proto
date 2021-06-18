@@ -12,6 +12,7 @@ message Event {
 
     oneof kind {
         TransactionEvent transaction_event = 2;
+        SimulationEvent simulation_event = 3;
     }
 }
 
@@ -21,6 +22,21 @@ message TransactionEvent {
         min_len: 1
         max_len: 1232
     }];
+
+    // The proto serialized transaction error from commonpb.TransactionError
+    bytes transaction_error = 2 [(validate.rules).bytes = {
+        max_len: 10240
+    }];
+}
+
+message SimulationEvent {
+    // Maximum size taken from: https://github.com/solana-labs/solana/blob/39b3ac6a8d29e14faa1de73d8b46d390ad41797b/sdk/src/packet.rs#L9-L13
+    bytes transaction = 1 [(validate.rules).bytes = {
+        min_len: 1
+        max_len: 1232
+    }];
+
+    // The proto serialized transaction error from commonpb.TransactionError
     bytes transaction_error = 2 [(validate.rules).bytes = {
         max_len: 10240
     }];

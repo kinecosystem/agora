@@ -438,30 +438,12 @@ func (s *server) GetEvents(req *accountpb.GetEventsRequest, stream accountpb.Acc
 	events := make([]*accountpb.Event, 0)
 	for {
 		select {
-		case txn, ok := <-as.streamCh:
+		case event, ok := <-as.streamCh:
 			if !ok {
 				return status.Error(codes.Aborted, "")
 			}
 
-			var txErr *commonpb.TransactionError
-			if txn.Err != nil {
-				txErr, err = solanautil.MapTransactionError(*txn.Err)
-				if err != nil {
-					log.WithError(err).Warn("failed to map transaction error, dropping")
-					continue
-				}
-			}
-
-			events = append(events, &accountpb.Event{
-				Type: &accountpb.Event_TransactionEvent{
-					TransactionEvent: &accountpb.TransactionEvent{
-						Transaction: &commonpb.Transaction{
-							Value: txn.Transaction.Marshal(),
-						},
-						TransactionError: txErr,
-					},
-				},
-			})
+			events = append(events, event)
 
 			ai, err := s.loader.Load(stream.Context(), tokenAccountID, solana.CommitmentRecent)
 			if err == info.ErrAccountInfoNotFound {

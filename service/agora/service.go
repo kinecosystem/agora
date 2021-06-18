@@ -238,7 +238,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 			Addr: os.Getenv(eventsRedisConnStringEnv),
 		}),
 		redisevents.TransactionChannel,
-		txnserver.MapTransactionEvent(kin4AccountNotifier),
+		kin4AccountNotifier.OnEvent,
 		txnserver.MapTransactionEvent(cacheInvalidator),
 	)
 	if err != nil {

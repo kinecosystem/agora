@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
+	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
+	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
 	"github.com/kinecosystem/agora-common/kin/version"
 	"github.com/kinecosystem/agora-common/metrics"
 	"github.com/kinecosystem/agora-common/solana"
@@ -18,9 +21,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	commonpb "github.com/kinecosystem/agora-api/genproto/common/v4"
-	transactionpb "github.com/kinecosystem/agora-api/genproto/transaction/v4"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/kinecosystem/agora/pkg/account/specstate"
 	"github.com/kinecosystem/agora/pkg/app"
@@ -408,6 +409,58 @@ func (s *server) SubmitTransaction(ctx context.Context, req *transactionpb.Submi
 	default:
 	}
 
+	if req.SendSimulationEvent {
+		simulateStart := time.Now()
+		result, err := s.sc.SimulateTransaction(tx)
+		simulationTime := time.Since(simulateStart)
+		if err != nil {
+			log.WithError(err).Warn("failed to perform simulation")
+			simulateTimingsByCode.WithLabelValues("unhandled").Observe(float64(simulationTime.Seconds()))
+			return nil, status.Errorf(codes.Internal, "unhandled error from SimulateTransaction: %v", err)
+		}
+
+		simulationEvent := &eventspb.Event_SimulationEvent{
+			SimulationEvent: &eventspb.SimulationEvent{
+				Transaction: tx.Marshal(),
+			},
+		}
+
+		if result != nil {
+			var simulationError *commonpb.TransactionError
+
+			txError, err := solanautil.MapTransactionError(*result)
+			if err != nil {
+				log.WithError(err).Warn("failed to map transaction error from simulation")
+				raw, err := result.JSONString()
+				if err != nil {
+					log.WithError(err).Warn("failed to get transaction error JSON string")
+				}
+
+				simulationError = &commonpb.TransactionError{
+					Reason: commonpb.TransactionError_UNKNOWN,
+					Raw:    []byte(raw),
+				}
+			} else {
+				simulationError = txError
+			}
+
+			simulationEvent.SimulationEvent.TransactionError, err = proto.Marshal(simulationError)
+			if err != nil {
+				log.WithError(err).Warn("failed to marshal transaction error from simulation")
+				return nil, status.Errorf(codes.Internal, "failed to marshal simulation error")
+			}
+		}
+
+		err = s.streamEvents.Submit(ctx, &eventspb.Event{
+			SubmissionTime: timestamppb.Now(),
+			Kind:           simulationEvent,
+		})
+		if err != nil {
+			log.WithError(err).Warn("failed to submit simulation event")
+			return nil, status.Errorf(codes.Internal, "failed to submit simulation event: %v", err)
+		}
+	}
+
 	submitStart := time.Now()
 	var submitResult transactionpb.SubmitTransactionResponse_Result
 	_, stat, err := s.sc.SubmitTransaction(tx, solanautil.CommitmentFromProto(req.Commitment))
@@ -573,6 +626,12 @@ var (
 		Name:      "sign_transaction",
 		Help:      "Number of sign transaction requests",
 	})
+	simulateTimingsByCode = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "agora",
+		Name:      "simulate_transaction_submit_seconds",
+		Help:      "Histogram of simulation latency from SubmitTransaction",
+		Buckets:   metrics.MinuteDistributionBuckets,
+	}, []string{"result"})
 	submitTimingsByCode = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "agora",
 		Name:      "submit_transaction_submit_seconds",
@@ -618,6 +677,7 @@ func init() {
 	signTxCounter = metrics.Register(signTxCounter).(prometheus.Counter)
 	submitTxCounter = metrics.Register(submitTxCounter).(prometheus.Counter)
 	submitTxResultCounter = metrics.Register(submitTxResultCounter).(*prometheus.CounterVec)
+	simulateTimingsByCode = metrics.Register(simulateTimingsByCode).(*prometheus.HistogramVec)
 	submitTimingsByCode = metrics.Register(submitTimingsByCode).(*prometheus.HistogramVec)
 	eventsWebhookFailures = metrics.Register(eventsWebhookFailures).(prometheus.Counter)
 	eventsStreamFailures = metrics.Register(eventsStreamFailures).(prometheus.Counter)

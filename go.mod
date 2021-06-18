@@ -12,8 +12,8 @@ require (
 	github.com/go-redis/redis_rate/v8 v8.0.0
 	github.com/golang/protobuf v1.5.1
 	github.com/hashicorp/golang-lru v0.5.1
-	github.com/kinecosystem/agora-api v0.26.0
-	github.com/kinecosystem/agora-common v0.83.0
+	github.com/kinecosystem/agora-api v0.27.0
+	github.com/kinecosystem/agora-common v0.85.0
 	github.com/kinecosystem/go v0.0.0-20191108204735-d6832148266e
 	github.com/mattn/go-colorable v0.1.6 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
