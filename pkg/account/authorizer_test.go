@@ -308,6 +308,8 @@ func TestAuthorizer_SetAuthority(t *testing.T) {
 
 func TestAuthorizer_RateLimiter(t *testing.T) {
 	env := setup(t)
+	_ = env.config.Add(env.ctx, 1, &app.Config{ AppName: "myapp1" })
+	_ = env.config.Add(env.ctx, 2, &app.Config{ AppName: "myapp2" })
 
 	require.NoError(t, env.mapper.Add(context.Background(), "one", 1))
 
