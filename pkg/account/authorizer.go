@@ -112,6 +112,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 	if appIndex == 0 {
 		appIndex, _ = app.GetAppIndex(ctx)
 	}
+	log.Warnf("Authorize: received appIndex %d", appIndex)
 
 	//
 	// Parse out create instruction(s).
@@ -216,6 +217,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 
 	// If we don't have an app index, we can't proceed further, so we just exit early
 	if appIndex == 0 {
+		log.Warn("Authorize: did not receive an appIndex, exit early")
 		if signed {
 			return result, nil
 		}
@@ -226,6 +228,11 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 
 	cfg, err := a.config.Get(ctx, appIndex)
 	if err == app.ErrNotFound || cfg == nil || cfg.CreateAccountURL == nil {
+		if err == app.ErrNotFound {
+			log.WithError(err).WithField("appIndex", appIndex).Warn("failed to find app config")
+			return result, nil
+		}
+
 		if signed {
 			return result, nil
 		}
@@ -233,7 +240,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 		result.Result = AuthorizationResultPayerRequired
 		return result, nil
 	} else if err != nil {
-		log.WithError(err).Warn("failed to get app config")
+		log.WithError(err).WithField("appIndex", appIndex).Warn("failed to get app config")
 		return result, status.Error(codes.Internal, "failed to get app config")
 	}
 
@@ -245,11 +252,11 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 	if err != nil {
 		createAccountErr, ok := err.(*webhook.CreateAccountError)
 		if !ok {
-			log.WithError(err).Warn("failed to call create account webhook")
+			log.WithField("appIndex", appIndex).WithError(err).Warn("failed to call create account webhook")
 			return result, status.Error(codes.Internal, "failed to verify account creation with webhook")
 		}
 
-		log = log.WithField("status", createAccountErr.StatusCode)
+		log = log.WithField("appIndex", appIndex).WithField("status", createAccountErr.StatusCode)
 		switch createAccountErr.StatusCode {
 		case 403:
 			log.Debug("app server refused account creation")
