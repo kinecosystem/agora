@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
+	useragent "github.com/kinecosystem/agora/pkg/user-agent"
 	"net/http"
 	"os"
 	"strconv"
@@ -80,6 +81,9 @@ const (
 	submitTxGlobalRLEnv      = "SUBMIT_TX_GLOBAL_LIMIT"
 	submitTxAppRLEnv         = "SUBMIT_TX_APP_LIMIT"
 	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
+
+	// Agora Config
+	agoraSdkFilter  = "AGORA_SDK_FILTER"
 
 	// Events config
 	eventsRedisConnStringEnv = "EVENTS_REDIS_CONN_STRING"
@@ -390,6 +394,7 @@ func main() {
 		&app{},
 		agoraapp.WithUnaryServerInterceptor(headers.UnaryServerInterceptor()),
 		agoraapp.WithUnaryServerInterceptor(version.DisabledVersionUnaryServerInterceptor()),
+		agoraapp.WithUnaryServerInterceptor(useragent.DisabledUserAgentUnaryServerInterceptor(os.Getenv(agoraSdkFilter))),
 		agoraapp.WithStreamServerInterceptor(headers.StreamServerInterceptor()),
 		agoraapp.WithStreamServerInterceptor(version.DisabledVersionStreamServerInterceptor()),
 		agoraapp.WithHTTPGatewayEnabled(true, httpgateway.WithCORSEnabled(true)),
