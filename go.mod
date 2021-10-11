@@ -39,3 +39,7 @@ require (
 
 // This dependency of stellar/go no longer exists; use a forked version of the repo instead.
 replace bitbucket.org/ww/goautoneg => github.com/adjust/goautoneg v0.0.0-20150426214442-d788f35a0315
+
+// uncomment below if you wish to use locally checked out dependencies (devs only)
+//replace github.com/kinecosystem/agora-api => ../agora-api
+//replace github.com/kinecosystem/agora-common => ../agora-common
