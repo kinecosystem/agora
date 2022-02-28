@@ -58,6 +58,7 @@ func setup(t *testing.T) (env testEnv) {
 	env.auth = NewAuthorizer(
 		env.mapper,
 		env.config,
+		false,
 		webhook.NewClient(http.DefaultClient),
 		NewLimiter(func(r int) rate.Limiter { return rate.NewLocalRateLimiter(xrate.Limit(r)) }, 10, 5),
 		10,
@@ -308,8 +309,8 @@ func TestAuthorizer_SetAuthority(t *testing.T) {
 
 func TestAuthorizer_RateLimiter(t *testing.T) {
 	env := setup(t)
-	_ = env.config.Add(env.ctx, 1, &app.Config{ AppName: "myapp1" })
-	_ = env.config.Add(env.ctx, 2, &app.Config{ AppName: "myapp2" })
+	_ = env.config.Add(env.ctx, 1, &app.Config{AppName: "myapp1"})
+	_ = env.config.Add(env.ctx, 2, &app.Config{AppName: "myapp2"})
 
 	require.NoError(t, env.mapper.Add(context.Background(), "one", 1))
 
