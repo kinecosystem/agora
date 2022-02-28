@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"github.com/pkg/errors"
 
 	"github.com/kinecosystem/agora-common/kin"
 	"github.com/kinecosystem/agora-common/solana"
@@ -43,6 +44,7 @@ type authorizer struct {
 	log                *logrus.Entry
 	mapper             app.Mapper
 	config             app.ConfigStore
+	blockAnonCreates   bool
 	mint               ed25519.PublicKey
 	subsidizer         ed25519.PublicKey
 	subsidizerKey      ed25519.PrivateKey
@@ -55,6 +57,7 @@ type authorizer struct {
 func NewAuthorizer(
 	mapper app.Mapper,
 	config app.ConfigStore,
+	blockAnonCreates bool,
 	webhookClient *webhook.Client,
 	limiter *Limiter,
 	minAccountLamports uint64,
@@ -62,11 +65,12 @@ func NewAuthorizer(
 	mint ed25519.PublicKey,
 ) Authorizer {
 	a := &authorizer{
-		log:           logrus.StandardLogger().WithField("type", "account/authorizer"),
-		mapper:        mapper,
-		config:        config,
-		webhookClient: webhookClient,
-		limiter:       limiter,
+		log:              logrus.StandardLogger().WithField("type", "account/authorizer"),
+		mapper:           mapper,
+		config:           config,
+		blockAnonCreates: blockAnonCreates,
+		webhookClient:    webhookClient,
+		limiter:          limiter,
 
 		minAccountLamports: minAccountLamports,
 		mint:               mint,
@@ -217,6 +221,10 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 
 	// If we don't have an app index, we can't proceed further, so we just exit early
 	if appIndex == 0 {
+		if a.blockAnonCreates {
+			log.Warn("Authorize: blocked anonymous creations")
+			return result, errors.New("Authorize: blocked anonymous creations")
+		}
 		log.Warn("Authorize: did not receive an appIndex, exit early")
 		if signed {
 			return result, nil

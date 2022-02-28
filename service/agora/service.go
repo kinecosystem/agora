@@ -83,7 +83,8 @@ const (
 	rlRedisConnStringEnv     = "RL_REDIS_CONN_STRING"
 
 	// Agora Config
-	agoraSdkFilter  = "AGORA_SDK_FILTER"
+	agoraBlockAnonCreates = "AGORA_BLOCK_ANON_CREATES"
+	agoraSdkFilter        = "AGORA_SDK_FILTER"
 
 	// Events config
 	eventsRedisConnStringEnv = "EVENTS_REDIS_CONN_STRING"
@@ -266,9 +267,21 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		return errors.Wrap(err, "failed to load minimum balance for rent exception")
 	}
 
+	var blockAnonCreates = false
+	if len(os.Getenv(agoraBlockAnonCreates)) > 0 {
+		blockAnonCreates = os.Getenv(agoraBlockAnonCreates) == "true"
+	}
+
+	if blockAnonCreates {
+		log.Warnf("Anonymous creations: BLOCKED")
+	} else {
+		log.Warnf("Anonymous creations: ALLOWED")
+	}
+
 	accountAuthorizer := account.NewAuthorizer(
 		appMapper,
 		appConfigStore,
+		blockAnonCreates,
 		webhookClient,
 		accountLimiter,
 		accountLamports,
