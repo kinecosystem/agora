@@ -230,7 +230,7 @@ func (a *authorizer) Authorize(ctx context.Context, tx solana.Transaction) (resu
 	if err == app.ErrNotFound || cfg == nil || cfg.CreateAccountURL == nil {
 		if err == app.ErrNotFound {
 			log.WithError(err).WithField("appIndex", appIndex).Warn("failed to find app config")
-			return result, nil
+			return result, err
 		}
 
 		if signed {
