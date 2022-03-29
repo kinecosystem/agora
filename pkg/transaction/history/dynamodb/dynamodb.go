@@ -448,7 +448,7 @@ func (db *db) checkDoubleInsertMatch(ctx context.Context, txHash []byte, entry *
 
 	// In theory an error can occur after submission.
 	// Therefore, we only check equality if there's an error already set.
-	if len(prevSol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
+	if len(prevSol.TransactionError) > 0 && len(sol.TransactionError) > 0 && !bytes.Equal(prevSol.TransactionError, sol.TransactionError) {
 		return errors.Wrap(history.ErrInvalidUpdate, "double insert with different entries detected (transaction error)")
 	}
 
