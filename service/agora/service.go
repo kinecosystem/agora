@@ -84,6 +84,7 @@ const (
 
 	// Agora Config
 	agoraBlockAnonCreates = "AGORA_BLOCK_ANON_CREATES"
+	agoraBlockAnonTxns    = "AGORA_BLOCK_ANON_TXNS"
 	agoraSdkFilter        = "AGORA_SDK_FILTER"
 
 	// Events config
@@ -278,6 +279,17 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 		log.Warnf("Anonymous creations: ALLOWED")
 	}
 
+	var blockAnonTxns = false
+	if len(os.Getenv(agoraBlockAnonTxns)) > 0 {
+		blockAnonTxns = os.Getenv(agoraBlockAnonTxns) == "true"
+	}
+
+	if blockAnonTxns {
+		log.Warnf("Anonymous transactions: BLOCKED")
+	} else {
+		log.Warnf("Anonymous transactions: ALLOWED")
+	}
+
 	accountAuthorizer := account.NewAuthorizer(
 		appMapper,
 		appConfigStore,
@@ -304,6 +316,7 @@ func (a *app) Init(_ agoraapp.Config) (err error) {
 	authorizer, err := transaction.NewAuthorizer(
 		appMapper,
 		appConfigStore,
+		blockAnonTxns,
 		webhookClient,
 		txLimiter,
 		subsidizer,

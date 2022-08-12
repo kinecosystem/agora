@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"github.com/pkg/errors"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/kinecosystem/agora-common/kin"
@@ -32,6 +33,7 @@ type authorizer struct {
 	log           *logrus.Entry
 	mapper        app.Mapper
 	configStore   app.ConfigStore
+	blockAnonTxns bool
 	mint          ed25519.PublicKey
 	subsidizer    ed25519.PublicKey
 	subsidizerKey ed25519.PrivateKey
@@ -45,6 +47,7 @@ type authorizer struct {
 func NewAuthorizer(
 	mapper app.Mapper,
 	configStore app.ConfigStore,
+	blockAnonTxns bool,
 	webhookClient *webhook.Client,
 	limiter *Limiter,
 	subsidizer ed25519.PrivateKey,
@@ -59,6 +62,7 @@ func NewAuthorizer(
 		log:           logrus.StandardLogger().WithField("type", "transaction/authorizer"),
 		mapper:        mapper,
 		configStore:   configStore,
+		blockAnonTxns: blockAnonTxns,
 		webhookClient: webhookClient,
 		limiter:       limiter,
 		mint:          mint,
@@ -117,7 +121,11 @@ func (s *authorizer) Authorize(ctx context.Context, raw solana.Transaction, il *
 		}
 	}
 	if appIndex == 0 {
-		appIndex, _ = app.GetAppIndex(ctx)
+		appIndex, err = app.GetAppIndex(ctx)
+		if s.blockAnonTxns && (err != nil || appIndex == 0) {
+			log.Warn("Authorize: blocked anonymous transactions")
+			return a, errors.New("Authorize: blocked anonymous creations")
+		}
 	}
 
 	//
